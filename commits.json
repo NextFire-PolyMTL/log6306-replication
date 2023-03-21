@@ -1,0 +1,89 @@
+{
+    "https://github.com/ory/hydra": {
+        "commits": [
+            "03a28c3e27138fc18675810b81b2b499d147da84",
+            "95a51deb3100034db5c6d98bbd7838a3b43249ce",
+            "5508f2aba6ff56730d402f163e2b41387676a30f"
+        ],
+        "count": 3
+    },
+    "https://github.com/docker-mailserver/docker-mailserver": {
+        "commits": [
+            "6faf5ce88bae2f6c28b5ac1cae32fbc76f1da3b4",
+            "2b4b829067da4178b63a091ea0fba930777cf06d",
+            "9e1c4783a81fcad6c928a2439a0c9db54f511236",
+            "afe8cfb61044846df8a9f819bd0a0361d53f6047",
+            "afb8c05cf9ee5777d71a6902732c90129f986d5f",
+            "e4bab5b99600e28d55febef52e7d09bf1d93d8ff",
+            "021e942c4ca039407041fe17a5fd37dc6c73cc99",
+            "66bc157c1dfad445bae4a5ac22cd352b3890a125",
+            "08cd4d33718cecee9b049ead79f032c8fb96f32d",
+            "c851f5b6aa59d24b6d52b4d7fd2923bd5f4f64bf",
+            "b1a74bd47a577bc844eda74864335981c33e9956",
+            "7ca056852ff2b91c1afb40251dd215aa7036d669",
+            "b9dbec32769a1fb7af6aa2e2f4195c8569561495",
+            "22f68af111effe04866da9167944391bb6c060a7",
+            "0bbec095296f72b74d99ea0b759b2ff8c90fb819",
+            "623d53bea84f9cb1a8a6861b370e780ec781f595",
+            "cb8e336d256136b79cf58d6becd596cdb56fdb47",
+            "05db27f817aa0a512f710c10eafe3ab71903f99a",
+            "88767f7cc8b0018e51f76998cbe163996b1a0323"
+        ],
+        "count": 19
+    },
+    "https://github.com/traefik/traefik": {
+        "commits": [
+            "4d485e1b6b5a2f0390b47182ba87b6b929c426b0",
+            "2118f6992ab3b2dafc863dc28e4b98f8c0afc15d",
+            "d653a348b1d6ec352ef2c341636153a5f45619f1",
+            "ae2ae850701ce3f3a9234f7abd0a32c9e74744b0",
+            "6e5f7650a503e503ea88399bd46c05990f5dc083",
+            "50757b5e9909432c0e86bf288c398a8825a18047",
+            "a5335667bbc554158c8477c35bfb6b36f84dcc8c"
+        ],
+        "count": 7
+    },
+    "https://github.com/grafana/grafana": {
+        "commits": [
+            "b4b3008a19269cb687adbefc5c3e944ab7845c7b",
+            "31b5db06f139bc334fe3b8e8d1eb454f471adf47",
+            "6310aaff5539a70cb9cb11d70655b1354ee1de16",
+            "008bee8f27a67427a8f98b8866d6275c9a8c8652",
+            "cf1ebd5a3df752ea9a2b2bb1f9a191c9d9ee6696",
+            "1864807b150b6aa85fb8d01eaf4a26a554fc864f",
+            "53328718e195196392b6357187332001145feb0f",
+            "341822450cfc61ac819cd2971c33c6c659ebf579",
+            "1716b706da536fe5b312541d6cdd972946fa3f89",
+            "d28d495235c08b962a43355b4118f275b85c1ec6",
+            "f580c9149cd1afcacbaa21be8123c6c36f2c967e",
+            "845cebdee2eebfcd0a4c47957429e085b9911907",
+            "616db7f68b53df0c9b3e3d413773c9e2d65b9bc4"
+        ],
+        "count": 13
+    },
+    "https://github.com/prometheus/prometheus": {
+        "commits": [
+            "af99960974d2d75d8fe04a6650ae8cb579b5f559",
+            "2bb3efc69d8797909d520286d9a7b6566119db9e",
+            "93ecf0e14cf8e9be31d20314ce56d9754025bd54"
+        ],
+        "count": 3
+    },
+    "https://github.com/rclone/rclone": {
+        "commits": [
+            "221dfc38825769a4911ed5b21e1760d3adf9bc88"
+        ],
+        "count": 1
+    },
+    "https://github.com/pi-hole/docker-pi-hole": {
+        "commits": [
+            "681d79fd65b9d3c80b75aabb64ed0a23b2868fb4",
+            "d40ee186896df5369516b0ffe93677cafd68b85f",
+            "782fb27559b61d5208018fa95a55d026f49f3cfa",
+            "d25aefbf8dcd7344069621f167b4695d4c896393",
+            "e87b2ff6f6082fddd36e937d1df4e6d422624acd",
+            "93e7daddc17307ae7371666a06ba28dccb8ef4f7"
+        ],
+        "count": 6
+    }
+}
