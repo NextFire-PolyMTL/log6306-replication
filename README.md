@@ -64,25 +64,25 @@
 
 ## prometheus
 
-| Commit  | False positive | Artefact   | Refactoring Type                                                   | Technical Debt | Commentaires                |
-| ------- | -------------- | ---------- | ------------------------------------------------------------------ | -------------- | --------------------------- |
-| af99960 |                | Dockerfile | Update base image, Inline Run Instructions, Update Run Instruction | Image size     |                             |
-| 2bb3efc | x              |            |                                                                    |                | merge commit af99960        |
-| 93ecf0e | x              |            |                                                                    |                | maj d'un module dockerswarm |
+| Commit  | False positive | Artefact   | Refactoring Type                                                                                            | Technical Debt | Commentaires        |
+| ------- | -------------- | ---------- | ----------------------------------------------------------------------------------------------------------- | -------------- | ------------------- |
+| 2bb3efc |                | Dockerfile | Replace ADD with COPY, Inline Run Instructions, Update base image, Update Run Instruction, Add ENV variable | Image size     |                     |
+| af99960 | x              |            |                                                                                                             |                | inclus dans 2bb3efc |
+| c453445 |                | Dockerfile | Extract stage                                                                                               |                | ajout de base       |
 
 ## rclone
 
-| Commit  | False positive | Artefact | Refactoring Type | Technical Debt | Commentaires                  |
-| ------- | -------------- | -------- | ---------------- | -------------- | ----------------------------- |
-| 221dfc3 | x              |          |                  |                | refacto module `serve docker` |
+None
 
 ## docker-pi-hole
 
-| Commit  | False positive | Artefact   | Refactoring Type         | Technical Debt | Commentaires         |
-| ------- | -------------- | ---------- | ------------------------ | -------------- | -------------------- |
-| 681d79f |                | Dockerfile | Add ENV variable         | Maintenability |                      |
-| d40ee18 | x              |            |                          |                | maj de tests         |
-| 782fb27 | x              |            |                          |                | maj de tests         |
-| d25aefb |                | Dockerfile | Extract Run Instructions | Image size     |                      |
-| e87b2ff | x              |            |                          |                | merge commit d25aefb |
-| 93e7dad |                | Dockerfile | ?                        | Image size     | rm des caches        |
+| Commit  | False positive | Artefact   | Refactoring Type         | Technical Debt            | Commentaires                   |
+| ------- | -------------- | ---------- | ------------------------ | ------------------------- | ------------------------------ |
+| 71d77b5 |                | Dockerfile | Add ENV variable         | Maintenability            |                                |
+| 93e7dad |                | Dockerfile | ?                        | Image size                | rm des caches                  |
+| 611df9b | ?              | Dockerfile |                          |                           | rename d'un ENV                |
+| 970c45c |                | Dockerfile | Update Base Image        | Maintenability/Image size | debian slim                    |
+| 1970ffd |                | Dockerfile | ?                        | Maintenability            | rename Dockerfile.sh -> cmd.sh |
+| 318720f | ?              | Dockerfile |                          |                           | maj dependances                |
+| e7e9004 | x              |            |                          |                           |                                |
+| e87b2ff |                | Dockerfile | Extract Run Instructions | Image size                |                                |
