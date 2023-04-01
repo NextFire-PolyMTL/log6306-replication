@@ -1,5 +1,19 @@
 # log6306-replication
 
+## prometheus
+
+| Commit  | Artefact   | Refactoring Type                                                   | Technical Debt | Commentaires                |
+| ------- | ---------- | ------------------------------------------------------------------ | -------------- | --------------------------- |
+| af99960 | Dockerfile | Update base image, Inline Run Instructions, Update Run Instruction | Image size     |                             |
+| 2bb3efc |            |                                                                    |                | merge commit af99960        |
+| 93ecf0e |            |                                                                    |                | maj d'un module dockerswarm |
+
+## rclone
+
+| Commit  | Artefact | Refactoring Type | Technical Debt | Commentaires                  |
+| ------- | -------- | ---------------- | -------------- | ----------------------------- |
+| 221dfc3 |          |                  |                | refacto module `serve docker` |
+
 ## docker-pi-hole
 
 | Commit   | Artefact   | Refactoring Type         | Technical Debt | Commentaires         |
