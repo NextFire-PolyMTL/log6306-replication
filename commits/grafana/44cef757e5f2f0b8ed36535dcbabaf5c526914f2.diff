@@ -1,0 +1,3470 @@
+commit 44cef757e5f2f0b8ed36535dcbabaf5c526914f2 (from 57457e2aa426365efc2c4d2232dcdd99ac894f46)
+Merge: 57457e2aa42 bfdfb215f32
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Tue Feb 5 09:33:28 2019 +0100
+
+    Merge branch 'hugoh/explore-refactor-initial-modified-queries'
+
+diff --git a/packages/grafana-ui/src/types/plugin.ts b/packages/grafana-ui/src/types/plugin.ts
+index 00735827825..c8f156c08dc 100644
+--- a/packages/grafana-ui/src/types/plugin.ts
++++ b/packages/grafana-ui/src/types/plugin.ts
+@@ -1,6 +1,6 @@
+ import { ComponentClass } from 'react';
+ import { PanelProps, PanelOptionsProps } from './panel';
+-import { DataQueryOptions, DataQuery, DataQueryResponse, QueryHint } from './datasource';
++import { DataQueryOptions, DataQuery, DataQueryResponse, QueryHint, QueryFixAction } from './datasource';
+ 
+ export interface DataSourceApi<TQuery extends DataQuery = DataQuery> {
+   /**
+@@ -41,6 +41,12 @@ export interface DataSourceApi<TQuery extends DataQuery = DataQuery> {
+   pluginExports?: PluginExports;
+ }
+ 
++export interface ExploreDataSourceApi<TQuery extends DataQuery = DataQuery> extends DataSourceApi {
++  modifyQuery?(query: TQuery, action: QueryFixAction): TQuery;
++  getHighlighterExpression?(query: TQuery): string;
++  languageProvider?: any;
++}
++
+ export interface QueryEditorProps<DSType extends DataSourceApi, TQuery extends DataQuery> {
+   datasource: DSType;
+   query: TQuery;
+@@ -48,15 +54,30 @@ export interface QueryEditorProps<DSType extends DataSourceApi, TQuery extends D
+   onChange: (value: TQuery) => void;
+ }
+ 
++export interface ExploreQueryFieldProps<DSType extends DataSourceApi, TQuery extends DataQuery> {
++  datasource: DSType;
++  query: TQuery;
++  error?: string | JSX.Element;
++  hint?: QueryHint;
++  history: any[];
++  onExecuteQuery?: () => void;
++  onQueryChange?: (value: TQuery) => void;
++  onExecuteHint?: (action: QueryFixAction) => void;
++}
++
++export interface ExploreStartPageProps {
++  onClickExample: (query: DataQuery) => void;
++}
++
+ export interface PluginExports {
+   Datasource?: DataSourceApi;
+   QueryCtrl?: any;
+-  QueryEditor?: ComponentClass<QueryEditorProps<DataSourceApi,DataQuery>>;
++  QueryEditor?: ComponentClass<QueryEditorProps<DataSourceApi, DataQuery>>;
+   ConfigCtrl?: any;
+   AnnotationsQueryCtrl?: any;
+   VariableQueryEditor?: any;
+-  ExploreQueryField?: any;
+-  ExploreStartPage?: any;
++  ExploreQueryField?: ComponentClass<ExploreQueryFieldProps<DataSourceApi, DataQuery>>;
++  ExploreStartPage?: ComponentClass<ExploreStartPageProps>;
+ 
+   // Panel plugin
+   PanelCtrl?: any;
+@@ -114,5 +135,3 @@ export interface PluginMetaInfo {
+   updated: string;
+   version: string;
+ }
+-
+-
+diff --git a/public/app/core/utils/explore.ts b/public/app/core/utils/explore.ts
+index faf46118718..107f411353c 100644
+--- a/public/app/core/utils/explore.ts
++++ b/public/app/core/utils/explore.ts
+@@ -11,7 +11,7 @@ import { colors } from '@grafana/ui';
+ import TableModel, { mergeTablesIntoModel } from 'app/core/table_model';
+ 
+ // Types
+-import { RawTimeRange, IntervalValues, DataQuery } from '@grafana/ui/src/types';
++import { RawTimeRange, IntervalValues, DataQuery, DataSourceApi } from '@grafana/ui/src/types';
+ import TimeSeries from 'app/core/time_series2';
+ import {
+   ExploreUrlState,
+@@ -336,3 +336,12 @@ export function clearHistory(datasourceId: string) {
+   const historyKey = `grafana.explore.history.${datasourceId}`;
+   store.delete(historyKey);
+ }
++
++export const getQueryKeys = (queries: DataQuery[], datasourceInstance: DataSourceApi): string[] => {
++  const queryKeys = queries.reduce((newQueryKeys, query, index) => {
++    const primaryKey = datasourceInstance && datasourceInstance.name ? datasourceInstance.name : query.key;
++    return newQueryKeys.concat(`${primaryKey}-${index}`);
++  }, []);
++
++  return queryKeys;
++};
+diff --git a/public/app/features/explore/Explore.tsx b/public/app/features/explore/Explore.tsx
+index a2890427868..b210bcccc18 100644
+--- a/public/app/features/explore/Explore.tsx
++++ b/public/app/features/explore/Explore.tsx
+@@ -1,5 +1,5 @@
+ // Libraries
+-import React from 'react';
++import React, { ComponentClass } from 'react';
+ import { hot } from 'react-hot-loader';
+ import { connect } from 'react-redux';
+ import _ from 'lodash';
+@@ -18,34 +18,26 @@ import TableContainer from './TableContainer';
+ import TimePicker, { parseTime } from './TimePicker';
+ 
+ // Actions
+-import {
+-  changeSize,
+-  changeTime,
+-  initializeExplore,
+-  modifyQueries,
+-  scanStart,
+-  scanStop,
+-  setQueries,
+-} from './state/actions';
++import { changeSize, changeTime, initializeExplore, modifyQueries, scanStart, setQueries } from './state/actions';
+ 
+ // Types
+-import { RawTimeRange, TimeRange, DataQuery } from '@grafana/ui';
++import { RawTimeRange, TimeRange, DataQuery, ExploreStartPageProps, ExploreDataSourceApi } from '@grafana/ui';
+ import { ExploreItemState, ExploreUrlState, RangeScanner, ExploreId } from 'app/types/explore';
+ import { StoreState } from 'app/types';
+ import { LAST_USED_DATASOURCE_KEY, ensureQueries, DEFAULT_RANGE, DEFAULT_UI_STATE } from 'app/core/utils/explore';
+ import { Emitter } from 'app/core/utils/emitter';
+ import { ExploreToolbar } from './ExploreToolbar';
++import { scanStopAction } from './state/actionTypes';
+ 
+ interface ExploreProps {
+-  StartPage?: any;
++  StartPage?: ComponentClass<ExploreStartPageProps>;
+   changeSize: typeof changeSize;
+   changeTime: typeof changeTime;
+   datasourceError: string;
+-  datasourceInstance: any;
++  datasourceInstance: ExploreDataSourceApi;
+   datasourceLoading: boolean | null;
+   datasourceMissing: boolean;
+   exploreId: ExploreId;
+-  initialQueries: DataQuery[];
+   initializeExplore: typeof initializeExplore;
+   initialized: boolean;
+   modifyQueries: typeof modifyQueries;
+@@ -54,14 +46,15 @@ interface ExploreProps {
+   scanning?: boolean;
+   scanRange?: RawTimeRange;
+   scanStart: typeof scanStart;
+-  scanStop: typeof scanStop;
++  scanStopAction: typeof scanStopAction;
+   setQueries: typeof setQueries;
+   split: boolean;
+   showingStartPage?: boolean;
+   supportsGraph: boolean | null;
+   supportsLogs: boolean | null;
+   supportsTable: boolean | null;
+-  urlState?: ExploreUrlState;
++  urlState: ExploreUrlState;
++  queryKeys: string[];
+ }
+ 
+ /**
+@@ -173,7 +166,7 @@ export class Explore extends React.PureComponent<ExploreProps> {
+   };
+ 
+   onStopScanning = () => {
+-    this.props.scanStop(this.props.exploreId);
++    this.props.scanStopAction({ exploreId: this.props.exploreId });
+   };
+ 
+   render() {
+@@ -184,12 +177,12 @@ export class Explore extends React.PureComponent<ExploreProps> {
+       datasourceLoading,
+       datasourceMissing,
+       exploreId,
+-      initialQueries,
+       showingStartPage,
+       split,
+       supportsGraph,
+       supportsLogs,
+       supportsTable,
++      queryKeys,
+     } = this.props;
+     const exploreClass = split ? 'explore explore-split' : 'explore';
+ 
+@@ -210,7 +203,7 @@ export class Explore extends React.PureComponent<ExploreProps> {
+         {datasourceInstance &&
+           !datasourceError && (
+             <div className="explore-container">
+-              <QueryRows exploreEvents={this.exploreEvents} exploreId={exploreId} initialQueries={initialQueries} />
++              <QueryRows exploreEvents={this.exploreEvents} exploreId={exploreId} queryKeys={queryKeys} />
+               <AutoSizer onResize={this.onResize} disableHeight>
+                 {({ width }) => (
+                   <main className="m-t-2" style={{ width }}>
+@@ -252,13 +245,13 @@ function mapStateToProps(state: StoreState, { exploreId }) {
+     datasourceInstance,
+     datasourceLoading,
+     datasourceMissing,
+-    initialQueries,
+     initialized,
+     range,
+     showingStartPage,
+     supportsGraph,
+     supportsLogs,
+     supportsTable,
++    queryKeys,
+   } = item;
+   return {
+     StartPage,
+@@ -266,7 +259,6 @@ function mapStateToProps(state: StoreState, { exploreId }) {
+     datasourceInstance,
+     datasourceLoading,
+     datasourceMissing,
+-    initialQueries,
+     initialized,
+     range,
+     showingStartPage,
+@@ -274,6 +266,7 @@ function mapStateToProps(state: StoreState, { exploreId }) {
+     supportsGraph,
+     supportsLogs,
+     supportsTable,
++    queryKeys,
+   };
+ }
+ 
+@@ -283,7 +276,7 @@ const mapDispatchToProps = {
+   initializeExplore,
+   modifyQueries,
+   scanStart,
+-  scanStop,
++  scanStopAction,
+   setQueries,
+ };
+ 
+diff --git a/public/app/features/explore/QueryEditor.tsx b/public/app/features/explore/QueryEditor.tsx
+index 083cd8a2e17..1d329f1c56e 100644
+--- a/public/app/features/explore/QueryEditor.tsx
++++ b/public/app/features/explore/QueryEditor.tsx
+@@ -14,7 +14,7 @@ interface QueryEditorProps {
+   datasource: any;
+   error?: string | JSX.Element;
+   onExecuteQuery?: () => void;
+-  onQueryChange?: (value: DataQuery, override?: boolean) => void;
++  onQueryChange?: (value: DataQuery) => void;
+   initialQuery: DataQuery;
+   exploreEvents: Emitter;
+   range: RawTimeRange;
+@@ -40,20 +40,17 @@ export default class QueryEditor extends PureComponent<QueryEditorProps, any> {
+         datasource,
+         target,
+         refresh: () => {
+-          this.props.onQueryChange(target, false);
++          this.props.onQueryChange(target);
+           this.props.onExecuteQuery();
+         },
+         events: exploreEvents,
+-        panel: {
+-          datasource,
+-          targets: [target],
+-        },
++        panel: { datasource, targets: [target] },
+         dashboard: {},
+       },
+     };
+ 
+     this.component = loader.load(this.element, scopeProps, template);
+-    this.props.onQueryChange(target, false);
++    this.props.onQueryChange(target);
+   }
+ 
+   componentWillUnmount() {
+diff --git a/public/app/features/explore/QueryField.tsx b/public/app/features/explore/QueryField.tsx
+index 85315d2bdef..8ab7e56dc5a 100644
+--- a/public/app/features/explore/QueryField.tsx
++++ b/public/app/features/explore/QueryField.tsx
+@@ -33,10 +33,9 @@ export interface QueryFieldProps {
+   cleanText?: (text: string) => string;
+   disabled?: boolean;
+   initialQuery: string | null;
+-  onBlur?: () => void;
+-  onFocus?: () => void;
++  onExecuteQuery?: () => void;
++  onQueryChange?: (value: string) => void;
+   onTypeahead?: (typeahead: TypeaheadInput) => TypeaheadOutput;
+-  onValueChanged?: (value: string) => void;
+   onWillApplySuggestion?: (suggestion: string, state: QueryFieldState) => string;
+   placeholder?: string;
+   portalOrigin?: string;
+@@ -51,6 +50,7 @@ export interface QueryFieldState {
+   typeaheadPrefix: string;
+   typeaheadText: string;
+   value: Value;
++  lastExecutedValue: Value;
+ }
+ 
+ export interface TypeaheadInput {
+@@ -90,6 +90,7 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+       typeaheadPrefix: '',
+       typeaheadText: '',
+       value: makeValue(this.placeholdersBuffer.toString(), props.syntax),
++      lastExecutedValue: null,
+     };
+   }
+ 
+@@ -132,11 +133,11 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+       if (this.placeholdersBuffer.hasPlaceholders()) {
+         change.move(this.placeholdersBuffer.getNextMoveOffset()).focus();
+       }
+-      this.onChange(change);
++      this.onChange(change, true);
+     }
+   }
+ 
+-  onChange = ({ value }) => {
++  onChange = ({ value }, invokeParentOnValueChanged?: boolean) => {
+     const documentChanged = value.document !== this.state.value.document;
+     const prevValue = this.state.value;
+ 
+@@ -144,8 +145,8 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+     this.setState({ value }, () => {
+       if (documentChanged) {
+         const textChanged = Plain.serialize(prevValue) !== Plain.serialize(value);
+-        if (textChanged) {
+-          this.handleChangeValue();
++        if (textChanged && invokeParentOnValueChanged) {
++          this.executeOnQueryChangeAndExecuteQueries();
+         }
+       }
+     });
+@@ -159,11 +160,16 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+     }
+   };
+ 
+-  handleChangeValue = () => {
++  executeOnQueryChangeAndExecuteQueries = () => {
+     // Send text change to parent
+-    const { onValueChanged } = this.props;
+-    if (onValueChanged) {
+-      onValueChanged(Plain.serialize(this.state.value));
++    const { onQueryChange, onExecuteQuery } = this.props;
++    if (onQueryChange) {
++      onQueryChange(Plain.serialize(this.state.value));
++    }
++
++    if (onExecuteQuery) {
++      onExecuteQuery();
++      this.setState({ lastExecutedValue: this.state.value });
+     }
+   };
+ 
+@@ -288,8 +294,37 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+       .focus();
+   }
+ 
+-  onKeyDown = (event, change) => {
++  handleEnterAndTabKey = change => {
+     const { typeaheadIndex, suggestions } = this.state;
++    if (this.menuEl) {
++      // Dont blur input
++      event.preventDefault();
++      if (!suggestions || suggestions.length === 0) {
++        return undefined;
++      }
++
++      const suggestion = getSuggestionByIndex(suggestions, typeaheadIndex);
++      const nextChange = this.applyTypeahead(change, suggestion);
++
++      const insertTextOperation = nextChange.operations.find(operation => operation.type === 'insert_text');
++      if (insertTextOperation) {
++        const suggestionText = insertTextOperation.text;
++        this.placeholdersBuffer.setNextPlaceholderValue(suggestionText);
++        if (this.placeholdersBuffer.hasPlaceholders()) {
++          nextChange.move(this.placeholdersBuffer.getNextMoveOffset()).focus();
++        }
++      }
++
++      return true;
++    } else {
++      this.executeOnQueryChangeAndExecuteQueries();
++
++      return undefined;
++    }
++  };
++
++  onKeyDown = (event, change) => {
++    const { typeaheadIndex } = this.state;
+ 
+     switch (event.key) {
+       case 'Escape': {
+@@ -312,27 +347,7 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+       }
+       case 'Enter':
+       case 'Tab': {
+-        if (this.menuEl) {
+-          // Dont blur input
+-          event.preventDefault();
+-          if (!suggestions || suggestions.length === 0) {
+-            return undefined;
+-          }
+-
+-          const suggestion = getSuggestionByIndex(suggestions, typeaheadIndex);
+-          const nextChange = this.applyTypeahead(change, suggestion);
+-
+-          const insertTextOperation = nextChange.operations.find(operation => operation.type === 'insert_text');
+-          if (insertTextOperation) {
+-            const suggestionText = insertTextOperation.text;
+-            this.placeholdersBuffer.setNextPlaceholderValue(suggestionText);
+-            if (this.placeholdersBuffer.hasPlaceholders()) {
+-              nextChange.move(this.placeholdersBuffer.getNextMoveOffset()).focus();
+-            }
+-          }
+-
+-          return true;
+-        }
++        return this.handleEnterAndTabKey(change);
+         break;
+       }
+ 
+@@ -364,39 +379,33 @@ export class QueryField extends React.PureComponent<QueryFieldProps, QueryFieldS
+ 
+   resetTypeahead = () => {
+     if (this.mounted) {
+-      this.setState({
+-        suggestions: [],
+-        typeaheadIndex: 0,
+-        typeaheadPrefix: '',
+-        typeaheadContext: null,
+-      });
++      this.setState({ suggestions: [], typeaheadIndex: 0, typeaheadPrefix: '', typeaheadContext: null });
+       this.resetTimer = null;
+     }
+   };
+ 
+-  handleBlur = () => {
+-    const { onBlur } = this.props;
++  handleBlur = (event, change) => {
++    const { lastExecutedValue } = this.state;
++    const previousValue = lastExecutedValue ? Plain.serialize(this.state.lastExecutedValue) : null;
++    const currentValue = Plain.serialize(change.value);
++
+     // If we dont wait here, menu clicks wont work because the menu
+     // will be gone.
+     this.resetTimer = setTimeout(this.resetTypeahead, 100);
+     // Disrupting placeholder entry wipes all remaining placeholders needing input
+     this.placeholdersBuffer.clearPlaceholders();
+-    if (onBlur) {
+-      onBlur();
+-    }
+-  };
+ 
+-  handleFocus = () => {
+-    const { onFocus } = this.props;
+-    if (onFocus) {
+-      onFocus();
++    if (previousValue !== currentValue) {
++      this.executeOnQueryChangeAndExecuteQueries();
+     }
+   };
+ 
++  handleFocus = () => {};
++
+   onClickMenu = (item: CompletionItem) => {
+     // Manually triggering change
+     const change = this.applyTypeahead(this.state.value.change(), item);
+-    this.onChange(change);
++    this.onChange(change, true);
+   };
+ 
+   updateMenu = () => {
+diff --git a/public/app/features/explore/QueryRow.tsx b/public/app/features/explore/QueryRow.tsx
+index 59f044f0ae0..79901b15116 100644
+--- a/public/app/features/explore/QueryRow.tsx
++++ b/public/app/features/explore/QueryRow.tsx
+@@ -9,20 +9,14 @@ import QueryEditor from './QueryEditor';
+ import QueryTransactionStatus from './QueryTransactionStatus';
+ 
+ // Actions
+-import {
+-  addQueryRow,
+-  changeQuery,
+-  highlightLogsExpression,
+-  modifyQueries,
+-  removeQueryRow,
+-  runQueries,
+-} from './state/actions';
++import { changeQuery, modifyQueries, runQueries, addQueryRow } from './state/actions';
+ 
+ // Types
+ import { StoreState } from 'app/types';
+-import { RawTimeRange, DataQuery, QueryHint } from '@grafana/ui';
++import { RawTimeRange, DataQuery, ExploreDataSourceApi, QueryHint, QueryFixAction } from '@grafana/ui';
+ import { QueryTransaction, HistoryItem, ExploreItemState, ExploreId } from 'app/types/explore';
+ import { Emitter } from 'app/core/utils/emitter';
++import { highlightLogsExpressionAction, removeQueryRowAction } from './state/actionTypes';
+ 
+ function getFirstHintFromTransactions(transactions: QueryTransaction[]): QueryHint {
+   const transaction = transactions.find(qt => qt.hints && qt.hints.length > 0);
+@@ -37,16 +31,16 @@ interface QueryRowProps {
+   changeQuery: typeof changeQuery;
+   className?: string;
+   exploreId: ExploreId;
+-  datasourceInstance: any;
+-  highlightLogsExpression: typeof highlightLogsExpression;
++  datasourceInstance: ExploreDataSourceApi;
++  highlightLogsExpressionAction: typeof highlightLogsExpressionAction;
+   history: HistoryItem[];
+   index: number;
+-  initialQuery: DataQuery;
++  query: DataQuery;
+   modifyQueries: typeof modifyQueries;
+   queryTransactions: QueryTransaction[];
+   exploreEvents: Emitter;
+   range: RawTimeRange;
+-  removeQueryRow: typeof removeQueryRow;
++  removeQueryRowAction: typeof removeQueryRowAction;
+   runQueries: typeof runQueries;
+ }
+ 
+@@ -78,29 +72,30 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+     this.onChangeQuery(null, true);
+   };
+ 
+-  onClickHintFix = action => {
++  onClickHintFix = (action: QueryFixAction) => {
+     const { datasourceInstance, exploreId, index } = this.props;
+     if (datasourceInstance && datasourceInstance.modifyQuery) {
+-      const modifier = (queries: DataQuery, action: any) => datasourceInstance.modifyQuery(queries, action);
++      const modifier = (queries: DataQuery, action: QueryFixAction) => datasourceInstance.modifyQuery(queries, action);
+       this.props.modifyQueries(exploreId, action, index, modifier);
+     }
+   };
+ 
+   onClickRemoveButton = () => {
+     const { exploreId, index } = this.props;
+-    this.props.removeQueryRow(exploreId, index);
++    this.props.removeQueryRowAction({ exploreId, index });
+   };
+ 
+   updateLogsHighlights = _.debounce((value: DataQuery) => {
+     const { datasourceInstance } = this.props;
+     if (datasourceInstance.getHighlighterExpression) {
++      const { exploreId } = this.props;
+       const expressions = [datasourceInstance.getHighlighterExpression(value)];
+-      this.props.highlightLogsExpression(this.props.exploreId, expressions);
++      this.props.highlightLogsExpressionAction({ exploreId, expressions });
+     }
+   }, 500);
+ 
+   render() {
+-    const { datasourceInstance, history, index, initialQuery, queryTransactions, exploreEvents, range } = this.props;
++    const { datasourceInstance, history, index, query, queryTransactions, exploreEvents, range } = this.props;
+     const transactions = queryTransactions.filter(t => t.rowIndex === index);
+     const transactionWithError = transactions.find(t => t.error !== undefined);
+     const hint = getFirstHintFromTransactions(transactions);
+@@ -115,12 +110,12 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+           {QueryField ? (
+             <QueryField
+               datasource={datasourceInstance}
++              query={query}
+               error={queryError}
+               hint={hint}
+-              initialQuery={initialQuery}
+               history={history}
+-              onClickHintFix={this.onClickHintFix}
+-              onPressEnter={this.onExecuteQuery}
++              onExecuteQuery={this.onExecuteQuery}
++              onExecuteHint={this.onClickHintFix}
+               onQueryChange={this.onChangeQuery}
+             />
+           ) : (
+@@ -129,7 +124,7 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+               error={queryError}
+               onQueryChange={this.onChangeQuery}
+               onExecuteQuery={this.onExecuteQuery}
+-              initialQuery={initialQuery}
++              initialQuery={query}
+               exploreEvents={exploreEvents}
+               range={range}
+             />
+@@ -160,17 +155,17 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+ function mapStateToProps(state: StoreState, { exploreId, index }) {
+   const explore = state.explore;
+   const item: ExploreItemState = explore[exploreId];
+-  const { datasourceInstance, history, initialQueries, queryTransactions, range } = item;
+-  const initialQuery = initialQueries[index];
+-  return { datasourceInstance, history, initialQuery, queryTransactions, range };
++  const { datasourceInstance, history, queries, queryTransactions, range } = item;
++  const query = queries[index];
++  return { datasourceInstance, history, query, queryTransactions, range };
+ }
+ 
+ const mapDispatchToProps = {
+   addQueryRow,
+   changeQuery,
+-  highlightLogsExpression,
++  highlightLogsExpressionAction,
+   modifyQueries,
+-  removeQueryRow,
++  removeQueryRowAction,
+   runQueries,
+ };
+ 
+diff --git a/public/app/features/explore/QueryRows.tsx b/public/app/features/explore/QueryRows.tsx
+index f8bb6e5ce6b..4b5a16ef781 100644
+--- a/public/app/features/explore/QueryRows.tsx
++++ b/public/app/features/explore/QueryRows.tsx
+@@ -6,25 +6,23 @@ import QueryRow from './QueryRow';
+ 
+ // Types
+ import { Emitter } from 'app/core/utils/emitter';
+-import { DataQuery } from '@grafana/ui/src/types';
+ import { ExploreId } from 'app/types/explore';
+ 
+ interface QueryRowsProps {
+   className?: string;
+   exploreEvents: Emitter;
+   exploreId: ExploreId;
+-  initialQueries: DataQuery[];
++  queryKeys: string[];
+ }
+ 
+ export default class QueryRows extends PureComponent<QueryRowsProps> {
+   render() {
+-    const { className = '', exploreEvents, exploreId, initialQueries } = this.props;
++    const { className = '', exploreEvents, exploreId, queryKeys } = this.props;
+     return (
+       <div className={className}>
+-        {initialQueries.map((query, index) => (
+-          // TODO instead of relying on initialQueries, move to react key list in redux
+-          <QueryRow key={query.key} exploreEvents={exploreEvents} exploreId={exploreId} index={index} />
+-        ))}
++        {queryKeys.map((key, index) => {
++          return <QueryRow key={key} exploreEvents={exploreEvents} exploreId={exploreId} index={index} />;
++        })}
+       </div>
+     );
+   }
+diff --git a/public/app/features/explore/Wrapper.tsx b/public/app/features/explore/Wrapper.tsx
+index aca2e6d8cbd..f64b2704b71 100644
+--- a/public/app/features/explore/Wrapper.tsx
++++ b/public/app/features/explore/Wrapper.tsx
+@@ -7,16 +7,16 @@ import { StoreState } from 'app/types';
+ import { ExploreId, ExploreUrlState } from 'app/types/explore';
+ import { parseUrlState } from 'app/core/utils/explore';
+ 
+-import { initializeExploreSplit, resetExplore } from './state/actions';
+ import ErrorBoundary from './ErrorBoundary';
+ import Explore from './Explore';
+ import { CustomScrollbar } from '@grafana/ui';
++import { initializeExploreSplitAction, resetExploreAction } from './state/actionTypes';
+ 
+ interface WrapperProps {
+-  initializeExploreSplit: typeof initializeExploreSplit;
++  initializeExploreSplitAction: typeof initializeExploreSplitAction;
+   split: boolean;
+   updateLocation: typeof updateLocation;
+-  resetExplore: typeof resetExplore;
++  resetExploreAction: typeof resetExploreAction;
+   urlStates: { [key: string]: string };
+ }
+ 
+@@ -39,12 +39,12 @@ export class Wrapper extends Component<WrapperProps> {
+ 
+   componentDidMount() {
+     if (this.initialSplit) {
+-      this.props.initializeExploreSplit();
++      this.props.initializeExploreSplitAction();
+     }
+   }
+ 
+   componentWillUnmount() {
+-    this.props.resetExplore();
++    this.props.resetExploreAction();
+   }
+ 
+   render() {
+@@ -77,9 +77,9 @@ const mapStateToProps = (state: StoreState) => {
+ };
+ 
+ const mapDispatchToProps = {
+-  initializeExploreSplit,
++  initializeExploreSplitAction,
+   updateLocation,
+-  resetExplore,
++  resetExploreAction,
+ };
+ 
+ export default hot(module)(connect(mapStateToProps, mapDispatchToProps)(Wrapper));
+diff --git a/public/app/features/explore/state/actionTypes.ts b/public/app/features/explore/state/actionTypes.ts
+index 3a0a564b651..98af5e8076e 100644
+--- a/public/app/features/explore/state/actionTypes.ts
++++ b/public/app/features/explore/state/actionTypes.ts
+@@ -1,6 +1,13 @@
+ // Types
+ import { Emitter } from 'app/core/core';
+-import { RawTimeRange, TimeRange, DataQuery, DataSourceSelectItem, DataSourceApi } from '@grafana/ui/src/types';
++import {
++  RawTimeRange,
++  TimeRange,
++  DataQuery,
++  DataSourceSelectItem,
++  DataSourceApi,
++  QueryFixAction,
++} from '@grafana/ui/src/types';
+ import {
+   ExploreId,
+   ExploreItemState,
+@@ -10,317 +17,414 @@ import {
+   QueryTransaction,
+   ExploreUIState,
+ } from 'app/types/explore';
++import { actionCreatorFactory, noPayloadActionCreatorFactory, ActionOf } from 'app/core/redux/actionCreatorFactory';
+ 
++/**  Higher order actions
++ *
++ */
+ export enum ActionTypes {
+-  AddQueryRow = 'explore/ADD_QUERY_ROW',
+-  ChangeDatasource = 'explore/CHANGE_DATASOURCE',
+-  ChangeQuery = 'explore/CHANGE_QUERY',
+-  ChangeSize = 'explore/CHANGE_SIZE',
+-  ChangeTime = 'explore/CHANGE_TIME',
+-  ClearQueries = 'explore/CLEAR_QUERIES',
+-  HighlightLogsExpression = 'explore/HIGHLIGHT_LOGS_EXPRESSION',
+-  InitializeExplore = 'explore/INITIALIZE_EXPLORE',
+   InitializeExploreSplit = 'explore/INITIALIZE_EXPLORE_SPLIT',
+-  LoadDatasourceFailure = 'explore/LOAD_DATASOURCE_FAILURE',
+-  LoadDatasourceMissing = 'explore/LOAD_DATASOURCE_MISSING',
+-  LoadDatasourcePending = 'explore/LOAD_DATASOURCE_PENDING',
+-  LoadDatasourceSuccess = 'explore/LOAD_DATASOURCE_SUCCESS',
+-  ModifyQueries = 'explore/MODIFY_QUERIES',
+-  QueryTransactionFailure = 'explore/QUERY_TRANSACTION_FAILURE',
+-  QueryTransactionStart = 'explore/QUERY_TRANSACTION_START',
+-  QueryTransactionSuccess = 'explore/QUERY_TRANSACTION_SUCCESS',
+-  RemoveQueryRow = 'explore/REMOVE_QUERY_ROW',
+-  RunQueries = 'explore/RUN_QUERIES',
+-  RunQueriesEmpty = 'explore/RUN_QUERIES_EMPTY',
+-  ScanRange = 'explore/SCAN_RANGE',
+-  ScanStart = 'explore/SCAN_START',
+-  ScanStop = 'explore/SCAN_STOP',
+-  SetQueries = 'explore/SET_QUERIES',
+   SplitClose = 'explore/SPLIT_CLOSE',
+   SplitOpen = 'explore/SPLIT_OPEN',
+-  StateSave = 'explore/STATE_SAVE',
+-  ToggleGraph = 'explore/TOGGLE_GRAPH',
+-  ToggleLogs = 'explore/TOGGLE_LOGS',
+-  ToggleTable = 'explore/TOGGLE_TABLE',
+-  UpdateDatasourceInstance = 'explore/UPDATE_DATASOURCE_INSTANCE',
+   ResetExplore = 'explore/RESET_EXPLORE',
+-  QueriesImported = 'explore/QueriesImported',
+ }
+ 
+-export interface AddQueryRowAction {
+-  type: ActionTypes.AddQueryRow;
+-  payload: {
+-    exploreId: ExploreId;
+-    index: number;
+-    query: DataQuery;
+-  };
++export interface InitializeExploreSplitAction {
++  type: ActionTypes.InitializeExploreSplit;
++  payload: {};
+ }
+ 
+-export interface ChangeQueryAction {
+-  type: ActionTypes.ChangeQuery;
+-  payload: {
+-    exploreId: ExploreId;
+-    query: DataQuery;
+-    index: number;
+-    override: boolean;
+-  };
++export interface SplitCloseAction {
++  type: ActionTypes.SplitClose;
++  payload: {};
+ }
+ 
+-export interface ChangeSizeAction {
+-  type: ActionTypes.ChangeSize;
++export interface SplitOpenAction {
++  type: ActionTypes.SplitOpen;
+   payload: {
+-    exploreId: ExploreId;
+-    width: number;
+-    height: number;
++    itemState: ExploreItemState;
+   };
+ }
+ 
+-export interface ChangeTimeAction {
+-  type: ActionTypes.ChangeTime;
+-  payload: {
+-    exploreId: ExploreId;
+-    range: TimeRange;
+-  };
++export interface ResetExploreAction {
++  type: ActionTypes.ResetExplore;
++  payload: {};
+ }
+ 
+-export interface ClearQueriesAction {
+-  type: ActionTypes.ClearQueries;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++/**  Lower order actions
++ *
++ */
++export interface AddQueryRowPayload {
++  exploreId: ExploreId;
++  index: number;
++  query: DataQuery;
+ }
+ 
+-export interface HighlightLogsExpressionAction {
+-  type: ActionTypes.HighlightLogsExpression;
+-  payload: {
+-    exploreId: ExploreId;
+-    expressions: string[];
+-  };
++export interface ChangeQueryPayload {
++  exploreId: ExploreId;
++  query: DataQuery;
++  index: number;
++  override: boolean;
+ }
+ 
+-export interface InitializeExploreAction {
+-  type: ActionTypes.InitializeExplore;
+-  payload: {
+-    exploreId: ExploreId;
+-    containerWidth: number;
+-    eventBridge: Emitter;
+-    exploreDatasources: DataSourceSelectItem[];
+-    queries: DataQuery[];
+-    range: RawTimeRange;
+-    ui: ExploreUIState;
+-  };
++export interface ChangeSizePayload {
++  exploreId: ExploreId;
++  width: number;
++  height: number;
+ }
+ 
+-export interface InitializeExploreSplitAction {
+-  type: ActionTypes.InitializeExploreSplit;
++export interface ChangeTimePayload {
++  exploreId: ExploreId;
++  range: TimeRange;
+ }
+ 
+-export interface LoadDatasourceFailureAction {
+-  type: ActionTypes.LoadDatasourceFailure;
+-  payload: {
+-    exploreId: ExploreId;
+-    error: string;
+-  };
++export interface ClearQueriesPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface LoadDatasourcePendingAction {
+-  type: ActionTypes.LoadDatasourcePending;
+-  payload: {
+-    exploreId: ExploreId;
+-    requestedDatasourceName: string;
+-  };
++export interface HighlightLogsExpressionPayload {
++  exploreId: ExploreId;
++  expressions: string[];
+ }
+ 
+-export interface LoadDatasourceMissingAction {
+-  type: ActionTypes.LoadDatasourceMissing;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface InitializeExplorePayload {
++  exploreId: ExploreId;
++  containerWidth: number;
++  eventBridge: Emitter;
++  exploreDatasources: DataSourceSelectItem[];
++  queries: DataQuery[];
++  range: RawTimeRange;
++  ui: ExploreUIState;
+ }
+ 
+-export interface LoadDatasourceSuccessAction {
+-  type: ActionTypes.LoadDatasourceSuccess;
+-  payload: {
+-    exploreId: ExploreId;
+-    StartPage?: any;
+-    datasourceInstance: any;
+-    history: HistoryItem[];
+-    logsHighlighterExpressions?: any[];
+-    showingStartPage: boolean;
+-    supportsGraph: boolean;
+-    supportsLogs: boolean;
+-    supportsTable: boolean;
+-  };
++export interface LoadDatasourceFailurePayload {
++  exploreId: ExploreId;
++  error: string;
+ }
+ 
+-export interface ModifyQueriesAction {
+-  type: ActionTypes.ModifyQueries;
+-  payload: {
+-    exploreId: ExploreId;
+-    modification: any;
+-    index: number;
+-    modifier: (queries: DataQuery[], modification: any) => DataQuery[];
+-  };
++export interface LoadDatasourceMissingPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface QueryTransactionFailureAction {
+-  type: ActionTypes.QueryTransactionFailure;
+-  payload: {
+-    exploreId: ExploreId;
+-    queryTransactions: QueryTransaction[];
+-  };
++export interface LoadDatasourcePendingPayload {
++  exploreId: ExploreId;
++  requestedDatasourceName: string;
+ }
+ 
+-export interface QueryTransactionStartAction {
+-  type: ActionTypes.QueryTransactionStart;
+-  payload: {
+-    exploreId: ExploreId;
+-    resultType: ResultType;
+-    rowIndex: number;
+-    transaction: QueryTransaction;
+-  };
++export interface LoadDatasourceSuccessPayload {
++  exploreId: ExploreId;
++  StartPage?: any;
++  datasourceInstance: any;
++  history: HistoryItem[];
++  logsHighlighterExpressions?: any[];
++  showingStartPage: boolean;
++  supportsGraph: boolean;
++  supportsLogs: boolean;
++  supportsTable: boolean;
+ }
+ 
+-export interface QueryTransactionSuccessAction {
+-  type: ActionTypes.QueryTransactionSuccess;
+-  payload: {
+-    exploreId: ExploreId;
+-    history: HistoryItem[];
+-    queryTransactions: QueryTransaction[];
+-  };
++export interface ModifyQueriesPayload {
++  exploreId: ExploreId;
++  modification: QueryFixAction;
++  index: number;
++  modifier: (query: DataQuery, modification: QueryFixAction) => DataQuery;
+ }
+ 
+-export interface RemoveQueryRowAction {
+-  type: ActionTypes.RemoveQueryRow;
+-  payload: {
+-    exploreId: ExploreId;
+-    index: number;
+-  };
++export interface QueryTransactionFailurePayload {
++  exploreId: ExploreId;
++  queryTransactions: QueryTransaction[];
+ }
+ 
+-export interface RunQueriesEmptyAction {
+-  type: ActionTypes.RunQueriesEmpty;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface QueryTransactionStartPayload {
++  exploreId: ExploreId;
++  resultType: ResultType;
++  rowIndex: number;
++  transaction: QueryTransaction;
+ }
+ 
+-export interface ScanStartAction {
+-  type: ActionTypes.ScanStart;
+-  payload: {
+-    exploreId: ExploreId;
+-    scanner: RangeScanner;
+-  };
++export interface QueryTransactionSuccessPayload {
++  exploreId: ExploreId;
++  history: HistoryItem[];
++  queryTransactions: QueryTransaction[];
+ }
+ 
+-export interface ScanRangeAction {
+-  type: ActionTypes.ScanRange;
+-  payload: {
+-    exploreId: ExploreId;
+-    range: RawTimeRange;
+-  };
++export interface RemoveQueryRowPayload {
++  exploreId: ExploreId;
++  index: number;
+ }
+ 
+-export interface ScanStopAction {
+-  type: ActionTypes.ScanStop;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface RunQueriesEmptyPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface SetQueriesAction {
+-  type: ActionTypes.SetQueries;
+-  payload: {
+-    exploreId: ExploreId;
+-    queries: DataQuery[];
+-  };
++export interface ScanStartPayload {
++  exploreId: ExploreId;
++  scanner: RangeScanner;
+ }
+ 
+-export interface SplitCloseAction {
+-  type: ActionTypes.SplitClose;
++export interface ScanRangePayload {
++  exploreId: ExploreId;
++  range: RawTimeRange;
+ }
+ 
+-export interface SplitOpenAction {
+-  type: ActionTypes.SplitOpen;
+-  payload: {
+-    itemState: ExploreItemState;
+-  };
++export interface ScanStopPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface StateSaveAction {
+-  type: ActionTypes.StateSave;
++export interface SetQueriesPayload {
++  exploreId: ExploreId;
++  queries: DataQuery[];
+ }
+ 
+-export interface ToggleTableAction {
+-  type: ActionTypes.ToggleTable;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface SplitOpenPayload {
++  itemState: ExploreItemState;
+ }
+ 
+-export interface ToggleGraphAction {
+-  type: ActionTypes.ToggleGraph;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface ToggleTablePayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface ToggleLogsAction {
+-  type: ActionTypes.ToggleLogs;
+-  payload: {
+-    exploreId: ExploreId;
+-  };
++export interface ToggleGraphPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface UpdateDatasourceInstanceAction {
+-  type: ActionTypes.UpdateDatasourceInstance;
+-  payload: {
+-    exploreId: ExploreId;
+-    datasourceInstance: DataSourceApi;
+-  };
++export interface ToggleLogsPayload {
++  exploreId: ExploreId;
+ }
+ 
+-export interface ResetExploreAction {
+-  type: ActionTypes.ResetExplore;
+-  payload: {};
++export interface UpdateDatasourceInstancePayload {
++  exploreId: ExploreId;
++  datasourceInstance: DataSourceApi;
+ }
+ 
+-export interface QueriesImported {
+-  type: ActionTypes.QueriesImported;
+-  payload: {
+-    exploreId: ExploreId;
+-    queries: DataQuery[];
+-  };
++export interface QueriesImportedPayload {
++  exploreId: ExploreId;
++  queries: DataQuery[];
+ }
+ 
+-export type Action =
+-  | AddQueryRowAction
+-  | ChangeQueryAction
+-  | ChangeSizeAction
+-  | ChangeTimeAction
+-  | ClearQueriesAction
+-  | HighlightLogsExpressionAction
+-  | InitializeExploreAction
++/**
++ * Adds a query row after the row with the given index.
++ */
++export const addQueryRowAction = actionCreatorFactory<AddQueryRowPayload>('explore/ADD_QUERY_ROW').create();
++
++/**
++ * Loads a new datasource identified by the given name.
++ */
++export const changeDatasourceAction = noPayloadActionCreatorFactory('explore/CHANGE_DATASOURCE').create();
++
++/**
++ * Query change handler for the query row with the given index.
++ * If `override` is reset the query modifications and run the queries. Use this to set queries via a link.
++ */
++export const changeQueryAction = actionCreatorFactory<ChangeQueryPayload>('explore/CHANGE_QUERY').create();
++
++/**
++ * Keep track of the Explore container size, in particular the width.
++ * The width will be used to calculate graph intervals (number of datapoints).
++ */
++export const changeSizeAction = actionCreatorFactory<ChangeSizePayload>('explore/CHANGE_SIZE').create();
++
++/**
++ * Change the time range of Explore. Usually called from the Timepicker or a graph interaction.
++ */
++export const changeTimeAction = actionCreatorFactory<ChangeTimePayload>('explore/CHANGE_TIME').create();
++
++/**
++ * Clear all queries and results.
++ */
++export const clearQueriesAction = actionCreatorFactory<ClearQueriesPayload>('explore/CLEAR_QUERIES').create();
++
++/**
++ * Highlight expressions in the log results
++ */
++export const highlightLogsExpressionAction = actionCreatorFactory<HighlightLogsExpressionPayload>(
++  'explore/HIGHLIGHT_LOGS_EXPRESSION'
++).create();
++
++/**
++ * Initialize Explore state with state from the URL and the React component.
++ * Call this only on components for with the Explore state has not been initialized.
++ */
++export const initializeExploreAction = actionCreatorFactory<InitializeExplorePayload>(
++  'explore/INITIALIZE_EXPLORE'
++).create();
++
++/**
++ * Initialize the wrapper split state
++ */
++export const initializeExploreSplitAction = noPayloadActionCreatorFactory('explore/INITIALIZE_EXPLORE_SPLIT').create();
++
++/**
++ * Display an error that happened during the selection of a datasource
++ */
++export const loadDatasourceFailureAction = actionCreatorFactory<LoadDatasourceFailurePayload>(
++  'explore/LOAD_DATASOURCE_FAILURE'
++).create();
++
++/**
++ * Display an error when no datasources have been configured
++ */
++export const loadDatasourceMissingAction = actionCreatorFactory<LoadDatasourceMissingPayload>(
++  'explore/LOAD_DATASOURCE_MISSING'
++).create();
++
++/**
++ * Start the async process of loading a datasource to display a loading indicator
++ */
++export const loadDatasourcePendingAction = actionCreatorFactory<LoadDatasourcePendingPayload>(
++  'explore/LOAD_DATASOURCE_PENDING'
++).create();
++
++/**
++ * Datasource loading was successfully completed. The instance is stored in the state as well in case we need to
++ * run datasource-specific code. Existing queries are imported to the new datasource if an importer exists,
++ * e.g., Prometheus -> Loki queries.
++ */
++export const loadDatasourceSuccessAction = actionCreatorFactory<LoadDatasourceSuccessPayload>(
++  'explore/LOAD_DATASOURCE_SUCCESS'
++).create();
++
++/**
++ * Action to modify a query given a datasource-specific modifier action.
++ * @param exploreId Explore area
++ * @param modification Action object with a type, e.g., ADD_FILTER
++ * @param index Optional query row index. If omitted, the modification is applied to all query rows.
++ * @param modifier Function that executes the modification, typically `datasourceInstance.modifyQueries`.
++ */
++export const modifyQueriesAction = actionCreatorFactory<ModifyQueriesPayload>('explore/MODIFY_QUERIES').create();
++
++/**
++ * Mark a query transaction as failed with an error extracted from the query response.
++ * The transaction will be marked as `done`.
++ */
++export const queryTransactionFailureAction = actionCreatorFactory<QueryTransactionFailurePayload>(
++  'explore/QUERY_TRANSACTION_FAILURE'
++).create();
++
++/**
++ * Start a query transaction for the given result type.
++ * @param exploreId Explore area
++ * @param transaction Query options and `done` status.
++ * @param resultType Associate the transaction with a result viewer, e.g., Graph
++ * @param rowIndex Index is used to associate latency for this transaction with a query row
++ */
++export const queryTransactionStartAction = actionCreatorFactory<QueryTransactionStartPayload>(
++  'explore/QUERY_TRANSACTION_START'
++).create();
++
++/**
++ * Complete a query transaction, mark the transaction as `done` and store query state in URL.
++ * If the transaction was started by a scanner, it keeps on scanning for more results.
++ * Side-effect: the query is stored in localStorage.
++ * @param exploreId Explore area
++ * @param transactionId ID
++ * @param result Response from `datasourceInstance.query()`
++ * @param latency Duration between request and response
++ * @param queries Queries from all query rows
++ * @param datasourceId Origin datasource instance, used to discard results if current datasource is different
++ */
++export const queryTransactionSuccessAction = actionCreatorFactory<QueryTransactionSuccessPayload>(
++  'explore/QUERY_TRANSACTION_SUCCESS'
++).create();
++
++/**
++ * Remove query row of the given index, as well as associated query results.
++ */
++export const removeQueryRowAction = actionCreatorFactory<RemoveQueryRowPayload>('explore/REMOVE_QUERY_ROW').create();
++export const runQueriesAction = noPayloadActionCreatorFactory('explore/RUN_QUERIES').create();
++export const runQueriesEmptyAction = actionCreatorFactory<RunQueriesEmptyPayload>('explore/RUN_QUERIES_EMPTY').create();
++
++/**
++ * Start a scan for more results using the given scanner.
++ * @param exploreId Explore area
++ * @param scanner Function that a) returns a new time range and b) triggers a query run for the new range
++ */
++export const scanStartAction = actionCreatorFactory<ScanStartPayload>('explore/SCAN_START').create();
++export const scanRangeAction = actionCreatorFactory<ScanRangePayload>('explore/SCAN_RANGE').create();
++
++/**
++ * Stop any scanning for more results.
++ */
++export const scanStopAction = actionCreatorFactory<ScanStopPayload>('explore/SCAN_STOP').create();
++
++/**
++ * Reset queries to the given queries. Any modifications will be discarded.
++ * Use this action for clicks on query examples. Triggers a query run.
++ */
++export const setQueriesAction = actionCreatorFactory<SetQueriesPayload>('explore/SET_QUERIES').create();
++
++/**
++ * Close the split view and save URL state.
++ */
++export const splitCloseAction = noPayloadActionCreatorFactory('explore/SPLIT_CLOSE').create();
++
++/**
++ * Open the split view and copy the left state to be the right state.
++ * The right state is automatically initialized.
++ * The copy keeps all query modifications but wipes the query results.
++ */
++export const splitOpenAction = actionCreatorFactory<SplitOpenPayload>('explore/SPLIT_OPEN').create();
++export const stateSaveAction = noPayloadActionCreatorFactory('explore/STATE_SAVE').create();
++
++/**
++ * Expand/collapse the table result viewer. When collapsed, table queries won't be run.
++ */
++export const toggleTableAction = actionCreatorFactory<ToggleTablePayload>('explore/TOGGLE_TABLE').create();
++
++/**
++ * Expand/collapse the graph result viewer. When collapsed, graph queries won't be run.
++ */
++export const toggleGraphAction = actionCreatorFactory<ToggleGraphPayload>('explore/TOGGLE_GRAPH').create();
++
++/**
++ * Expand/collapse the logs result viewer. When collapsed, log queries won't be run.
++ */
++export const toggleLogsAction = actionCreatorFactory<ToggleLogsPayload>('explore/TOGGLE_LOGS').create();
++
++/**
++ * Updates datasource instance before datasouce loading has started
++ */
++export const updateDatasourceInstanceAction = actionCreatorFactory<UpdateDatasourceInstancePayload>(
++  'explore/UPDATE_DATASOURCE_INSTANCE'
++).create();
++
++/**
++ * Resets state for explore.
++ */
++export const resetExploreAction = noPayloadActionCreatorFactory('explore/RESET_EXPLORE').create();
++export const queriesImportedAction = actionCreatorFactory<QueriesImportedPayload>('explore/QueriesImported').create();
++
++export type HigherOrderAction =
+   | InitializeExploreSplitAction
+-  | LoadDatasourceFailureAction
+-  | LoadDatasourceMissingAction
+-  | LoadDatasourcePendingAction
+-  | LoadDatasourceSuccessAction
+-  | ModifyQueriesAction
+-  | QueryTransactionFailureAction
+-  | QueryTransactionStartAction
+-  | QueryTransactionSuccessAction
+-  | RemoveQueryRowAction
+-  | RunQueriesEmptyAction
+-  | ScanRangeAction
+-  | ScanStartAction
+-  | ScanStopAction
+-  | SetQueriesAction
+   | SplitCloseAction
+   | SplitOpenAction
+-  | ToggleGraphAction
+-  | ToggleLogsAction
+-  | ToggleTableAction
+-  | UpdateDatasourceInstanceAction
+   | ResetExploreAction
+-  | QueriesImported;
++  | ActionOf<any>;
++
++export type Action =
++  | ActionOf<AddQueryRowPayload>
++  | ActionOf<ChangeQueryPayload>
++  | ActionOf<ChangeSizePayload>
++  | ActionOf<ChangeTimePayload>
++  | ActionOf<ClearQueriesPayload>
++  | ActionOf<HighlightLogsExpressionPayload>
++  | ActionOf<InitializeExplorePayload>
++  | ActionOf<LoadDatasourceFailurePayload>
++  | ActionOf<LoadDatasourceMissingPayload>
++  | ActionOf<LoadDatasourcePendingPayload>
++  | ActionOf<LoadDatasourceSuccessPayload>
++  | ActionOf<ModifyQueriesPayload>
++  | ActionOf<QueryTransactionFailurePayload>
++  | ActionOf<QueryTransactionStartPayload>
++  | ActionOf<QueryTransactionSuccessPayload>
++  | ActionOf<RemoveQueryRowPayload>
++  | ActionOf<RunQueriesEmptyPayload>
++  | ActionOf<ScanStartPayload>
++  | ActionOf<ScanRangePayload>
++  | ActionOf<SetQueriesPayload>
++  | ActionOf<SplitOpenPayload>
++  | ActionOf<ToggleTablePayload>
++  | ActionOf<ToggleGraphPayload>
++  | ActionOf<ToggleLogsPayload>
++  | ActionOf<UpdateDatasourceInstancePayload>
++  | ActionOf<QueriesImportedPayload>;
+diff --git a/public/app/features/explore/state/actions.ts b/public/app/features/explore/state/actions.ts
+index c7b47d1c3c7..f6fa5c05d63 100644
+--- a/public/app/features/explore/state/actions.ts
++++ b/public/app/features/explore/state/actions.ts
+@@ -30,41 +30,54 @@ import {
+   DataQuery,
+   DataSourceSelectItem,
+   QueryHint,
++  QueryFixAction,
+ } from '@grafana/ui/src/types';
++import { ExploreId, ExploreUrlState, RangeScanner, ResultType, QueryOptions, ExploreUIState } from 'app/types/explore';
+ import {
+-  ExploreId,
+-  ExploreUrlState,
+-  RangeScanner,
+-  ResultType,
+-  QueryOptions,
+-  QueryTransaction,
+-  ExploreUIState,
+-} from 'app/types/explore';
+-
+-import {
+-  Action as ThunkableAction,
+-  ActionTypes,
+-  AddQueryRowAction,
+-  ChangeSizeAction,
+-  HighlightLogsExpressionAction,
+-  LoadDatasourceFailureAction,
+-  LoadDatasourceMissingAction,
+-  LoadDatasourcePendingAction,
+-  LoadDatasourceSuccessAction,
+-  QueryTransactionStartAction,
+-  ScanStopAction,
+-  UpdateDatasourceInstanceAction,
+-  QueriesImported,
++  Action,
++  updateDatasourceInstanceAction,
++  changeQueryAction,
++  changeSizeAction,
++  ChangeSizePayload,
++  changeTimeAction,
++  scanStopAction,
++  clearQueriesAction,
++  initializeExploreAction,
++  loadDatasourceMissingAction,
++  loadDatasourceFailureAction,
++  loadDatasourcePendingAction,
++  queriesImportedAction,
++  LoadDatasourceSuccessPayload,
++  loadDatasourceSuccessAction,
++  modifyQueriesAction,
++  queryTransactionFailureAction,
++  queryTransactionStartAction,
++  queryTransactionSuccessAction,
++  scanRangeAction,
++  runQueriesEmptyAction,
++  scanStartAction,
++  setQueriesAction,
++  splitCloseAction,
++  splitOpenAction,
++  addQueryRowAction,
++  AddQueryRowPayload,
++  toggleGraphAction,
++  toggleLogsAction,
++  toggleTableAction,
++  ToggleGraphPayload,
++  ToggleLogsPayload,
++  ToggleTablePayload,
+ } from './actionTypes';
++import { ActionOf, ActionCreator } from 'app/core/redux/actionCreatorFactory';
+ 
+-type ThunkResult<R> = ThunkAction<R, StoreState, undefined, ThunkableAction>;
++type ThunkResult<R> = ThunkAction<R, StoreState, undefined, Action>;
+ 
+-/**
+- * Adds a query row after the row with the given index.
+- */
+-export function addQueryRow(exploreId: ExploreId, index: number): AddQueryRowAction {
++// /**
++//  * Adds a query row after the row with the given index.
++//  */
++export function addQueryRow(exploreId: ExploreId, index: number): ActionOf<AddQueryRowPayload> {
+   const query = generateEmptyQuery(index + 1);
+-  return { type: ActionTypes.AddQueryRow, payload: { exploreId, index, query } };
++  return addQueryRowAction({ exploreId, index, query });
+ }
+ 
+ /**
+@@ -74,11 +87,11 @@ export function changeDatasource(exploreId: ExploreId, datasource: string): Thun
+   return async (dispatch, getState) => {
+     const newDataSourceInstance = await getDatasourceSrv().get(datasource);
+     const currentDataSourceInstance = getState().explore[exploreId].datasourceInstance;
+-    const modifiedQueries = getState().explore[exploreId].modifiedQueries;
++    const queries = getState().explore[exploreId].queries;
+ 
+-    await dispatch(importQueries(exploreId, modifiedQueries, currentDataSourceInstance, newDataSourceInstance));
++    await dispatch(importQueries(exploreId, queries, currentDataSourceInstance, newDataSourceInstance));
+ 
+-    dispatch(updateDatasourceInstance(exploreId, newDataSourceInstance));
++    dispatch(updateDatasourceInstanceAction({ exploreId, datasourceInstance: newDataSourceInstance }));
+ 
+     try {
+       await dispatch(loadDatasource(exploreId, newDataSourceInstance));
+@@ -107,7 +120,7 @@ export function changeQuery(
+       query = { ...generateEmptyQuery(index) };
+     }
+ 
+-    dispatch({ type: ActionTypes.ChangeQuery, payload: { exploreId, query, index, override } });
++    dispatch(changeQueryAction({ exploreId, query, index, override }));
+     if (override) {
+       dispatch(runQueries(exploreId));
+     }
+@@ -121,8 +134,8 @@ export function changeQuery(
+ export function changeSize(
+   exploreId: ExploreId,
+   { height, width }: { height: number; width: number }
+-): ChangeSizeAction {
+-  return { type: ActionTypes.ChangeSize, payload: { exploreId, height, width } };
++): ActionOf<ChangeSizePayload> {
++  return changeSizeAction({ exploreId, height, width });
+ }
+ 
+ /**
+@@ -130,7 +143,7 @@ export function changeSize(
+  */
+ export function changeTime(exploreId: ExploreId, range: TimeRange): ThunkResult<void> {
+   return dispatch => {
+-    dispatch({ type: ActionTypes.ChangeTime, payload: { exploreId, range } });
++    dispatch(changeTimeAction({ exploreId, range }));
+     dispatch(runQueries(exploreId));
+   };
+ }
+@@ -140,19 +153,12 @@ export function changeTime(exploreId: ExploreId, range: TimeRange): ThunkResult<
+  */
+ export function clearQueries(exploreId: ExploreId): ThunkResult<void> {
+   return dispatch => {
+-    dispatch(scanStop(exploreId));
+-    dispatch({ type: ActionTypes.ClearQueries, payload: { exploreId } });
++    dispatch(scanStopAction({ exploreId }));
++    dispatch(clearQueriesAction({ exploreId }));
+     dispatch(stateSave());
+   };
+ }
+ 
+-/**
+- * Highlight expressions in the log results
+- */
+-export function highlightLogsExpression(exploreId: ExploreId, expressions: string[]): HighlightLogsExpressionAction {
+-  return { type: ActionTypes.HighlightLogsExpression, payload: { exploreId, expressions } };
+-}
+-
+ /**
+  * Initialize Explore state with state from the URL and the React component.
+  * Call this only on components for with the Explore state has not been initialized.
+@@ -175,19 +181,17 @@ export function initializeExplore(
+         meta: ds.meta,
+       }));
+ 
+-    dispatch({
+-      type: ActionTypes.InitializeExplore,
+-      payload: {
++    dispatch(
++      initializeExploreAction({
+         exploreId,
+         containerWidth,
+-        datasourceName,
+         eventBridge,
+         exploreDatasources,
+         queries,
+         range,
+         ui,
+-      },
+-    });
++      })
++    );
+ 
+     if (exploreDatasources.length >= 1) {
+       let instance;
+@@ -204,7 +208,7 @@ export function initializeExplore(
+         instance = await getDatasourceSrv().get();
+       }
+ 
+-      dispatch(updateDatasourceInstance(exploreId, instance));
++      dispatch(updateDatasourceInstanceAction({ exploreId, datasourceInstance: instance }));
+ 
+       try {
+         await dispatch(loadDatasource(exploreId, instance));
+@@ -214,69 +218,17 @@ export function initializeExplore(
+       }
+       dispatch(runQueries(exploreId, true));
+     } else {
+-      dispatch(loadDatasourceMissing(exploreId));
++      dispatch(loadDatasourceMissingAction({ exploreId }));
+     }
+   };
+ }
+ 
+-/**
+- * Initialize the wrapper split state
+- */
+-export function initializeExploreSplit() {
+-  return async dispatch => {
+-    dispatch({ type: ActionTypes.InitializeExploreSplit });
+-  };
+-}
+-
+-/**
+- * Display an error that happened during the selection of a datasource
+- */
+-export const loadDatasourceFailure = (exploreId: ExploreId, error: string): LoadDatasourceFailureAction => ({
+-  type: ActionTypes.LoadDatasourceFailure,
+-  payload: {
+-    exploreId,
+-    error,
+-  },
+-});
+-
+-/**
+- * Display an error when no datasources have been configured
+- */
+-export const loadDatasourceMissing = (exploreId: ExploreId): LoadDatasourceMissingAction => ({
+-  type: ActionTypes.LoadDatasourceMissing,
+-  payload: { exploreId },
+-});
+-
+-/**
+- * Start the async process of loading a datasource to display a loading indicator
+- */
+-export const loadDatasourcePending = (
+-  exploreId: ExploreId,
+-  requestedDatasourceName: string
+-): LoadDatasourcePendingAction => ({
+-  type: ActionTypes.LoadDatasourcePending,
+-  payload: {
+-    exploreId,
+-    requestedDatasourceName,
+-  },
+-});
+-
+-export const queriesImported = (exploreId: ExploreId, queries: DataQuery[]): QueriesImported => {
+-  return {
+-    type: ActionTypes.QueriesImported,
+-    payload: {
+-      exploreId,
+-      queries,
+-    },
+-  };
+-};
+-
+ /**
+  * Datasource loading was successfully completed. The instance is stored in the state as well in case we need to
+  * run datasource-specific code. Existing queries are imported to the new datasource if an importer exists,
+  * e.g., Prometheus -> Loki queries.
+  */
+-export const loadDatasourceSuccess = (exploreId: ExploreId, instance: any): LoadDatasourceSuccessAction => {
++export const loadDatasourceSuccess = (exploreId: ExploreId, instance: any): ActionOf<LoadDatasourceSuccessPayload> => {
+   // Capabilities
+   const supportsGraph = instance.meta.metrics;
+   const supportsLogs = instance.meta.logs;
+@@ -289,37 +241,18 @@ export const loadDatasourceSuccess = (exploreId: ExploreId, instance: any): Load
+   // Save last-used datasource
+   store.set(LAST_USED_DATASOURCE_KEY, instance.name);
+ 
+-  return {
+-    type: ActionTypes.LoadDatasourceSuccess,
+-    payload: {
+-      exploreId,
+-      StartPage,
+-      datasourceInstance: instance,
+-      history,
+-      showingStartPage: Boolean(StartPage),
+-      supportsGraph,
+-      supportsLogs,
+-      supportsTable,
+-    },
+-  };
++  return loadDatasourceSuccessAction({
++    exploreId,
++    StartPage,
++    datasourceInstance: instance,
++    history,
++    showingStartPage: Boolean(StartPage),
++    supportsGraph,
++    supportsLogs,
++    supportsTable,
++  });
+ };
+ 
+-/**
+- * Updates datasource instance before datasouce loading has started
+- */
+-export function updateDatasourceInstance(
+-  exploreId: ExploreId,
+-  instance: DataSourceApi
+-): UpdateDatasourceInstanceAction {
+-  return {
+-    type: ActionTypes.UpdateDatasourceInstance,
+-    payload: {
+-      exploreId,
+-      datasourceInstance: instance,
+-    },
+-  };
+-}
+-
+ export function importQueries(
+   exploreId: ExploreId,
+   queries: DataQuery[],
+@@ -341,11 +274,11 @@ export function importQueries(
+     }
+ 
+     const nextQueries = importedQueries.map((q, i) => ({
+-      ...importedQueries[i],
++      ...q,
+       ...generateEmptyQuery(i),
+     }));
+ 
+-    dispatch(queriesImported(exploreId, nextQueries));
++    dispatch(queriesImportedAction({ exploreId, queries: nextQueries }));
+   };
+ }
+ 
+@@ -357,7 +290,7 @@ export function loadDatasource(exploreId: ExploreId, instance: DataSourceApi): T
+     const datasourceName = instance.name;
+ 
+     // Keep ID to track selection
+-    dispatch(loadDatasourcePending(exploreId, datasourceName));
++    dispatch(loadDatasourcePendingAction({ exploreId, requestedDatasourceName: datasourceName }));
+     let datasourceError = null;
+ 
+     try {
+@@ -368,7 +301,7 @@ export function loadDatasource(exploreId: ExploreId, instance: DataSourceApi): T
+     }
+ 
+     if (datasourceError) {
+-      dispatch(loadDatasourceFailure(exploreId, datasourceError));
++      dispatch(loadDatasourceFailureAction({ exploreId, error: datasourceError }));
+       return Promise.reject(`${datasourceName} loading failed`);
+     }
+ 
+@@ -400,12 +333,12 @@ export function loadDatasource(exploreId: ExploreId, instance: DataSourceApi): T
+  */
+ export function modifyQueries(
+   exploreId: ExploreId,
+-  modification: any,
++  modification: QueryFixAction,
+   index: number,
+   modifier: any
+ ): ThunkResult<void> {
+   return dispatch => {
+-    dispatch({ type: ActionTypes.ModifyQueries, payload: { exploreId, modification, index, modifier } });
++    dispatch(modifyQueriesAction({ exploreId, modification, index, modifier }));
+     if (!modification.preventSubmit) {
+       dispatch(runQueries(exploreId));
+     }
+@@ -470,29 +403,10 @@ export function queryTransactionFailure(
+       return qt;
+     });
+ 
+-    dispatch({
+-      type: ActionTypes.QueryTransactionFailure,
+-      payload: { exploreId, queryTransactions: nextQueryTransactions },
+-    });
++    dispatch(queryTransactionFailureAction({ exploreId, queryTransactions: nextQueryTransactions }));
+   };
+ }
+ 
+-/**
+- * Start a query transaction for the given result type.
+- * @param exploreId Explore area
+- * @param transaction Query options and `done` status.
+- * @param resultType Associate the transaction with a result viewer, e.g., Graph
+- * @param rowIndex Index is used to associate latency for this transaction with a query row
+- */
+-export function queryTransactionStart(
+-  exploreId: ExploreId,
+-  transaction: QueryTransaction,
+-  resultType: ResultType,
+-  rowIndex: number
+-): QueryTransactionStartAction {
+-  return { type: ActionTypes.QueryTransactionStart, payload: { exploreId, resultType, rowIndex, transaction } };
+-}
+-
+ /**
+  * Complete a query transaction, mark the transaction as `done` and store query state in URL.
+  * If the transaction was started by a scanner, it keeps on scanning for more results.
+@@ -549,14 +463,13 @@ export function queryTransactionSuccess(
+     // Side-effect: Saving history in localstorage
+     const nextHistory = updateHistory(history, datasourceId, queries);
+ 
+-    dispatch({
+-      type: ActionTypes.QueryTransactionSuccess,
+-      payload: {
++    dispatch(
++      queryTransactionSuccessAction({
+         exploreId,
+         history: nextHistory,
+         queryTransactions: nextQueryTransactions,
+-      },
+-    });
++      })
++    );
+ 
+     // Keep scanning for results if this was the last scanning transaction
+     if (scanning) {
+@@ -564,26 +477,16 @@ export function queryTransactionSuccess(
+         const other = nextQueryTransactions.find(qt => qt.scanning && !qt.done);
+         if (!other) {
+           const range = scanner();
+-          dispatch({ type: ActionTypes.ScanRange, payload: { exploreId, range } });
++          dispatch(scanRangeAction({ exploreId, range }));
+         }
+       } else {
+         // We can stop scanning if we have a result
+-        dispatch(scanStop(exploreId));
++        dispatch(scanStopAction({ exploreId }));
+       }
+     }
+   };
+ }
+ 
+-/**
+- * Remove query row of the given index, as well as associated query results.
+- */
+-export function removeQueryRow(exploreId: ExploreId, index: number): ThunkResult<void> {
+-  return dispatch => {
+-    dispatch({ type: ActionTypes.RemoveQueryRow, payload: { exploreId, index } });
+-    dispatch(runQueries(exploreId));
+-  };
+-}
+-
+ /**
+  * Main action to run queries and dispatches sub-actions based on which result viewers are active
+  */
+@@ -591,7 +494,7 @@ export function runQueries(exploreId: ExploreId, ignoreUIState = false) {
+   return (dispatch, getState) => {
+     const {
+       datasourceInstance,
+-      modifiedQueries,
++      queries,
+       showingLogs,
+       showingGraph,
+       showingTable,
+@@ -600,8 +503,8 @@ export function runQueries(exploreId: ExploreId, ignoreUIState = false) {
+       supportsTable,
+     } = getState().explore[exploreId];
+ 
+-    if (!hasNonEmptyQuery(modifiedQueries)) {
+-      dispatch({ type: ActionTypes.RunQueriesEmpty, payload: { exploreId } });
++    if (!hasNonEmptyQuery(queries)) {
++      dispatch(runQueriesEmptyAction({ exploreId }));
+       dispatch(stateSave()); // Remember to saves to state and update location
+       return;
+     }
+@@ -662,14 +565,7 @@ function runQueriesForType(
+   resultGetter?: any
+ ) {
+   return async (dispatch, getState) => {
+-    const {
+-      datasourceInstance,
+-      eventBridge,
+-      modifiedQueries: queries,
+-      queryIntervals,
+-      range,
+-      scanning,
+-    } = getState().explore[exploreId];
++    const { datasourceInstance, eventBridge, queries, queryIntervals, range, scanning } = getState().explore[exploreId];
+     const datasourceId = datasourceInstance.meta.id;
+ 
+     // Run all queries concurrently
+@@ -683,7 +579,7 @@ function runQueriesForType(
+         queryIntervals,
+         scanning
+       );
+-      dispatch(queryTransactionStart(exploreId, transaction, resultType, rowIndex));
++      dispatch(queryTransactionStartAction({ exploreId, resultType, rowIndex, transaction }));
+       try {
+         const now = Date.now();
+         const res = await datasourceInstance.query(transaction.options);
+@@ -707,21 +603,14 @@ function runQueriesForType(
+ export function scanStart(exploreId: ExploreId, scanner: RangeScanner): ThunkResult<void> {
+   return dispatch => {
+     // Register the scanner
+-    dispatch({ type: ActionTypes.ScanStart, payload: { exploreId, scanner } });
++    dispatch(scanStartAction({ exploreId, scanner }));
+     // Scanning must trigger query run, and return the new range
+     const range = scanner();
+     // Set the new range to be displayed
+-    dispatch({ type: ActionTypes.ScanRange, payload: { exploreId, range } });
++    dispatch(scanRangeAction({ exploreId, range }));
+   };
+ }
+ 
+-/**
+- * Stop any scanning for more results.
+- */
+-export function scanStop(exploreId: ExploreId): ScanStopAction {
+-  return { type: ActionTypes.ScanStop, payload: { exploreId } };
+-}
+-
+ /**
+  * Reset queries to the given queries. Any modifications will be discarded.
+  * Use this action for clicks on query examples. Triggers a query run.
+@@ -730,13 +619,7 @@ export function setQueries(exploreId: ExploreId, rawQueries: DataQuery[]): Thunk
+   return dispatch => {
+     // Inject react keys into query objects
+     const queries = rawQueries.map(q => ({ ...q, ...generateEmptyQuery() }));
+-    dispatch({
+-      type: ActionTypes.SetQueries,
+-      payload: {
+-        exploreId,
+-        queries,
+-      },
+-    });
++    dispatch(setQueriesAction({ exploreId, queries }));
+     dispatch(runQueries(exploreId));
+   };
+ }
+@@ -746,7 +629,7 @@ export function setQueries(exploreId: ExploreId, rawQueries: DataQuery[]): Thunk
+  */
+ export function splitClose(): ThunkResult<void> {
+   return dispatch => {
+-    dispatch({ type: ActionTypes.SplitClose });
++    dispatch(splitCloseAction());
+     dispatch(stateSave());
+   };
+ }
+@@ -763,9 +646,9 @@ export function splitOpen(): ThunkResult<void> {
+     const itemState = {
+       ...leftState,
+       queryTransactions: [],
+-      initialQueries: leftState.modifiedQueries.slice(),
++      queries: leftState.queries.slice(),
+     };
+-    dispatch({ type: ActionTypes.SplitOpen, payload: { itemState } });
++    dispatch(splitOpenAction({ itemState }));
+     dispatch(stateSave());
+   };
+ }
+@@ -780,7 +663,7 @@ export function stateSave() {
+     const urlStates: { [index: string]: string } = {};
+     const leftUrlState: ExploreUrlState = {
+       datasource: left.datasourceInstance.name,
+-      queries: left.modifiedQueries.map(clearQueryKeys),
++      queries: left.queries.map(clearQueryKeys),
+       range: left.range,
+       ui: {
+         showingGraph: left.showingGraph,
+@@ -792,13 +675,9 @@ export function stateSave() {
+     if (split) {
+       const rightUrlState: ExploreUrlState = {
+         datasource: right.datasourceInstance.name,
+-        queries: right.modifiedQueries.map(clearQueryKeys),
++        queries: right.queries.map(clearQueryKeys),
+         range: right.range,
+-        ui: {
+-          showingGraph: right.showingGraph,
+-          showingLogs: right.showingLogs,
+-          showingTable: right.showingTable,
+-        },
++        ui: { showingGraph: right.showingGraph, showingLogs: right.showingLogs, showingTable: right.showingTable },
+       };
+ 
+       urlStates.right = serializeStateToUrlParam(rightUrlState, true);
+@@ -812,22 +691,25 @@ export function stateSave() {
+  * Creates action to collapse graph/logs/table panel. When panel is collapsed,
+  * queries won't be run
+  */
+-const togglePanelActionCreator = (type: ActionTypes.ToggleGraph | ActionTypes.ToggleTable | ActionTypes.ToggleLogs) => (
+-  exploreId: ExploreId
+-) => {
++const togglePanelActionCreator = (
++  actionCreator:
++    | ActionCreator<ToggleGraphPayload>
++    | ActionCreator<ToggleLogsPayload>
++    | ActionCreator<ToggleTablePayload>
++) => (exploreId: ExploreId) => {
+   return (dispatch, getState) => {
+     let shouldRunQueries;
+-    dispatch({ type, payload: { exploreId } });
++    dispatch(actionCreator({ exploreId }));
+     dispatch(stateSave());
+ 
+-    switch (type) {
+-      case ActionTypes.ToggleGraph:
++    switch (actionCreator.type) {
++      case toggleGraphAction.type:
+         shouldRunQueries = getState().explore[exploreId].showingGraph;
+         break;
+-      case ActionTypes.ToggleLogs:
++      case toggleLogsAction.type:
+         shouldRunQueries = getState().explore[exploreId].showingLogs;
+         break;
+-      case ActionTypes.ToggleTable:
++      case toggleTableAction.type:
+         shouldRunQueries = getState().explore[exploreId].showingTable;
+         break;
+     }
+@@ -841,23 +723,14 @@ const togglePanelActionCreator = (type: ActionTypes.ToggleGraph | ActionTypes.To
+ /**
+  * Expand/collapse the graph result viewer. When collapsed, graph queries won't be run.
+  */
+-export const toggleGraph = togglePanelActionCreator(ActionTypes.ToggleGraph);
++export const toggleGraph = togglePanelActionCreator(toggleGraphAction);
+ 
+ /**
+  * Expand/collapse the logs result viewer. When collapsed, log queries won't be run.
+  */
+-export const toggleLogs = togglePanelActionCreator(ActionTypes.ToggleLogs);
++export const toggleLogs = togglePanelActionCreator(toggleLogsAction);
+ 
+ /**
+  * Expand/collapse the table result viewer. When collapsed, table queries won't be run.
+  */
+-export const toggleTable = togglePanelActionCreator(ActionTypes.ToggleTable);
+-
+-/**
+- * Resets state for explore.
+- */
+-export function resetExplore(): ThunkResult<void> {
+-  return dispatch => {
+-    dispatch({ type: ActionTypes.ResetExplore, payload: {} });
+-  };
+-}
++export const toggleTable = togglePanelActionCreator(toggleTableAction);
+diff --git a/public/app/features/explore/state/reducers.test.ts b/public/app/features/explore/state/reducers.test.ts
+index 8227a947c5b..44079313c04 100644
+--- a/public/app/features/explore/state/reducers.test.ts
++++ b/public/app/features/explore/state/reducers.test.ts
+@@ -1,42 +1,47 @@
+-import { Action, ActionTypes } from './actionTypes';
+ import { itemReducer, makeExploreItemState } from './reducers';
+-import { ExploreId } from 'app/types/explore';
++import { ExploreId, ExploreItemState } from 'app/types/explore';
++import { reducerTester } from 'test/core/redux/reducerTester';
++import { scanStartAction, scanStopAction } from './actionTypes';
++import { Reducer } from 'redux';
++import { ActionOf } from 'app/core/redux/actionCreatorFactory';
+ 
+ describe('Explore item reducer', () => {
+   describe('scanning', () => {
+     test('should start scanning', () => {
+-      let state = makeExploreItemState();
+-      const action: Action = {
+-        type: ActionTypes.ScanStart,
+-        payload: {
+-          exploreId: ExploreId.left,
+-          scanner: jest.fn(),
+-        },
++      const scanner = jest.fn();
++      const initalState = {
++        ...makeExploreItemState(),
++        scanning: false,
++        scanner: undefined,
+       };
+-      state = itemReducer(state, action);
+-      expect(state.scanning).toBeTruthy();
+-      expect(state.scanner).toBe(action.payload.scanner);
++
++      reducerTester()
++        .givenReducer(itemReducer as Reducer<ExploreItemState, ActionOf<any>>, initalState)
++        .whenActionIsDispatched(scanStartAction({ exploreId: ExploreId.left, scanner }))
++        .thenStateShouldEqual({
++          ...makeExploreItemState(),
++          scanning: true,
++          scanner,
++        });
+     });
+     test('should stop scanning', () => {
+-      let state = makeExploreItemState();
+-      const start: Action = {
+-        type: ActionTypes.ScanStart,
+-        payload: {
+-          exploreId: ExploreId.left,
+-          scanner: jest.fn(),
+-        },
+-      };
+-      state = itemReducer(state, start);
+-      expect(state.scanning).toBeTruthy();
+-      const action: Action = {
+-        type: ActionTypes.ScanStop,
+-        payload: {
+-          exploreId: ExploreId.left,
+-        },
++      const scanner = jest.fn();
++      const initalState = {
++        ...makeExploreItemState(),
++        scanning: true,
++        scanner,
++        scanRange: {},
+       };
+-      state = itemReducer(state, action);
+-      expect(state.scanning).toBeFalsy();
+-      expect(state.scanner).toBeUndefined();
++
++      reducerTester()
++        .givenReducer(itemReducer as Reducer<ExploreItemState, ActionOf<any>>, initalState)
++        .whenActionIsDispatched(scanStopAction({ exploreId: ExploreId.left }))
++        .thenStateShouldEqual({
++          ...makeExploreItemState(),
++          scanning: false,
++          scanner: undefined,
++          scanRange: undefined,
++        });
+     });
+   });
+ });
+diff --git a/public/app/features/explore/state/reducers.ts b/public/app/features/explore/state/reducers.ts
+index 4ad07ddfc88..76fc7d5de32 100644
+--- a/public/app/features/explore/state/reducers.ts
++++ b/public/app/features/explore/state/reducers.ts
+@@ -3,11 +3,41 @@ import {
+   generateEmptyQuery,
+   getIntervals,
+   ensureQueries,
++  getQueryKeys,
+ } from 'app/core/utils/explore';
+ import { ExploreItemState, ExploreState, QueryTransaction } from 'app/types/explore';
+ import { DataQuery } from '@grafana/ui/src/types';
+ 
+-import { Action, ActionTypes } from './actionTypes';
++import { HigherOrderAction, ActionTypes } from './actionTypes';
++import { reducerFactory } from 'app/core/redux';
++import {
++  addQueryRowAction,
++  changeQueryAction,
++  changeSizeAction,
++  changeTimeAction,
++  clearQueriesAction,
++  highlightLogsExpressionAction,
++  initializeExploreAction,
++  updateDatasourceInstanceAction,
++  loadDatasourceFailureAction,
++  loadDatasourceMissingAction,
++  loadDatasourcePendingAction,
++  loadDatasourceSuccessAction,
++  modifyQueriesAction,
++  queryTransactionFailureAction,
++  queryTransactionStartAction,
++  queryTransactionSuccessAction,
++  removeQueryRowAction,
++  runQueriesEmptyAction,
++  scanRangeAction,
++  scanStartAction,
++  scanStopAction,
++  setQueriesAction,
++  toggleGraphAction,
++  toggleLogsAction,
++  toggleTableAction,
++  queriesImportedAction,
++} from './actionTypes';
+ 
+ export const DEFAULT_RANGE = {
+   from: 'now-6h',
+@@ -30,9 +60,8 @@ export const makeExploreItemState = (): ExploreItemState => ({
+   datasourceMissing: false,
+   exploreDatasources: [],
+   history: [],
+-  initialQueries: [],
++  queries: [],
+   initialized: false,
+-  modifiedQueries: [],
+   queryTransactions: [],
+   queryIntervals: { interval: '15s', intervalMs: DEFAULT_GRAPH_INTERVAL },
+   range: DEFAULT_RANGE,
+@@ -44,6 +73,7 @@ export const makeExploreItemState = (): ExploreItemState => ({
+   supportsGraph: null,
+   supportsLogs: null,
+   supportsTable: null,
++  queryKeys: [],
+ });
+ 
+ /**
+@@ -58,21 +88,15 @@ export const initialExploreState: ExploreState = {
+ /**
+  * Reducer for an Explore area, to be used by the global Explore reducer.
+  */
+-export const itemReducer = (state, action: Action): ExploreItemState => {
+-  switch (action.type) {
+-    case ActionTypes.AddQueryRow: {
+-      const { initialQueries, modifiedQueries, queryTransactions } = state;
++export const itemReducer = reducerFactory<ExploreItemState>({} as ExploreItemState)
++  .addMapper({
++    filter: addQueryRowAction,
++    mapper: (state, action): ExploreItemState => {
++      const { queries, queryTransactions } = state;
+       const { index, query } = action.payload;
+ 
+-      // Add new query row after given index, keep modifications of existing rows
+-      const nextModifiedQueries = [
+-        ...modifiedQueries.slice(0, index + 1),
+-        { ...query },
+-        ...initialQueries.slice(index + 1),
+-      ];
+-
+-      // Add to initialQueries, which will cause a new row to be rendered
+-      const nextQueries = [...initialQueries.slice(0, index + 1), { ...query }, ...initialQueries.slice(index + 1)];
++      // Add to queries, which will cause a new row to be rendered
++      const nextQueries = [...queries.slice(0, index + 1), { ...query }, ...queries.slice(index + 1)];
+ 
+       // Ongoing transactions need to update their row indices
+       const nextQueryTransactions = queryTransactions.map(qt => {
+@@ -87,48 +111,38 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+ 
+       return {
+         ...state,
+-        initialQueries: nextQueries,
++        queries: nextQueries,
+         logsHighlighterExpressions: undefined,
+-        modifiedQueries: nextModifiedQueries,
+         queryTransactions: nextQueryTransactions,
++        queryKeys: getQueryKeys(nextQueries, state.datasourceInstance),
+       };
+-    }
+-
+-    case ActionTypes.ChangeQuery: {
+-      const { initialQueries, queryTransactions } = state;
+-      let { modifiedQueries } = state;
+-      const { query, index, override } = action.payload;
+-
+-      // Fast path: only change modifiedQueries to not trigger an update
+-      modifiedQueries[index] = query;
+-      if (!override) {
+-        return {
+-          ...state,
+-          modifiedQueries,
+-        };
+-      }
++    },
++  })
++  .addMapper({
++    filter: changeQueryAction,
++    mapper: (state, action): ExploreItemState => {
++      const { queries, queryTransactions } = state;
++      const { query, index } = action.payload;
+ 
+       // Override path: queries are completely reset
+-      const nextQuery: DataQuery = {
+-        ...query,
+-        ...generateEmptyQuery(index),
+-      };
+-      const nextQueries = [...initialQueries];
++      const nextQuery: DataQuery = { ...query, ...generateEmptyQuery(index) };
++      const nextQueries = [...queries];
+       nextQueries[index] = nextQuery;
+-      modifiedQueries = [...nextQueries];
+ 
+       // Discard ongoing transaction related to row query
+       const nextQueryTransactions = queryTransactions.filter(qt => qt.rowIndex !== index);
+ 
+       return {
+         ...state,
+-        initialQueries: nextQueries,
+-        modifiedQueries: nextQueries.slice(),
++        queries: nextQueries,
+         queryTransactions: nextQueryTransactions,
++        queryKeys: getQueryKeys(nextQueries, state.datasourceInstance),
+       };
+-    }
+-
+-    case ActionTypes.ChangeSize: {
++    },
++  })
++  .addMapper({
++    filter: changeSizeAction,
++    mapper: (state, action): ExploreItemState => {
+       const { range, datasourceInstance } = state;
+       let interval = '1s';
+       if (datasourceInstance && datasourceInstance.interval) {
+@@ -137,32 +151,37 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+       const containerWidth = action.payload.width;
+       const queryIntervals = getIntervals(range, interval, containerWidth);
+       return { ...state, containerWidth, queryIntervals };
+-    }
+-
+-    case ActionTypes.ChangeTime: {
+-      return {
+-        ...state,
+-        range: action.payload.range,
+-      };
+-    }
+-
+-    case ActionTypes.ClearQueries: {
++    },
++  })
++  .addMapper({
++    filter: changeTimeAction,
++    mapper: (state, action): ExploreItemState => {
++      return { ...state, range: action.payload.range };
++    },
++  })
++  .addMapper({
++    filter: clearQueriesAction,
++    mapper: (state): ExploreItemState => {
+       const queries = ensureQueries();
+       return {
+         ...state,
+-        initialQueries: queries.slice(),
+-        modifiedQueries: queries.slice(),
++        queries: queries.slice(),
+         queryTransactions: [],
+         showingStartPage: Boolean(state.StartPage),
++        queryKeys: getQueryKeys(queries, state.datasourceInstance),
+       };
+-    }
+-
+-    case ActionTypes.HighlightLogsExpression: {
++    },
++  })
++  .addMapper({
++    filter: highlightLogsExpressionAction,
++    mapper: (state, action): ExploreItemState => {
+       const { expressions } = action.payload;
+       return { ...state, logsHighlighterExpressions: expressions };
+-    }
+-
+-    case ActionTypes.InitializeExplore: {
++    },
++  })
++  .addMapper({
++    filter: initializeExploreAction,
++    mapper: (state, action): ExploreItemState => {
+       const { containerWidth, eventBridge, exploreDatasources, queries, range, ui } = action.payload;
+       return {
+         ...state,
+@@ -170,35 +189,41 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         eventBridge,
+         exploreDatasources,
+         range,
+-        initialQueries: queries,
++        queries,
+         initialized: true,
+-        modifiedQueries: queries.slice(),
++        queryKeys: getQueryKeys(queries, state.datasourceInstance),
+         ...ui,
+       };
+-    }
+-
+-    case ActionTypes.UpdateDatasourceInstance: {
++    },
++  })
++  .addMapper({
++    filter: updateDatasourceInstanceAction,
++    mapper: (state, action): ExploreItemState => {
+       const { datasourceInstance } = action.payload;
+-      return {
+-        ...state,
+-        datasourceInstance,
+-        datasourceName: datasourceInstance.name,
+-      };
+-    }
+-
+-    case ActionTypes.LoadDatasourceFailure: {
++      return { ...state, datasourceInstance, queryKeys: getQueryKeys(state.queries, datasourceInstance) };
++    },
++  })
++  .addMapper({
++    filter: loadDatasourceFailureAction,
++    mapper: (state, action): ExploreItemState => {
+       return { ...state, datasourceError: action.payload.error, datasourceLoading: false };
+-    }
+-
+-    case ActionTypes.LoadDatasourceMissing: {
++    },
++  })
++  .addMapper({
++    filter: loadDatasourceMissingAction,
++    mapper: (state): ExploreItemState => {
+       return { ...state, datasourceMissing: true, datasourceLoading: false };
+-    }
+-
+-    case ActionTypes.LoadDatasourcePending: {
++    },
++  })
++  .addMapper({
++    filter: loadDatasourcePendingAction,
++    mapper: (state, action): ExploreItemState => {
+       return { ...state, datasourceLoading: true, requestedDatasourceName: action.payload.requestedDatasourceName };
+-    }
+-
+-    case ActionTypes.LoadDatasourceSuccess: {
++    },
++  })
++  .addMapper({
++    filter: loadDatasourceSuccessAction,
++    mapper: (state, action): ExploreItemState => {
+       const { containerWidth, range } = state;
+       const {
+         StartPage,
+@@ -227,32 +252,29 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         logsHighlighterExpressions: undefined,
+         queryTransactions: [],
+       };
+-    }
+-
+-    case ActionTypes.ModifyQueries: {
+-      const { initialQueries, modifiedQueries, queryTransactions } = state;
+-      const { modification, index, modifier } = action.payload as any;
++    },
++  })
++  .addMapper({
++    filter: modifyQueriesAction,
++    mapper: (state, action): ExploreItemState => {
++      const { queries, queryTransactions } = state;
++      const { modification, index, modifier } = action.payload;
+       let nextQueries: DataQuery[];
+       let nextQueryTransactions;
+       if (index === undefined) {
+         // Modify all queries
+-        nextQueries = initialQueries.map((query, i) => ({
+-          ...modifier(modifiedQueries[i], modification),
++        nextQueries = queries.map((query, i) => ({
++          ...modifier({ ...query }, modification),
+           ...generateEmptyQuery(i),
+         }));
+         // Discard all ongoing transactions
+         nextQueryTransactions = [];
+       } else {
+         // Modify query only at index
+-        nextQueries = initialQueries.map((query, i) => {
++        nextQueries = queries.map((query, i) => {
+           // Synchronize all queries with local query cache to ensure consistency
+           // TODO still needed?
+-          return i === index
+-            ? {
+-                ...modifier(modifiedQueries[i], modification),
+-                ...generateEmptyQuery(i),
+-              }
+-            : query;
++          return i === index ? { ...modifier({ ...query }, modification), ...generateEmptyQuery(i) } : query;
+         });
+         nextQueryTransactions = queryTransactions
+           // Consume the hint corresponding to the action
+@@ -267,22 +289,22 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+       }
+       return {
+         ...state,
+-        initialQueries: nextQueries,
+-        modifiedQueries: nextQueries.slice(),
++        queries: nextQueries,
++        queryKeys: getQueryKeys(nextQueries, state.datasourceInstance),
+         queryTransactions: nextQueryTransactions,
+       };
+-    }
+-
+-    case ActionTypes.QueryTransactionFailure: {
++    },
++  })
++  .addMapper({
++    filter: queryTransactionFailureAction,
++    mapper: (state, action): ExploreItemState => {
+       const { queryTransactions } = action.payload;
+-      return {
+-        ...state,
+-        queryTransactions,
+-        showingStartPage: false,
+-      };
+-    }
+-
+-    case ActionTypes.QueryTransactionStart: {
++      return { ...state, queryTransactions, showingStartPage: false };
++    },
++  })
++  .addMapper({
++    filter: queryTransactionStartAction,
++    mapper: (state, action): ExploreItemState => {
+       const { queryTransactions } = state;
+       const { resultType, rowIndex, transaction } = action.payload;
+       // Discarding existing transactions of same type
+@@ -293,14 +315,12 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+       // Append new transaction
+       const nextQueryTransactions: QueryTransaction[] = [...remainingTransactions, transaction];
+ 
+-      return {
+-        ...state,
+-        queryTransactions: nextQueryTransactions,
+-        showingStartPage: false,
+-      };
+-    }
+-
+-    case ActionTypes.QueryTransactionSuccess: {
++      return { ...state, queryTransactions: nextQueryTransactions, showingStartPage: false };
++    },
++  })
++  .addMapper({
++    filter: queryTransactionSuccessAction,
++    mapper: (state, action): ExploreItemState => {
+       const { datasourceInstance, queryIntervals } = state;
+       const { history, queryTransactions } = action.payload;
+       const results = calculateResultsFromQueryTransactions(
+@@ -309,30 +329,24 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         queryIntervals.intervalMs
+       );
+ 
+-      return {
+-        ...state,
+-        ...results,
+-        history,
+-        queryTransactions,
+-        showingStartPage: false,
+-      };
+-    }
+-
+-    case ActionTypes.RemoveQueryRow: {
+-      const { datasourceInstance, initialQueries, queryIntervals, queryTransactions } = state;
+-      let { modifiedQueries } = state;
++      return { ...state, ...results, history, queryTransactions, showingStartPage: false };
++    },
++  })
++  .addMapper({
++    filter: removeQueryRowAction,
++    mapper: (state, action): ExploreItemState => {
++      const { datasourceInstance, queries, queryIntervals, queryTransactions, queryKeys } = state;
+       const { index } = action.payload;
+ 
+-      modifiedQueries = [...modifiedQueries.slice(0, index), ...modifiedQueries.slice(index + 1)];
+-
+-      if (initialQueries.length <= 1) {
++      if (queries.length <= 1) {
+         return state;
+       }
+ 
+-      const nextQueries = [...initialQueries.slice(0, index), ...initialQueries.slice(index + 1)];
++      const nextQueries = [...queries.slice(0, index), ...queries.slice(index + 1)];
++      const nextQueryKeys = [...queryKeys.slice(0, index), ...queryKeys.slice(index + 1)];
+ 
+       // Discard transactions related to row query
+-      const nextQueryTransactions = queryTransactions.filter(qt => qt.rowIndex !== index);
++      const nextQueryTransactions = queryTransactions.filter(qt => nextQueries.some(nq => nq.key === qt.query.key));
+       const results = calculateResultsFromQueryTransactions(
+         nextQueryTransactions,
+         datasourceInstance,
+@@ -342,26 +356,34 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+       return {
+         ...state,
+         ...results,
+-        initialQueries: nextQueries,
++        queries: nextQueries,
+         logsHighlighterExpressions: undefined,
+-        modifiedQueries: nextQueries.slice(),
+         queryTransactions: nextQueryTransactions,
++        queryKeys: nextQueryKeys,
+       };
+-    }
+-
+-    case ActionTypes.RunQueriesEmpty: {
++    },
++  })
++  .addMapper({
++    filter: runQueriesEmptyAction,
++    mapper: (state): ExploreItemState => {
+       return { ...state, queryTransactions: [] };
+-    }
+-
+-    case ActionTypes.ScanRange: {
++    },
++  })
++  .addMapper({
++    filter: scanRangeAction,
++    mapper: (state, action): ExploreItemState => {
+       return { ...state, scanRange: action.payload.range };
+-    }
+-
+-    case ActionTypes.ScanStart: {
++    },
++  })
++  .addMapper({
++    filter: scanStartAction,
++    mapper: (state, action): ExploreItemState => {
+       return { ...state, scanning: true, scanner: action.payload.scanner };
+-    }
+-
+-    case ActionTypes.ScanStop: {
++    },
++  })
++  .addMapper({
++    filter: scanStopAction,
++    mapper: (state): ExploreItemState => {
+       const { queryTransactions } = state;
+       const nextQueryTransactions = queryTransactions.filter(qt => qt.scanning && !qt.done);
+       return {
+@@ -371,14 +393,22 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         scanRange: undefined,
+         scanner: undefined,
+       };
+-    }
+-
+-    case ActionTypes.SetQueries: {
++    },
++  })
++  .addMapper({
++    filter: setQueriesAction,
++    mapper: (state, action): ExploreItemState => {
+       const { queries } = action.payload;
+-      return { ...state, initialQueries: queries.slice(), modifiedQueries: queries.slice() };
+-    }
+-
+-    case ActionTypes.ToggleGraph: {
++      return {
++        ...state,
++        queries: queries.slice(),
++        queryKeys: getQueryKeys(queries, state.datasourceInstance),
++      };
++    },
++  })
++  .addMapper({
++    filter: toggleGraphAction,
++    mapper: (state): ExploreItemState => {
+       const showingGraph = !state.showingGraph;
+       let nextQueryTransactions = state.queryTransactions;
+       if (!showingGraph) {
+@@ -386,9 +416,11 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         nextQueryTransactions = state.queryTransactions.filter(qt => qt.resultType !== 'Graph');
+       }
+       return { ...state, queryTransactions: nextQueryTransactions, showingGraph };
+-    }
+-
+-    case ActionTypes.ToggleLogs: {
++    },
++  })
++  .addMapper({
++    filter: toggleLogsAction,
++    mapper: (state): ExploreItemState => {
+       const showingLogs = !state.showingLogs;
+       let nextQueryTransactions = state.queryTransactions;
+       if (!showingLogs) {
+@@ -396,9 +428,11 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+         nextQueryTransactions = state.queryTransactions.filter(qt => qt.resultType !== 'Logs');
+       }
+       return { ...state, queryTransactions: nextQueryTransactions, showingLogs };
+-    }
+-
+-    case ActionTypes.ToggleTable: {
++    },
++  })
++  .addMapper({
++    filter: toggleTableAction,
++    mapper: (state): ExploreItemState => {
+       const showingTable = !state.showingTable;
+       if (showingTable) {
+         return { ...state, showingTable, queryTransactions: state.queryTransactions };
+@@ -413,25 +447,26 @@ export const itemReducer = (state, action: Action): ExploreItemState => {
+       );
+ 
+       return { ...state, ...results, queryTransactions: nextQueryTransactions, showingTable };
+-    }
+-
+-    case ActionTypes.QueriesImported: {
++    },
++  })
++  .addMapper({
++    filter: queriesImportedAction,
++    mapper: (state, action): ExploreItemState => {
++      const { queries } = action.payload;
+       return {
+         ...state,
+-        initialQueries: action.payload.queries,
+-        modifiedQueries: action.payload.queries.slice(),
++        queries,
++        queryKeys: getQueryKeys(queries, state.datasourceInstance),
+       };
+-    }
+-  }
+-
+-  return state;
+-};
++    },
++  })
++  .create();
+ 
+ /**
+  * Global Explore reducer that handles multiple Explore areas (left and right).
+  * Actions that have an `exploreId` get routed to the ExploreItemReducer.
+  */
+-export const exploreReducer = (state = initialExploreState, action: Action): ExploreState => {
++export const exploreReducer = (state = initialExploreState, action: HigherOrderAction): ExploreState => {
+   switch (action.type) {
+     case ActionTypes.SplitClose: {
+       return { ...state, split: false };
+@@ -454,10 +489,7 @@ export const exploreReducer = (state = initialExploreState, action: Action): Exp
+     const { exploreId } = action.payload as any;
+     if (exploreId !== undefined) {
+       const exploreItemState = state[exploreId];
+-      return {
+-        ...state,
+-        [exploreId]: itemReducer(exploreItemState, action),
+-      };
++      return { ...state, [exploreId]: itemReducer(exploreItemState, action) };
+     }
+   }
+ 
+diff --git a/public/app/plugins/datasource/loki/components/LokiQueryEditor.tsx b/public/app/plugins/datasource/loki/components/LokiQueryEditor.tsx
+index 634a642c65e..a1b9e7a5df9 100644
+--- a/public/app/plugins/datasource/loki/components/LokiQueryEditor.tsx
++++ b/public/app/plugins/datasource/loki/components/LokiQueryEditor.tsx
+@@ -33,7 +33,7 @@ export class LokiQueryEditor extends PureComponent<Props> {
+       query: {
+         ...this.state.query,
+         expr: query.expr,
+-      }
++      },
+     });
+   };
+ 
+@@ -59,14 +59,20 @@ export class LokiQueryEditor extends PureComponent<Props> {
+       <div>
+         <LokiQueryField
+           datasource={datasource}
+-          initialQuery={query}
++          query={query}
+           onQueryChange={this.onFieldChange}
+-          onPressEnter={this.onRunQuery}
++          onExecuteQuery={this.onRunQuery}
++          history={[]}
+         />
+         <div className="gf-form-inline">
+           <div className="gf-form">
+             <div className="gf-form-label">Format as</div>
+-            <Select isSearchable={false} options={formatOptions} onChange={this.onFormatChanged} value={currentFormat} />
++            <Select
++              isSearchable={false}
++              options={formatOptions}
++              onChange={this.onFormatChanged}
++              value={currentFormat}
++            />
+           </div>
+           <div className="gf-form gf-form--grow">
+             <div className="gf-form-label gf-form-label--grow" />
+diff --git a/public/app/plugins/datasource/loki/components/LokiQueryField.tsx b/public/app/plugins/datasource/loki/components/LokiQueryField.tsx
+index ccaca86d880..c9c893baf12 100644
+--- a/public/app/plugins/datasource/loki/components/LokiQueryField.tsx
++++ b/public/app/plugins/datasource/loki/components/LokiQueryField.tsx
+@@ -12,12 +12,12 @@ import QueryField, { TypeaheadInput, QueryFieldState } from 'app/features/explor
+ import { getNextCharacter, getPreviousCousin } from 'app/features/explore/utils/dom';
+ import BracesPlugin from 'app/features/explore/slate-plugins/braces';
+ import RunnerPlugin from 'app/features/explore/slate-plugins/runner';
+-import LokiDatasource from '../datasource';
+ 
+ // Types
+ import { LokiQuery } from '../types';
+-import { TypeaheadOutput } from 'app/types/explore';
++import { TypeaheadOutput, HistoryItem } from 'app/types/explore';
+ import { makePromiseCancelable, CancelablePromise } from 'app/core/utils/CancelablePromise';
++import { ExploreDataSourceApi, ExploreQueryFieldProps } from '@grafana/ui';
+ 
+ const PRISM_SYNTAX = 'promql';
+ 
+@@ -65,15 +65,8 @@ interface CascaderOption {
+   disabled?: boolean;
+ }
+ 
+-interface LokiQueryFieldProps {
+-  datasource: LokiDatasource;
+-  error?: string | JSX.Element;
+-  hint?: any;
+-  history?: any[];
+-  initialQuery?: LokiQuery;
+-  onClickHintFix?: (action: any) => void;
+-  onPressEnter?: () => void;
+-  onQueryChange?: (value: LokiQuery, override?: boolean) => void;
++interface LokiQueryFieldProps extends ExploreQueryFieldProps<ExploreDataSourceApi, LokiQuery> {
++  history: HistoryItem[];
+ }
+ 
+ interface LokiQueryFieldState {
+@@ -98,14 +91,14 @@ export class LokiQueryField extends React.PureComponent<LokiQueryFieldProps, Lok
+ 
+     this.plugins = [
+       BracesPlugin(),
+-      RunnerPlugin({ handler: props.onPressEnter }),
++      RunnerPlugin({ handler: props.onExecuteQuery }),
+       PluginPrism({
+         onlyIn: node => node.type === 'code_block',
+         getSyntax: node => 'promql',
+       }),
+     ];
+ 
+-    this.pluginsSearch = [RunnerPlugin({ handler: props.onPressEnter })];
++    this.pluginsSearch = [RunnerPlugin({ handler: props.onExecuteQuery })];
+ 
+     this.state = {
+       logLabelOptions: [],
+@@ -169,20 +162,21 @@ export class LokiQueryField extends React.PureComponent<LokiQueryFieldProps, Lok
+ 
+   onChangeQuery = (value: string, override?: boolean) => {
+     // Send text change to parent
+-    const { initialQuery, onQueryChange } = this.props;
++    const { query, onQueryChange, onExecuteQuery } = this.props;
+     if (onQueryChange) {
+-      const query = {
+-        ...initialQuery,
+-        expr: value,
+-      };
+-      onQueryChange(query, override);
++      const nextQuery = { ...query, expr: value };
++      onQueryChange(nextQuery);
++
++      if (override && onExecuteQuery) {
++        onExecuteQuery();
++      }
+     }
+   };
+ 
+   onClickHintFix = () => {
+-    const { hint, onClickHintFix } = this.props;
+-    if (onClickHintFix && hint && hint.fix) {
+-      onClickHintFix(hint.fix.action);
++    const { hint, onExecuteHint } = this.props;
++    if (onExecuteHint && hint && hint.fix) {
++      onExecuteHint(hint.fix.action);
+     }
+   };
+ 
+@@ -220,7 +214,7 @@ export class LokiQueryField extends React.PureComponent<LokiQueryFieldProps, Lok
+   };
+ 
+   render() {
+-    const { error, hint, initialQuery } = this.props;
++    const { error, hint, query } = this.props;
+     const { logLabelOptions, syntaxLoaded } = this.state;
+     const cleanText = this.languageProvider ? this.languageProvider.cleanText : undefined;
+     const hasLogLabels = logLabelOptions && logLabelOptions.length > 0;
+@@ -240,10 +234,11 @@ export class LokiQueryField extends React.PureComponent<LokiQueryFieldProps, Lok
+             <QueryField
+               additionalPlugins={this.plugins}
+               cleanText={cleanText}
+-              initialQuery={initialQuery.expr}
++              initialQuery={query.expr}
+               onTypeahead={this.onTypeahead}
+               onWillApplySuggestion={willApplySuggestion}
+-              onValueChanged={this.onChangeQuery}
++              onQueryChange={this.onChangeQuery}
++              onExecuteQuery={this.props.onExecuteQuery}
+               placeholder="Enter a Loki query"
+               portalOrigin="loki"
+               syntaxLoaded={syntaxLoaded}
+diff --git a/public/app/plugins/datasource/loki/components/LokiStartPage.tsx b/public/app/plugins/datasource/loki/components/LokiStartPage.tsx
+index da20661fe1b..62063a790ec 100644
+--- a/public/app/plugins/datasource/loki/components/LokiStartPage.tsx
++++ b/public/app/plugins/datasource/loki/components/LokiStartPage.tsx
+@@ -1,11 +1,8 @@
+ import React, { PureComponent } from 'react';
+ import LokiCheatSheet from './LokiCheatSheet';
++import { ExploreStartPageProps } from '@grafana/ui';
+ 
+-interface Props {
+-  onClickExample: () => void;
+-}
+-
+-export default class LokiStartPage extends PureComponent<Props> {
++export default class LokiStartPage extends PureComponent<ExploreStartPageProps> {
+   render() {
+     return (
+       <div className="grafana-info-box grafana-info-box--max-lg">
+diff --git a/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx b/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
+index 316f78d45ca..01cd8c02fbd 100644
+--- a/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
++++ b/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
+@@ -4,7 +4,7 @@ import Cascader from 'rc-cascader';
+ import PluginPrism from 'slate-prism';
+ import Prism from 'prismjs';
+ 
+-import { TypeaheadOutput } from 'app/types/explore';
++import { TypeaheadOutput, HistoryItem } from 'app/types/explore';
+ 
+ // dom also includes Element polyfills
+ import { getNextCharacter, getPreviousCousin } from 'app/features/explore/utils/dom';
+@@ -13,6 +13,7 @@ import RunnerPlugin from 'app/features/explore/slate-plugins/runner';
+ import QueryField, { TypeaheadInput, QueryFieldState } from 'app/features/explore/QueryField';
+ import { PromQuery } from '../types';
+ import { CancelablePromise, makePromiseCancelable } from 'app/core/utils/CancelablePromise';
++import { ExploreDataSourceApi, ExploreQueryFieldProps } from '@grafana/ui';
+ 
+ const HISTOGRAM_GROUP = '__histograms__';
+ const METRIC_MARK = 'metric';
+@@ -86,15 +87,8 @@ interface CascaderOption {
+   disabled?: boolean;
+ }
+ 
+-interface PromQueryFieldProps {
+-  datasource: any;
+-  error?: string | JSX.Element;
+-  initialQuery: PromQuery;
+-  hint?: any;
+-  history?: any[];
+-  onClickHintFix?: (action: any) => void;
+-  onPressEnter?: () => void;
+-  onQueryChange?: (value: PromQuery, override?: boolean) => void;
++interface PromQueryFieldProps extends ExploreQueryFieldProps<ExploreDataSourceApi, PromQuery> {
++  history: HistoryItem[];
+ }
+ 
+ interface PromQueryFieldState {
+@@ -116,7 +110,7 @@ class PromQueryField extends React.PureComponent<PromQueryFieldProps, PromQueryF
+ 
+     this.plugins = [
+       BracesPlugin(),
+-      RunnerPlugin({ handler: props.onPressEnter }),
++      RunnerPlugin({ handler: props.onExecuteQuery }),
+       PluginPrism({
+         onlyIn: node => node.type === 'code_block',
+         getSyntax: node => 'promql',
+@@ -174,20 +168,21 @@ class PromQueryField extends React.PureComponent<PromQueryFieldProps, PromQueryF
+ 
+   onChangeQuery = (value: string, override?: boolean) => {
+     // Send text change to parent
+-    const { initialQuery, onQueryChange } = this.props;
++    const { query, onQueryChange, onExecuteQuery } = this.props;
+     if (onQueryChange) {
+-      const query: PromQuery = {
+-        ...initialQuery,
+-        expr: value,
+-      };
+-      onQueryChange(query, override);
++      const nextQuery: PromQuery = { ...query, expr: value };
++      onQueryChange(nextQuery);
++
++      if (override && onExecuteQuery) {
++        onExecuteQuery();
++      }
+     }
+   };
+ 
+   onClickHintFix = () => {
+-    const { hint, onClickHintFix } = this.props;
+-    if (onClickHintFix && hint && hint.fix) {
+-      onClickHintFix(hint.fix.action);
++    const { hint, onExecuteHint } = this.props;
++    if (onExecuteHint && hint && hint.fix) {
++      onExecuteHint(hint.fix.action);
+     }
+   };
+ 
+@@ -242,7 +237,7 @@ class PromQueryField extends React.PureComponent<PromQueryFieldProps, PromQueryF
+   };
+ 
+   render() {
+-    const { error, hint, initialQuery } = this.props;
++    const { error, hint, query } = this.props;
+     const { metricsOptions, syntaxLoaded } = this.state;
+     const cleanText = this.languageProvider ? this.languageProvider.cleanText : undefined;
+     const chooserText = syntaxLoaded ? 'Metrics' : 'Loading metrics...';
+@@ -261,10 +256,11 @@ class PromQueryField extends React.PureComponent<PromQueryFieldProps, PromQueryF
+             <QueryField
+               additionalPlugins={this.plugins}
+               cleanText={cleanText}
+-              initialQuery={initialQuery.expr}
++              initialQuery={query.expr}
+               onTypeahead={this.onTypeahead}
+               onWillApplySuggestion={willApplySuggestion}
+-              onValueChanged={this.onChangeQuery}
++              onQueryChange={this.onChangeQuery}
++              onExecuteQuery={this.props.onExecuteQuery}
+               placeholder="Enter a PromQL query"
+               portalOrigin="prometheus"
+               syntaxLoaded={syntaxLoaded}
+diff --git a/public/app/plugins/datasource/prometheus/components/PromStart.tsx b/public/app/plugins/datasource/prometheus/components/PromStart.tsx
+index 9acfc534853..de545e826e3 100644
+--- a/public/app/plugins/datasource/prometheus/components/PromStart.tsx
++++ b/public/app/plugins/datasource/prometheus/components/PromStart.tsx
+@@ -1,11 +1,8 @@
+ import React, { PureComponent } from 'react';
+ import PromCheatSheet from './PromCheatSheet';
++import { ExploreStartPageProps } from '@grafana/ui';
+ 
+-interface Props {
+-  onClickExample: () => void;
+-}
+-
+-export default class PromStart extends PureComponent<Props> {
++export default class PromStart extends PureComponent<ExploreStartPageProps> {
+   render() {
+     return (
+       <div className="grafana-info-box grafana-info-box--max-lg">
+diff --git a/public/app/store/configureStore.ts b/public/app/store/configureStore.ts
+index dc9a478adf3..570a387cd74 100644
+--- a/public/app/store/configureStore.ts
++++ b/public/app/store/configureStore.ts
+@@ -1,6 +1,6 @@
+ import { createStore, applyMiddleware, compose, combineReducers } from 'redux';
+ import thunk from 'redux-thunk';
+-// import { createLogger } from 'redux-logger';
++import { createLogger } from 'redux-logger';
+ import sharedReducers from 'app/core/reducers';
+ import alertingReducers from 'app/features/alerting/state/reducers';
+ import teamsReducers from 'app/features/teams/state/reducers';
+@@ -39,7 +39,7 @@ export function configureStore() {
+ 
+   if (process.env.NODE_ENV !== 'production') {
+     // DEV builds we had the logger middleware
+-    setStore(createStore(rootReducer, {}, composeEnhancers(applyMiddleware(thunk))));
++    setStore(createStore(rootReducer, {}, composeEnhancers(applyMiddleware(thunk, createLogger()))));
+   } else {
+     setStore(createStore(rootReducer, {}, composeEnhancers(applyMiddleware(thunk))));
+   }
+diff --git a/public/app/types/explore.ts b/public/app/types/explore.ts
+index 3abbc652c0d..9c8d977c3ad 100644
+--- a/public/app/types/explore.ts
++++ b/public/app/types/explore.ts
+@@ -1,5 +1,14 @@
++import { ComponentClass } from 'react';
+ import { Value } from 'slate';
+-import { RawTimeRange, TimeRange, DataQuery, DataSourceSelectItem, DataSourceApi, QueryHint } from '@grafana/ui';
++import {
++  RawTimeRange,
++  TimeRange,
++  DataQuery,
++  DataSourceSelectItem,
++  DataSourceApi,
++  QueryHint,
++  ExploreStartPageProps,
++} from '@grafana/ui';
+ 
+ import { Emitter } from 'app/core/core';
+ import { LogsModel } from 'app/core/logs_model';
+@@ -102,7 +111,7 @@ export interface ExploreItemState {
+   /**
+    * React component to be shown when no queries have been run yet, e.g., for a query language cheat sheet.
+    */
+-  StartPage?: any;
++  StartPage?: ComponentClass<ExploreStartPageProps>;
+   /**
+    * Width used for calculating the graph interval (can't have more datapoints than pixels)
+    */
+@@ -144,10 +153,10 @@ export interface ExploreItemState {
+    */
+   history: HistoryItem[];
+   /**
+-   * Initial queries for this Explore, e.g., set via URL. Each query will be
+-   * converted to a query row. Query edits should be tracked in `modifiedQueries` though.
++   * Queries for this Explore, e.g., set via URL. Each query will be
++   * converted to a query row.
+    */
+-  initialQueries: DataQuery[];
++  queries: DataQuery[];
+   /**
+    * True if this Explore area has been initialized.
+    * Used to distinguish URL state injection versus split view state injection.
+@@ -162,12 +171,6 @@ export interface ExploreItemState {
+    * Log query result to be displayed in the logs result viewer.
+    */
+   logsResult?: LogsModel;
+-  /**
+-   * Copy of `initialQueries` that tracks user edits.
+-   * Don't connect this property to a react component as it is updated on every query change.
+-   * Used when running queries. Needs to be reset to `initialQueries` when those are reset as well.
+-   */
+-  modifiedQueries: DataQuery[];
+   /**
+    * Query intervals for graph queries to determine how many datapoints to return.
+    * Needs to be updated when `datasourceInstance` or `containerWidth` is changed.
+@@ -229,6 +232,11 @@ export interface ExploreItemState {
+    * Table model that combines all query table results into a single table.
+    */
+   tableResult?: TableModel;
++
++  /**
++   * React keys for rendering of QueryRows
++   */
++  queryKeys: string[];
+ }
+ 
+ export interface ExploreUIState {
+
+commit 44cef757e5f2f0b8ed36535dcbabaf5c526914f2 (from bfdfb215f329eb5a04b5318db938a81bdddb3a2c)
+Merge: 57457e2aa42 bfdfb215f32
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Tue Feb 5 09:33:28 2019 +0100
+
+    Merge branch 'hugoh/explore-refactor-initial-modified-queries'
+
+diff --git a/devenv/docker/blocks/loki/config.yaml b/devenv/docker/blocks/loki/config.yaml
+new file mode 100644
+index 00000000000..9451b6ba79b
+--- /dev/null
++++ b/devenv/docker/blocks/loki/config.yaml
+@@ -0,0 +1,27 @@
++server:
++  http_listen_port: 9080
++  grpc_listen_port: 0
++
++positions:
++  filename: /tmp/positions.yaml
++
++client:
++  url: http://loki:3100/api/prom/push
++
++scrape_configs:
++- job_name: system
++  entry_parser: raw
++  static_configs:
++  - targets:
++      - localhost
++    labels:
++      job: varlogs
++      __path__: /var/log/*log
++- job_name: grafana
++  entry_parser: raw
++  static_configs:
++  - targets:
++      - localhost
++    labels:
++      job: grafana
++      __path__: /var/log/grafana/*log
+diff --git a/devenv/docker/blocks/loki/docker-compose.yaml b/devenv/docker/blocks/loki/docker-compose.yaml
+index d6cf21f7856..0ac5d439354 100644
+--- a/devenv/docker/blocks/loki/docker-compose.yaml
++++ b/devenv/docker/blocks/loki/docker-compose.yaml
+@@ -1,22 +1,14 @@
+-version: "3"
+-
+-networks:
+-  loki:
+-
+-services:
+   loki:
+     image: grafana/loki:master
+     ports:
+       - "3100:3100"
+     command: -config.file=/etc/loki/local-config.yaml
+-    networks:
+-      - loki
+ 
+   promtail:
+     image: grafana/promtail:master
+     volumes:
++      - ./docker/blocks/loki/config.yaml:/etc/promtail/docker-config.yaml
+       - /var/log:/var/log
++      - ../data/log:/var/log/grafana
+     command:
+       -config.file=/etc/promtail/docker-config.yaml
+-    networks:
+-      - loki
+diff --git a/packages/grafana-ui/src/components/Select/SelectOptionGroup.tsx b/packages/grafana-ui/src/components/Select/SelectOptionGroup.tsx
+index efc5e4516fc..9a787a84819 100644
+--- a/packages/grafana-ui/src/components/Select/SelectOptionGroup.tsx
++++ b/packages/grafana-ui/src/components/Select/SelectOptionGroup.tsx
+@@ -49,7 +49,7 @@ export default class SelectOptionGroup extends PureComponent<ExtendedGroupProps,
+     return (
+       <div className="gf-form-select-box__option-group">
+         <div className="gf-form-select-box__option-group__header" onClick={this.onToggleChildren}>
+-          <span className="flex-grow">{label}</span>
++          <span className="flex-grow-1">{label}</span>
+           <i className={`fa ${expanded ? 'fa-caret-left' : 'fa-caret-down'}`} />{' '}
+         </div>
+         {expanded && children}
+diff --git a/packages/grafana-ui/src/components/ValueMappingsEditor/ValueMappingsEditor.story.tsx b/packages/grafana-ui/src/components/ValueMappingsEditor/ValueMappingsEditor.story.tsx
+new file mode 100644
+index 00000000000..85504f6cd09
+--- /dev/null
++++ b/packages/grafana-ui/src/components/ValueMappingsEditor/ValueMappingsEditor.story.tsx
+@@ -0,0 +1,10 @@
++import React from 'react';
++import { storiesOf } from '@storybook/react';
++import { action } from '@storybook/addon-actions';
++import { ValueMappingsEditor } from './ValueMappingsEditor';
++
++const ValueMappingsEditorStories = storiesOf('UI/ValueMappingsEditor', module);
++
++ValueMappingsEditorStories.add('default', () => {
++  return <ValueMappingsEditor valueMappings={[]} onChange={action('Mapping changed')} />;
++});
+diff --git a/pkg/api/api.go b/pkg/api/api.go
+index 07cb712f794..980706d8355 100644
+--- a/pkg/api/api.go
++++ b/pkg/api/api.go
+@@ -108,8 +108,8 @@ func (hs *HTTPServer) registerRoutes() {
+ 	r.Get("/api/snapshots-delete/:deleteKey", Wrap(DeleteDashboardSnapshotByDeleteKey))
+ 	r.Delete("/api/snapshots/:key", reqEditorRole, Wrap(DeleteDashboardSnapshot))
+ 
+-	// api renew session based on remember cookie
+-	r.Get("/api/login/ping", quota("session"), hs.LoginAPIPing)
++	// api renew session based on cookie
++	r.Get("/api/login/ping", quota("session"), Wrap(hs.LoginAPIPing))
+ 
+ 	// authed api
+ 	r.Group("/api", func(apiRoute routing.RouteRegister) {
+diff --git a/pkg/api/common_test.go b/pkg/api/common_test.go
+index eb1f89e3f22..fe02c94e277 100644
+--- a/pkg/api/common_test.go
++++ b/pkg/api/common_test.go
+@@ -149,4 +149,4 @@ func (s *fakeUserAuthTokenService) UserAuthenticatedHook(user *m.User, c *m.ReqC
+ 	return nil
+ }
+ 
+-func (s *fakeUserAuthTokenService) UserSignedOutHook(c *m.ReqContext) {}
++func (s *fakeUserAuthTokenService) SignOutUser(c *m.ReqContext) error { return nil }
+diff --git a/pkg/api/login.go b/pkg/api/login.go
+index 50c62e0835a..49da147724e 100644
+--- a/pkg/api/login.go
++++ b/pkg/api/login.go
+@@ -136,7 +136,7 @@ func (hs *HTTPServer) loginUserWithUser(user *m.User, c *m.ReqContext) {
+ }
+ 
+ func (hs *HTTPServer) Logout(c *m.ReqContext) {
+-	hs.AuthTokenService.UserSignedOutHook(c)
++	hs.AuthTokenService.SignOutUser(c)
+ 
+ 	if setting.SignoutRedirectUrl != "" {
+ 		c.Redirect(setting.SignoutRedirectUrl)
+diff --git a/pkg/middleware/middleware_test.go b/pkg/middleware/middleware_test.go
+index 11740574d0b..4679c449853 100644
+--- a/pkg/middleware/middleware_test.go
++++ b/pkg/middleware/middleware_test.go
+@@ -602,4 +602,4 @@ func (s *fakeUserAuthTokenService) UserAuthenticatedHook(user *m.User, c *m.ReqC
+ 	return nil
+ }
+ 
+-func (s *fakeUserAuthTokenService) UserSignedOutHook(c *m.ReqContext) {}
++func (s *fakeUserAuthTokenService) SignOutUser(c *m.ReqContext) error { return nil }
+diff --git a/pkg/services/auth/auth_token.go b/pkg/services/auth/auth_token.go
+index 98687f2013d..13b9ef607f5 100644
+--- a/pkg/services/auth/auth_token.go
++++ b/pkg/services/auth/auth_token.go
+@@ -3,6 +3,7 @@ package auth
+ import (
+ 	"crypto/sha256"
+ 	"encoding/hex"
++	"errors"
+ 	"net/http"
+ 	"net/url"
+ 	"time"
+@@ -31,7 +32,7 @@ var (
+ type UserAuthTokenService interface {
+ 	InitContextWithToken(ctx *models.ReqContext, orgID int64) bool
+ 	UserAuthenticatedHook(user *models.User, c *models.ReqContext) error
+-	UserSignedOutHook(c *models.ReqContext)
++	SignOutUser(c *models.ReqContext) error
+ }
+ 
+ type UserAuthTokenServiceImpl struct {
+@@ -85,7 +86,7 @@ func (s *UserAuthTokenServiceImpl) InitContextWithToken(ctx *models.ReqContext,
+ 
+ func (s *UserAuthTokenServiceImpl) writeSessionCookie(ctx *models.ReqContext, value string, maxAge int) {
+ 	if setting.Env == setting.DEV {
+-		ctx.Logger.Info("new token", "unhashed token", value)
++		ctx.Logger.Debug("new token", "unhashed token", value)
+ 	}
+ 
+ 	ctx.Resp.Header().Del("Set-Cookie")
+@@ -112,8 +113,19 @@ func (s *UserAuthTokenServiceImpl) UserAuthenticatedHook(user *models.User, c *m
+ 	return nil
+ }
+ 
+-func (s *UserAuthTokenServiceImpl) UserSignedOutHook(c *models.ReqContext) {
++func (s *UserAuthTokenServiceImpl) SignOutUser(c *models.ReqContext) error {
++	unhashedToken := c.GetCookie(s.Cfg.LoginCookieName)
++	if unhashedToken == "" {
++		return errors.New("cannot logout without session token")
++	}
++
++	hashedToken := hashToken(unhashedToken)
++
++	sql := `DELETE FROM user_auth_token WHERE auth_token = ?`
++	_, err := s.SQLStore.NewSession().Exec(sql, hashedToken)
++
+ 	s.writeSessionCookie(c, "", -1)
++	return err
+ }
+ 
+ func (s *UserAuthTokenServiceImpl) CreateToken(userId int64, clientIP, userAgent string) (*userAuthToken, error) {
+diff --git a/pkg/services/auth/auth_token_test.go b/pkg/services/auth/auth_token_test.go
+index 2f75c660d9d..312e53a3970 100644
+--- a/pkg/services/auth/auth_token_test.go
++++ b/pkg/services/auth/auth_token_test.go
+@@ -1,10 +1,15 @@
+ package auth
+ 
+ import (
++	"fmt"
++	"net/http"
++	"net/http/httptest"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
++	macaron "gopkg.in/macaron.v1"
+ 
+ 	"github.com/grafana/grafana/pkg/log"
+ 	"github.com/grafana/grafana/pkg/services/sqlstore"
+@@ -46,6 +51,40 @@ func TestUserAuthToken(t *testing.T) {
+ 				So(err, ShouldEqual, ErrAuthTokenNotFound)
+ 				So(LookupToken, ShouldBeNil)
+ 			})
++
++			Convey("signing out should delete token and cookie if present", func() {
++				httpreq := &http.Request{Header: make(http.Header)}
++				httpreq.AddCookie(&http.Cookie{Name: userAuthTokenService.Cfg.LoginCookieName, Value: token.UnhashedToken})
++
++				ctx := &models.ReqContext{Context: &macaron.Context{
++					Req:  macaron.Request{Request: httpreq},
++					Resp: macaron.NewResponseWriter("POST", httptest.NewRecorder()),
++				},
++					Logger: log.New("fakelogger"),
++				}
++
++				err = userAuthTokenService.SignOutUser(ctx)
++				So(err, ShouldBeNil)
++
++				// makes sure we tell the browser to overwrite the cookie
++				cookieHeader := fmt.Sprintf("%s=; Path=/; Max-Age=0; HttpOnly", userAuthTokenService.Cfg.LoginCookieName)
++				So(ctx.Resp.Header().Get("Set-Cookie"), ShouldEqual, cookieHeader)
++			})
++
++			Convey("signing out an none existing session should return an error", func() {
++				httpreq := &http.Request{Header: make(http.Header)}
++				httpreq.AddCookie(&http.Cookie{Name: userAuthTokenService.Cfg.LoginCookieName, Value: ""})
++
++				ctx := &models.ReqContext{Context: &macaron.Context{
++					Req:  macaron.Request{Request: httpreq},
++					Resp: macaron.NewResponseWriter("POST", httptest.NewRecorder()),
++				},
++					Logger: log.New("fakelogger"),
++				}
++
++				err = userAuthTokenService.SignOutUser(ctx)
++				So(err, ShouldNotBeNil)
++			})
+ 		})
+ 
+ 		Convey("expires correctly", func() {
+diff --git a/public/app/core/services/backend_srv.ts b/public/app/core/services/backend_srv.ts
+index 38d7f2b76cb..c73cc7661f5 100644
+--- a/public/app/core/services/backend_srv.ts
++++ b/public/app/core/services/backend_srv.ts
+@@ -1,6 +1,7 @@
+ import _ from 'lodash';
+ import coreModule from 'app/core/core_module';
+ import appEvents from 'app/core/app_events';
++import config from 'app/core/config';
+ import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
+ 
+ export class BackendSrv {
+@@ -103,10 +104,17 @@ export class BackendSrv {
+       err => {
+         // handle unauthorized
+         if (err.status === 401 && this.contextSrv.user.isSignedIn && firstAttempt) {
+-          return this.loginPing().then(() => {
+-            options.retry = 1;
+-            return this.request(options);
+-          });
++          return this.loginPing()
++            .then(() => {
++              options.retry = 1;
++              return this.request(options);
++            })
++            .catch(err => {
++              if (err.status === 401) {
++                window.location.href = config.appSubUrl + '/logout';
++                throw err;
++              }
++            });
+         }
+ 
+         this.$timeout(this.requestErrorHandler.bind(this, err), 50);
+@@ -184,13 +192,20 @@ export class BackendSrv {
+ 
+         // handle unauthorized for backend requests
+         if (requestIsLocal && firstAttempt && err.status === 401) {
+-          return this.loginPing().then(() => {
+-            options.retry = 1;
+-            if (canceler) {
+-              canceler.resolve();
+-            }
+-            return this.datasourceRequest(options);
+-          });
++          return this.loginPing()
++            .then(() => {
++              options.retry = 1;
++              if (canceler) {
++                canceler.resolve();
++              }
++              return this.datasourceRequest(options);
++            })
++            .catch(err => {
++              if (err.status === 401) {
++                window.location.href = config.appSubUrl + '/logout';
++                throw err;
++              }
++            });
+         }
+ 
+         // populate error obj on Internal Error
+diff --git a/public/app/features/dashboard/panel_editor/QueriesTab.tsx b/public/app/features/dashboard/panel_editor/QueriesTab.tsx
+index 491f255d761..d46ff020906 100644
+--- a/public/app/features/dashboard/panel_editor/QueriesTab.tsx
++++ b/public/app/features/dashboard/panel_editor/QueriesTab.tsx
+@@ -133,7 +133,7 @@ export class QueriesTab extends PureComponent<Props, State> {
+     return (
+       <>
+         <DataSourcePicker datasources={this.datasources} onChange={this.onChangeDataSource} current={currentDS} />
+-        <div className="flex-grow" />
++        <div className="flex-grow-1" />
+         {!isAddingMixed && (
+           <button className="btn navbar-button navbar-button--primary" onClick={this.onAddQueryClick}>
+             Add Query
+diff --git a/public/app/features/explore/QueryRow.tsx b/public/app/features/explore/QueryRow.tsx
+index bcb980e49e4..79901b15116 100644
+--- a/public/app/features/explore/QueryRow.tsx
++++ b/public/app/features/explore/QueryRow.tsx
+@@ -106,7 +106,7 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+         <div className="query-row-status">
+           <QueryTransactionStatus transactions={transactions} />
+         </div>
+-        <div className="query-row-field">
++        <div className="query-row-field flex-shrink-1">
+           {QueryField ? (
+             <QueryField
+               datasource={datasourceInstance}
+@@ -130,7 +130,7 @@ export class QueryRow extends PureComponent<QueryRowProps> {
+             />
+           )}
+         </div>
+-        <div className="gf-form-inline">
++        <div className="gf-form-inline flex-shrink-0">
+           <div className="gf-form">
+             <button className="gf-form-label gf-form-label--btn" onClick={this.onClickClearButton}>
+               <i className="fa fa-times" />
+diff --git a/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx b/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
+index a395a976495..01cd8c02fbd 100644
+--- a/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
++++ b/public/app/plugins/datasource/prometheus/components/PromQueryField.tsx
+@@ -244,15 +244,15 @@ class PromQueryField extends React.PureComponent<PromQueryFieldProps, PromQueryF
+ 
+     return (
+       <>
+-        <div className="gf-form-inline">
+-          <div className="gf-form">
++        <div className="gf-form-inline gf-form-inline--nowrap">
++          <div className="gf-form flex-shrink-0">
+             <Cascader options={metricsOptions} onChange={this.onChangeMetrics}>
+               <button className="gf-form-label gf-form-label--btn" disabled={!syntaxLoaded}>
+                 {chooserText} <i className="fa fa-caret-down" />
+               </button>
+             </Cascader>
+           </div>
+-          <div className="gf-form gf-form--grow">
++          <div className="gf-form gf-form--grow flex-shrink-1">
+             <QueryField
+               additionalPlugins={this.plugins}
+               cleanText={cleanText}
+diff --git a/public/sass/components/_code_editor.scss b/public/sass/components/_code_editor.scss
+index 4f50495789d..a9c7ebf2e75 100644
+--- a/public/sass/components/_code_editor.scss
++++ b/public/sass/components/_code_editor.scss
+@@ -7,7 +7,7 @@
+   &.ace_editor {
+     @include font-family-monospace();
+     font-size: 1rem;
+-    min-height: 2.6rem;
++    min-height: 3.6rem; // Include space for horizontal scrollbar
+ 
+     @include border-radius($input-border-radius-sm);
+     border: $input-btn-border-width solid $input-border-color;
+diff --git a/public/sass/components/_gf-form.scss b/public/sass/components/_gf-form.scss
+index 3c598de8852..90ef1da30dc 100644
+--- a/public/sass/components/_gf-form.scss
++++ b/public/sass/components/_gf-form.scss
+@@ -84,6 +84,10 @@ $input-border: 1px solid $input-border-color;
+   .gf-form + .gf-form {
+     margin-left: $gf-form-margin;
+   }
++
++  &--nowrap {
++    flex-wrap: nowrap;
++  }
+ }
+ 
+ .gf-form-button-row {
+diff --git a/public/sass/components/_toolbar.scss b/public/sass/components/_toolbar.scss
+index 14db85f7e65..36be8a18739 100644
+--- a/public/sass/components/_toolbar.scss
++++ b/public/sass/components/_toolbar.scss
+@@ -4,7 +4,6 @@
+   align-items: center;
+   padding: 3px 20px 3px 20px;
+   position: relative;
+-  z-index: 1;
+   flex: 0 0 auto;
+   background: $toolbar-bg;
+   border-radius: 3px;
+diff --git a/public/sass/utils/_utils.scss b/public/sass/utils/_utils.scss
+index ce59c68a23f..16a84784de8 100644
+--- a/public/sass/utils/_utils.scss
++++ b/public/sass/utils/_utils.scss
+@@ -83,10 +83,18 @@ button.close {
+   position: absolute;
+ }
+ 
+-.flex-grow {
++.flex-grow-1 {
+   flex-grow: 1;
+ }
+ 
++.flex-shrink-1 {
++  flex-shrink: 1;
++}
++
++.flex-shrink-0 {
++  flex-shrink: 0;
++}
++
+ .center-vh {
+   display: flex;
+   align-items: center;

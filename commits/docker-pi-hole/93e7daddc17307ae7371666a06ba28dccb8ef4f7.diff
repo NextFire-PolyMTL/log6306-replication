@@ -1,0 +1,410 @@
+commit 93e7daddc17307ae7371666a06ba28dccb8ef4f7 (from 2afb0fc70344e313c639147dbb0263d452c47161)
+Merge: 2afb0fc 0897c1e
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Wed Apr 20 20:49:13 2022 +0100
+
+    Merge pull request #1006 from PeterDaveHelloKitchen/Improve-Dockerfile_build
+    
+    Improve/Refactor Dockerfile_build
+
+diff --git a/Dockerfile_build b/Dockerfile_build
+index 4ed513b..8f0606c 100644
+--- a/Dockerfile_build
++++ b/Dockerfile_build
+@@ -7,7 +7,8 @@ ARG packages
+ RUN apt-get update && \
+     apt-get install -y python3-dev curl gcc make \
+         libffi-dev libssl-dev ${packages} \
+-    && pip3 install -U pip pipenv
++    && rm -rf /var/lib/apt/lists/* \
++    && pip3 install --no-cache-dir -U pip pipenv
+ 
+ RUN curl -L https://github.com/docker/compose/releases/download/1.25.5/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose && \
+     chmod +x /usr/local/bin/docker-compose 
+
+commit 93e7daddc17307ae7371666a06ba28dccb8ef4f7 (from 0897c1e4180e61365d4ef52652bbdf4f4cfa2058)
+Merge: 2afb0fc 0897c1e
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Wed Apr 20 20:49:13 2022 +0100
+
+    Merge pull request #1006 from PeterDaveHelloKitchen/Improve-Dockerfile_build
+    
+    Improve/Refactor Dockerfile_build
+
+diff --git a/.github/workflows/stale.yml b/.github/workflows/stale.yml
+index c9582c7..f3ebe17 100644
+--- a/.github/workflows/stale.yml
++++ b/.github/workflows/stale.yml
+@@ -13,7 +13,7 @@ jobs:
+       issues: write
+ 
+     steps:
+-    - uses: actions/stale@v4
++    - uses: actions/stale@v5
+       with:
+         repo-token: ${{ secrets.GITHUB_TOKEN }}
+         days-before-stale: 30
+diff --git a/.github/workflows/sync-back-to-dev.yml b/.github/workflows/sync-back-to-dev.yml
+index 59fef0a..97dc71d 100644
+--- a/.github/workflows/sync-back-to-dev.yml
++++ b/.github/workflows/sync-back-to-dev.yml
+@@ -11,7 +11,7 @@ jobs:
+     name: Syncing branches
+     steps:
+       - name: Checkout
+-        uses: actions/checkout@v2
++        uses: actions/checkout@v3
+       - name: Opening pull request
+         id: pull
+         uses: tretuna/sync-branches@1.4.0
+diff --git a/.github/workflows/test-and-build.yaml b/.github/workflows/test-and-build.yaml
+index fd6c5ab..46cfd28 100644
+--- a/.github/workflows/test-and-build.yaml
++++ b/.github/workflows/test-and-build.yaml
+@@ -17,7 +17,7 @@ jobs:
+       DEBIAN_VERSION: buster
+     steps:
+       - name: Checkout Repo
+-        uses: actions/checkout@v2
++        uses: actions/checkout@v3
+       - name: Run Tests
+         run: |
+           echo "Building ${ARCH}-${DEBIAN_VERSION}"
+@@ -31,11 +31,11 @@ jobs:
+       -
+         name: Checkout
+         if: github.event_name != 'schedule'
+-        uses: actions/checkout@v2
++        uses: actions/checkout@v3
+       -
+         name: Checkout dev branch if we are building nightly
+         if: github.event_name == 'schedule'
+-        uses: actions/checkout@v2
++        uses: actions/checkout@v3
+         with:
+           ref: dev
+       -
+diff --git a/Dockerfile b/Dockerfile
+index 14fe67e..5cd5d9c 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,5 +1,5 @@
+ ARG PIHOLE_BASE
+-FROM "${PIHOLE_BASE:-ghcr.io/pi-hole/docker-pi-hole-base:buster-slim}"
++FROM "${PIHOLE_BASE:-ghcr.io/pi-hole/docker-pi-hole-base:bullseye-slim}"
+ 
+ ARG PIHOLE_DOCKER_TAG
+ ENV PIHOLE_DOCKER_TAG "${PIHOLE_DOCKER_TAG}"
+diff --git a/README.md b/README.md
+index edacc8b..1fc8019 100644
+--- a/README.md
++++ b/README.md
+@@ -5,6 +5,20 @@
+ </p>
+ <!-- Delete above HTML and insert markdown for dockerhub : ![Pi-hole](https://pi-hole.github.io/graphics/Vortex/Vortex_with_text.png) -->
+ 
++## Upgrade Notes
++
++- **Using Watchtower? See the [Note on Watchtower](#note-on-watchtower) at the bottom of this readme**
++
++- You may run into issues running `2022.04` and later on `buster`-based host systems due to [a known issue with Seccomp](https://github.com/moby/moby/issues/40734). The first recommendation is to upgrade your host OS to `bullseye`, which includes a more up to date (and fixed) version of `libseccomp2`.  
++ _If you absolutley cannot do this, some users [have reported](https://github.com/pi-hole/docker-pi-hole/issues/1042#issuecomment-1086728157) success in updating `libseccomp2` via backports. You can try this workaround at your own risk_  
++
++- Some users [have reported issues](https://github.com/pi-hole/docker-pi-hole/issues/963#issuecomment-1095602502) with using the `--privileged` flag on `2022.04` and above. TL;DR, don't use that that mode, and be [explicit with the permitted caps](https://github.com/pi-hole/docker-pi-hole#note-on-capabilities) (if needed) instead
++
++- As of `2022.04.01`, setting `CAP_NET_ADMIN` is only required if you are using Pi-hole as your DHCP server. The container will only try to set caps that are explicitly granted (or natively available)
++
++- In `2022.01` and later, the default `DNSMASQ_USER` has been changed to `pihole`, however this may cause issues on some systems such as Synology, see Issue [#963](https://github.com/pi-hole/docker-pi-hole/issues/963) for more information.  
++ If the container wont start due to issues setting capabilities, set `DNSMASQ_USER` to `root` in your environment.
++
+ ## Quick Start
+ 
+ 1. Copy docker-compose.yml.example to docker-compose.yml and update as needed. See example below:
+@@ -33,7 +47,7 @@ services:
+       - './etc-dnsmasq.d:/etc/dnsmasq.d'    
+     #   https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+     cap_add:
+-      - NET_ADMIN # Recommended but not required (DHCP needs NET_ADMIN)      
++      - NET_ADMIN # Required if you are using Pi-hole as your DHCP server, else not needed
+     restart: unless-stopped
+ ```
+ 2. Run `docker-compose up -d` to build and start pi-hole
+@@ -41,11 +55,6 @@ services:
+ 
+ [Here is an equivalent docker run script](https://github.com/pi-hole/docker-pi-hole/blob/master/docker_run.sh).
+ 
+-## Upgrade Notes
+-In `2022.01` and later, the default `DNSMASQ_USER` has been changed to `pihole`, however this may cause issues on some systems such as Synology, see Issue [#963](https://github.com/pi-hole/docker-pi-hole/issues/963) for more information.
+-
+-If the container wont start due to issues setting capabilities, set `DNSMASQ_USER` to `root` in your environment.
+-
+ ## Overview
+ 
+ A [Docker](https://www.docker.com/what-docker) project to make a lightweight x86 and ARM container with [Pi-hole](https://pi-hole.net) functionality.
+@@ -94,7 +103,7 @@ There are other environment variables if you want to customize various things in
+ | Variable | Default | Value | Description |
+ | -------- | ------- | ----- | ---------- |
+ | `ADMIN_EMAIL` | unset | email address | Set an administrative contact address for the Block Page |
+-| `PIHOLE_DNS_` |  `8.8.8.8;8.8.4.4` | IPs delimited by `;` | Upstream DNS server(s) for Pi-hole to forward queries to, seperated by a semicolon <br/> (supports non-standard ports with `#[port number]`) e.g `127.0.0.1#5053;8.8.8.8;8.8.4.4` Note: The existence of this environment variable assumes this as the _sole_ management of upstream DNS. Upstream DNS added via the web interface will be overwritten on container restart/recreation |
++| `PIHOLE_DNS_` |  `8.8.8.8;8.8.4.4` | IPs delimited by `;` | Upstream DNS server(s) for Pi-hole to forward queries to, separated by a semicolon <br/> (supports non-standard ports with `#[port number]`) e.g `127.0.0.1#5053;8.8.8.8;8.8.4.4` <br/> (supports [Docker service names and links](https://docs.docker.com/compose/networking/) instead of IPs) e.g `upstream0;upstream1` where `upstream0` and `upstream1` are the service names of or links to docker services <br/> Note: The existence of this environment variable assumes this as the _sole_ management of upstream DNS. Upstream DNS added via the web interface will be overwritten on container restart/recreation |
+ | `DNSSEC` | `false` | `<"true"\|"false">` | Enable DNSSEC support |
+ | `DNS_BOGUS_PRIV` | `true` |`<"true"\|"false">`| Never forward reverse lookups for private ranges |
+ | `DNS_FQDN_REQUIRED` | `true` | `<"true"\|"false">`| Never forward non-FQDNs |
+@@ -127,6 +136,7 @@ There are other environment variables if you want to customize various things in
+ | `SKIPGRAVITYONBOOT` | unset | `<unset\|1>` | Use this option to skip updating the Gravity Database when booting up the container.  By default this environment variable is not set so the Gravity Database will be updated when the container starts up.  Setting this environment variable to 1 (or anything) will cause the Gravity Database to not be updated when container starts up.
+ | `CORS_HOSTS` | unset | `<FQDNs delimited by ,>` | List of domains/subdomains on which CORS is allowed. Wildcards are not supported. Eg: `CORS_HOSTS: domain.com,home.domain.com,www.domain.com`.
+ | `CUSTOM_CACHE_SIZE` | `10000` | Number | Set the cache size for dnsmasq. Useful for increasing the default cache size or to set it to 0. Note that when `DNSSEC` is "true", then this setting is ignored.
++| `FTL_CMD` | `no-daemon` | `no-daemon -- <dnsmasq option>` | Customize the options with which dnsmasq gets started. e.g. `no-daemon -- --dns-forward-max 300` to increase max. number of concurrent dns queries on high load setups. |
+ | `FTLCONF_[SETTING]` | unset | As per documentation | Customize pihole-FTL.conf with settings described in the [FTLDNS Configuration page](https://docs.pi-hole.net/ftldns/configfile/). For example, to customize REPLY_ADDR6, ensure you have the `FTLCONF_REPLY_ADDR6` environment variable set.
+ 
+ ### Experimental Variables
+@@ -140,7 +150,7 @@ There are other environment variables if you want to customize various things in
+ | WEBLOGS_STDOUT | 0 | 0&vert;1 | 0 logs to defined files, 1 redirect access and error logs to stdout |
+ 
+ ## Deprecated environment variables:
+-While these may still work, they are likely to be removed in a future version. Where applicible, alternative variable names are indicated. Please review the table above for usage of the alternative variables
++While these may still work, they are likely to be removed in a future version. Where applicable, alternative variable names are indicated. Please review the table above for usage of the alternative variables
+ 
+ | Docker Environment Var. | Description | Replaced By |
+ | ----------------------- | ----------- | ----------- |
+@@ -283,6 +293,18 @@ This image automatically grants those capabilities, if available, to the FTLDNS
+ By default, docker does not include the `NET_ADMIN` capability for non-privileged containers, and it is recommended to explicitly add it to the container using `--cap-add=NET_ADMIN`.\
+ However, if DHCP and IPv6 Router Advertisements are not in use, it should be safe to skip it. For the most paranoid, it should even be possible to explicitly drop the `NET_RAW` capability to prevent FTLDNS from automatically gaining it.
+ 
++
++## Note on Watchtower
++
++We have noticed that a lot of people use Watchtower to keep their Pi-hole containers up to date. For the same reason we don't provide an auto-update feature on a bare metal install, you _should not_ have a system automatically update your Pi-hole container. Especially unattended. As much as we try to ensure nothing will go wrong, sometimes things do go wrong - and you need to set aside time to _manually_ pull and update to the version of the container you wish to run. The upgrade process should be along the lines of:
++
++ - **Important**: Read the release notes. Sometimes you will need to make changes other than just updating the image
++ - Pull the new image
++ - Stop and _remove_ the running Pi-hole container
++   - If you care about your data (logs/customizations), make sure you have it volume-mapped or it will be deleted in this step.
++ - Recreate the container using the new image
++
++Pi-hole is an integral part of your network, don't let it fall over because of an unattended update in the middle of the night.
+ # User Feedback
+ 
+ Please report issues on the [GitHub project](https://github.com/pi-hole/docker-pi-hole) when you suspect something docker related.  Pi-hole or general docker questions are best answered on our [user forums](https://github.com/pi-hole/pi-hole/blob/master/README.md#get-help-or-connect-with-us-on-the-web).  Ping me (@diginc) on the forums if it's a docker container and you're not sure if it's docker related.
+diff --git a/bash_functions.sh b/bash_functions.sh
+index 055bf8c..8fc6409 100644
+--- a/bash_functions.sh
++++ b/bash_functions.sh
+@@ -3,11 +3,36 @@
+ . /opt/pihole/webpage.sh
+ 
+ fix_capabilities() {
+-    setcap CAP_NET_BIND_SERVICE,CAP_NET_RAW,CAP_NET_ADMIN,CAP_SYS_NICE,CAP_CHOWN+ei $(which pihole-FTL) || ret=$?
+-
+-    if [[ $ret -ne 0 && "${DNSMASQ_USER:-pihole}" != "root" ]]; then
+-        echo "ERROR: Unable to set capabilities for pihole-FTL. Cannot run as non-root."
+-        echo "       If you are seeing this error, please set the environment variable 'DNSMASQ_USER' to the value 'root'"
++    # Testing on Docker 20.10.14 with no caps set shows the following caps available to the container:
++    # Current: cap_chown,cap_dac_override,cap_fowner,cap_fsetid,cap_kill,cap_setgid,cap_setuid,cap_setpcap,cap_net_bind_service,cap_net_raw,cap_sys_chroot,cap_mknod,cap_audit_write,cap_setfcap=ep
++    # FTL can also use CAP_NET_ADMIN and CAP_SYS_NICE. If we try to set them when they haven't been explicitly enabled, FTL will not start. Test for them first:
++    
++    /sbin/capsh '==' --print | grep "Current:" | grep -q cap_chown && CAP_STR+=',CAP_CHOWN'
++    /sbin/capsh '==' --print | grep "Current:" | grep -q cap_net_bind_service && CAP_STR+=',CAP_NET_BIND_SERVICE'
++    /sbin/capsh '==' --print | grep "Current:" | grep -q cap_net_raw && CAP_STR+=',CAP_NET_RAW'
++    /sbin/capsh '==' --print | grep "Current:" | grep -q cap_net_admin && CAP_STR+=',CAP_NET_ADMIN' || DHCP_READY='false'
++    /sbin/capsh '==' --print | grep "Current:" | grep -q cap_sys_nice && CAP_STR+=',CAP_SYS_NICE'    
++
++    if [[ ${CAP_STR} ]]; then
++        # We have the (some of) the above caps available to us - apply them to pihole-FTL
++        setcap ${CAP_STR:1}+ep $(which pihole-FTL) || ret=$?
++
++        if [[ $DHCP_READY == false ]] && [[ $DHCP_ACTIVE == true ]]; then
++            # DHCP is requested but NET_ADMIN is not available.
++            echo "ERROR: DHCP requested but NET_ADMIN is not available. DHCP will not be started."
++            echo "      Please add cap_net_admin to the container's capabilities or disable DHCP."
++            DHCP_ACTIVE='false'
++            change_setting "DHCP_ACTIVE" "false"
++        fi
++        
++        if [[ $ret -ne 0 && "${DNSMASQ_USER:-pihole}" != "root" ]]; then
++            echo "ERROR: Unable to set capabilities for pihole-FTL. Cannot run as non-root."
++            echo "       If you are seeing this error, please set the environment variable 'DNSMASQ_USER' to the value 'root'"
++            exit 1
++        fi   
++    else
++        echo "WARNING: Unable to set capabilities for pihole-FTL."
++        echo "         Please ensure that the container has the required capabilities."
+         exit 1
+     fi
+ }
+@@ -20,7 +45,12 @@ prepare_configs() {
+     LIGHTTPD_GROUP="www-data"
+     LIGHTTPD_CFG="lighttpd.conf.debian"
+     installConfigs
+-    touch "$setupVars"
++   
++    if [ ! -f "${setupVars}" ]; then
++        install -m 644 /dev/null "${setupVars}"
++        echo "Creating empty ${setupVars} file."
++    fi
++    
+     set +e
+     mkdir -p /var/run/pihole /var/log/pihole
+     
+diff --git a/install.sh b/install.sh
+index 0a67f00..f0ddabb 100644
+--- a/install.sh
++++ b/install.sh
+@@ -26,6 +26,13 @@ esac
+   echo "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.gz"
+ }
+ 
++# Helps to have some additional tools in the dev image when debugging
++if [[ "${PIHOLE_DOCKER_TAG}" = 'nightly' ||  "${PIHOLE_DOCKER_TAG}" = 'dev' ]]; then
++  apt-get update
++  apt-get install --no-install-recommends -y nano less
++  rm -rf /var/lib/apt/lists/*
++fi
++
+ ln -s `which echo` /usr/local/bin/whiptail
+ curl -L -s "$(s6_download_url)" | tar xvzf - -C /
+ mv /init /s6-init
+@@ -74,6 +81,7 @@ if [[ "${PIHOLE_DOCKER_TAG}" != "dev" && "${PIHOLE_DOCKER_TAG}" != "nightly" ]];
+   sed -i $'s/)\s*piholeCheckoutFunc/) unsupportedFunc/g' /usr/local/bin/pihole
+ fi
+ 
+-touch /.piholeFirstBoot
+-
++if [ ! -f /.piholeFirstBoot ]; then
++  touch /.piholeFirstBoot
++fi
+ echo 'Docker install successful'
+\ No newline at end of file
+diff --git a/s6/debian-root/etc/services.d/lighttpd/run b/s6/debian-root/etc/services.d/lighttpd/run
+index b60786b..2cd314a 100644
+--- a/s6/debian-root/etc/services.d/lighttpd/run
++++ b/s6/debian-root/etc/services.d/lighttpd/run
+@@ -19,8 +19,10 @@ else
+   #remove fifo if exists
+   [[ -p /var/log/lighttpd/access.log ]] && rm -Rf /var/log/lighttpd/access.log
+   [[ -p  /var/log/lighttpd/error.log ]] && rm -Rf /var/log/lighttpd/error.log
+-  # Touch log files to ensure they exist (create if non-existing, preserve if existing)
+-  touch /var/log/lighttpd/access.log /var/log/lighttpd/error.log
++
++  # install /dev/null log files to ensure they exist (create if non-existing, preserve if existing)
++  [[ ! -f /var/log/lighttpd/access.log ]] && install /dev/null /var/log/lighttpd/access.log
++  [[ ! -f  /var/log/lighttpd/error.log ]] && install /dev/null /var/log/lighttpd/error.log
+ 
+   # Ensure that permissions are set so that lighttpd can write to the logs
+   chown -R www-data:www-data /var/log/lighttpd
+diff --git a/s6/debian-root/etc/services.d/pihole-FTL/run b/s6/debian-root/etc/services.d/pihole-FTL/run
+index 17d79e1..00a75a0 100644
+--- a/s6/debian-root/etc/services.d/pihole-FTL/run
++++ b/s6/debian-root/etc/services.d/pihole-FTL/run
+@@ -5,9 +5,13 @@ s6-echo "Starting pihole-FTL ($FTL_CMD) as ${DNSMASQ_USER}"
+ rm -f /dev/shm/FTL-* 2> /dev/null
+ rm /run/pihole/FTL.sock 2> /dev/null
+ 
+-# Touch files to ensure they exist (create if non-existing, preserve if existing)
++# install /dev/null files to ensure they exist (create if non-existing, preserve if existing)
+ mkdir -pm 0755 /run/pihole
+-touch /run/pihole-FTL.pid /run/pihole-FTL.port /var/log/pihole-FTL.log /var/log/pihole.log /etc/pihole/dhcp.leases
++[[ ! -f /run/pihole-FTL.pid ]] && install /dev/null /run/pihole-FTL.pid
++[[ ! -f /run/pihole-FTL.port ]] && install /dev/null /run/pihole-FTL.port
++[[ ! -f /var/log/pihole-FTL.log ]] && install /dev/null /var/log/pihole-FTL.log
++[[ ! -f /var/log/pihole.log ]] && install /dev/null /var/log/pihole.log
++[[ ! -f /etc/pihole/dhcp.leases ]] && install /dev/null /etc/pihole/dhcp.leases
+ 
+ # Ensure that permissions are set so that pihole-FTL can edit all necessary files
+ chown pihole:pihole /run/pihole-FTL.pid /run/pihole-FTL.port /var/log/pihole-FTL.log /var/log/pihole.log /etc/pihole/dhcp.leases /run/pihole /etc/pihole
+@@ -20,7 +24,8 @@ chown -f pihole:pihole /etc/pihole/pihole-FTL.db /etc/pihole/gravity.db /etc/pih
+ # Chown database file permissions so that the pihole group (web interface) can edit the file. We ignore errors as the files may not (yet) exist
+ chmod -f 0664 /etc/pihole/pihole-FTL.db
+ 
+-s6-setuidgid ${DNSMASQ_USER} pihole-FTL $FTL_CMD >/dev/null 2>&1
++# Call capsh with the detected capabilities
++capsh --inh=${CAP_STR:1} --addamb=${CAP_STR:1} --user=$DNSMASQ_USER --keep=1 -- -c "/usr/bin/pihole-FTL $FTL_CMD >/dev/null 2>&1" 
+ 
+ # Notes on above:
+ # - DNSMASQ_USER default of pihole is in Dockerfile & can be overwritten by runtime container env
+diff --git a/s6/service b/s6/service
+index e8c526b..730c405 100755
+--- a/s6/service
++++ b/s6/service
+@@ -1,8 +1,9 @@
+ #!/bin/bash
+ # This script patches all service commands into the appropriate s6- commands
+ # pi-hole upstream scripts need a 'service' interface. why not systemd? docker said so.
++
+ start() {
+-  s6-svc -wu -u -T2500 /var/run/s6/services/$service
++  restart
+ }
+ 
+ stop() {
+@@ -12,16 +13,18 @@ stop() {
+ restart() {
+   local pid
+ 
+-  # Get the PID of the service we are asking to restart
+-  pid=$(pgrep $service)
++  # Get the PID(s) of the service we are asking to restart
++  mapfile -t pids < <(pgrep $service)  
+ 
+   # Only attempt to stop the service if it is already running
+-  if [ -n "$pid" ]; then
++  if [ "${#pids[@]}" -gt 0 ]; then
+     stop
+ 
+-    # Loop until we are certain that the process has been stopped
+-    while test -d /proc/$pid; do
+-      sleep 0.2
++    for pid in "${pids[@]}"; do
++      # Loop until we are certain that the process has been stopped
++      while test -d /proc/$pid; do
++        sleep 0.2
++      done
+     done
+   fi
+ 
+@@ -30,7 +33,7 @@ restart() {
+   
+   # Only attempt to start the service if it is not already running
+   if [ -z "$pid" ]; then
+-    start
++    s6-svc -wu -u -T2500 /var/run/s6/services/$service
+   fi
+   
+ }
+diff --git a/start.sh b/start.sh
+index ef8813c..d0b44c1 100755
+--- a/start.sh
++++ b/start.sh
+@@ -127,13 +127,29 @@ if [ -n "${PIHOLE_DNS_}" ]; then
+           change_setting "PIHOLE_DNS_$count" "$i"
+           ((count=count+1))
+           ((valid_entries=valid_entries+1))
+-        else
+-          echo "Invalid IP detected in PIHOLE_DNS_: ${i}"
++          continue
+         fi
++        if [ -n "$(dig +short ${i//#*/})" ]; then
++          # If the "address" is a domain (for example a docker link) then try to resolve it and add 
++          # the result as a DNS server in setupVars.conf.
++          resolved_ip="$(dig +short ${i//#*/} | head -n 1)"
++          if [ -n "${i//*#/}" ] && [ "${i//*#/}" != "${i//#*/}" ]; then
++            resolved_ip="${resolved_ip}#${i//*#/}"
++          fi
++          echo "Resolved ${i} from PIHOLE_DNS_ as: ${resolved_ip}"
++          if valid_ip "$resolved_ip" || valid_ip6 "$resolved_ip" ; then
++            change_setting "PIHOLE_DNS_$count" "$resolved_ip"
++            ((count=count+1))
++            ((valid_entries=valid_entries+1))
++            continue
++          fi
++        fi
++        # If the above tests fail then this is an invalid DNS server
++        echo "Invalid entry detected in PIHOLE_DNS_: ${i}"
+     done
+ 
+     if [ $valid_entries -eq 0 ]; then
+-      echo "No Valid IPs dectected in PIHOLE_DNS_. Aborting"
++      echo "No Valid entries dectected in PIHOLE_DNS_. Aborting"
+       exit 1
+     fi
+ else

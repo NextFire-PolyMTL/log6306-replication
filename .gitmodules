@@ -1,21 +1,21 @@
 [submodule "hydra"]
-	path = hydra
+	path = projects/hydra
 	url = https://github.com/ory/hydra.git
 [submodule "docker-mailserver"]
-	path = docker-mailserver
+	path = projects/docker-mailserver
 	url = https://github.com/docker-mailserver/docker-mailserver.git
 [submodule "traefik"]
-	path = traefik
+	path = projects/traefik
 	url = https://github.com/traefik/traefik.git
 [submodule "grafana"]
-	path = grafana
+	path = projects/grafana
 	url = https://github.com/grafana/grafana.git
 [submodule "prometheus"]
-	path = prometheus
+	path = projects/prometheus
 	url = https://github.com/prometheus/prometheus.git
 [submodule "rclone"]
-	path = rclone
+	path = projects/rclone
 	url = https://github.com/rclone/rclone.git
 [submodule "docker-pi-hole"]
-	path = docker-pi-hole
+	path = projects/docker-pi-hole
 	url = https://github.com/pi-hole/docker-pi-hole.git

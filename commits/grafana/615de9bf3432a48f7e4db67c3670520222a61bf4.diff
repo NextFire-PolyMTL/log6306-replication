@@ -1,0 +1,908 @@
+commit 615de9bf3432a48f7e4db67c3670520222a61bf4
+Author: Andrej Ocenas <mr.ocenas@gmail.com>
+Date:   Thu May 20 10:01:28 2021 +0200
+
+    Zipkin: Add node graph view to trace response (#34414)
+    
+    * Add graph transform
+    
+    * Add tests
+    
+    * Refactor code
+    
+    * Update test
+    
+    * Fix zipkin block
+    
+    Co-authored-by: David Kaltschmidt <david.kaltschmidt@gmail.com>
+
+diff --git a/devenv/docker/blocks/zipkin/docker-compose.yaml b/devenv/docker/blocks/zipkin/docker-compose.yaml
+index f887cb4afe7..74324b4d52a 100644
+--- a/devenv/docker/blocks/zipkin/docker-compose.yaml
++++ b/devenv/docker/blocks/zipkin/docker-compose.yaml
+@@ -1,16 +1,16 @@
+   # Generate traffic by hitting http://localhost:8081
+-  frontend-example:
++  frontend:
+     image: ghcr.io/openzipkin/brave-example
+     entrypoint: start-frontend
+     ports:
+       - 8081:8081
+     depends_on:
+-      backend-example:
++      backend:
+         condition: service_healthy
+       zipkin:
+         condition: service_started
+   # Serves the /api endpoint the frontend uses
+-  backend-example:
++  backend:
+     image: ghcr.io/openzipkin/brave-example
+     entrypoint: start-backend
+     depends_on:
+diff --git a/public/app/core/utils/tracing.ts b/public/app/core/utils/tracing.ts
+new file mode 100644
+index 00000000000..6954f45e683
+--- /dev/null
++++ b/public/app/core/utils/tracing.ts
+@@ -0,0 +1,118 @@
++/**
++ * Get non overlapping duration of the ranges as they can overlap or have gaps.
++ */
++import { FieldType, MutableDataFrame, NodeGraphDataFrameFieldNames as Fields } from '@grafana/data';
++
++export function getNonOverlappingDuration(ranges: Array<[number, number]>): number {
++  ranges.sort((a, b) => a[0] - b[0]);
++  const mergedRanges = ranges.reduce((acc, range) => {
++    if (!acc.length) {
++      return [range];
++    }
++    const tail = acc.slice(-1)[0];
++    const [prevStart, prevEnd] = tail;
++    const [start, end] = range;
++    if (end < prevEnd) {
++      // In this case the range is completely inside the prev range so we can just ignore it.
++      return acc;
++    }
++
++    if (start > prevEnd) {
++      // There is no overlap so we can just add it to stack
++      return [...acc, range];
++    }
++
++    // We know there is overlap and current range ends later than previous so we can just extend the range
++    return [...acc.slice(0, -1), [prevStart, end]] as Array<[number, number]>;
++  }, [] as Array<[number, number]>);
++
++  return mergedRanges.reduce((acc, range) => {
++    return acc + (range[1] - range[0]);
++  }, 0);
++}
++
++/**
++ * Returns a map of the spans with children array for easier processing. It will also contain empty spans in case
++ * span is missing but other spans are it's children. This is more generic because it needs to allow iterating over
++ * both arrays and dataframe views.
++ */
++export function makeSpanMap<T>(
++  getSpan: (index: number) => { span: T; id: string; parentIds: string[] } | undefined
++): { [id: string]: { span: T; children: string[] } } {
++  const spanMap: { [id: string]: { span?: T; children: string[] } } = {};
++
++  let span;
++  for (let index = 0; (span = getSpan(index)), !!span; index++) {
++    if (!spanMap[span.id]) {
++      spanMap[span.id] = {
++        span: span.span,
++        children: [],
++      };
++    } else {
++      spanMap[span.id].span = span.span;
++    }
++
++    for (const parentId of span.parentIds) {
++      if (parentId) {
++        if (!spanMap[parentId]) {
++          spanMap[parentId] = {
++            span: undefined,
++            children: [span.id],
++          };
++        } else {
++          spanMap[parentId].children.push(span.id);
++        }
++      }
++    }
++  }
++  return spanMap as { [id: string]: { span: T; children: string[] } };
++}
++
++export function getStats(duration: number, traceDuration: number, selfDuration: number) {
++  return {
++    main: `${toFixedNoTrailingZeros(duration)}ms (${toFixedNoTrailingZeros((duration / traceDuration) * 100)}%)`,
++    secondary: `${toFixedNoTrailingZeros(selfDuration)}ms (${toFixedNoTrailingZeros(
++      (selfDuration / duration) * 100
++    )}%)`,
++  };
++}
++
++function toFixedNoTrailingZeros(n: number) {
++  return parseFloat(n.toFixed(2));
++}
++
++/**
++ * Create default frames used when returning data for node graph.
++ */
++export function makeFrames() {
++  const nodesFrame = new MutableDataFrame({
++    fields: [
++      { name: Fields.id, type: FieldType.string },
++      { name: Fields.title, type: FieldType.string },
++      { name: Fields.subTitle, type: FieldType.string },
++      { name: Fields.mainStat, type: FieldType.string, config: { displayName: 'Total time (% of trace)' } },
++      { name: Fields.secondaryStat, type: FieldType.string, config: { displayName: 'Self time (% of total)' } },
++      {
++        name: Fields.color,
++        type: FieldType.number,
++        config: { color: { mode: 'continuous-GrYlRd' }, displayName: 'Self time / Trace duration' },
++      },
++    ],
++    meta: {
++      preferredVisualisationType: 'nodeGraph',
++    },
++  });
++
++  const edgesFrame = new MutableDataFrame({
++    fields: [
++      { name: Fields.id, type: FieldType.string },
++      { name: Fields.target, type: FieldType.string },
++      { name: Fields.source, type: FieldType.string },
++    ],
++    meta: {
++      preferredVisualisationType: 'nodeGraph',
++    },
++  });
++
++  return [nodesFrame, edgesFrame];
++}
+diff --git a/public/app/plugins/datasource/jaeger/graphTransform.ts b/public/app/plugins/datasource/jaeger/graphTransform.ts
+index e7a70992333..ae866449687 100644
+--- a/public/app/plugins/datasource/jaeger/graphTransform.ts
++++ b/public/app/plugins/datasource/jaeger/graphTransform.ts
+@@ -1,5 +1,6 @@
+-import { DataFrame, FieldType, MutableDataFrame, NodeGraphDataFrameFieldNames as Fields } from '@grafana/data';
++import { DataFrame, NodeGraphDataFrameFieldNames as Fields } from '@grafana/data';
+ import { Span, TraceResponse } from './types';
++import { getNonOverlappingDuration, getStats, makeFrames, makeSpanMap } from '../../../core/utils/tracing';
+ 
+ interface Node {
+   [Fields.id]: string;
+@@ -18,40 +19,12 @@ interface Edge {
+ 
+ export function createGraphFrames(data: TraceResponse): DataFrame[] {
+   const { nodes, edges } = convertTraceToGraph(data);
+-
+-  const nodesFrame = new MutableDataFrame({
+-    fields: [
+-      { name: Fields.id, type: FieldType.string },
+-      { name: Fields.title, type: FieldType.string },
+-      { name: Fields.subTitle, type: FieldType.string },
+-      { name: Fields.mainStat, type: FieldType.string, config: { displayName: 'Total time (% of trace)' } },
+-      { name: Fields.secondaryStat, type: FieldType.string, config: { displayName: 'Self time (% of total)' } },
+-      {
+-        name: Fields.color,
+-        type: FieldType.number,
+-        config: { color: { mode: 'continuous-GrYlRd' }, displayName: 'Self time / Trace duration' },
+-      },
+-    ],
+-    meta: {
+-      preferredVisualisationType: 'nodeGraph',
+-    },
+-  });
++  const [nodesFrame, edgesFrame] = makeFrames();
+ 
+   for (const node of nodes) {
+     nodesFrame.add(node);
+   }
+ 
+-  const edgesFrame = new MutableDataFrame({
+-    fields: [
+-      { name: Fields.id, type: FieldType.string },
+-      { name: Fields.target, type: FieldType.string },
+-      { name: Fields.source, type: FieldType.string },
+-    ],
+-    meta: {
+-      preferredVisualisationType: 'nodeGraph',
+-    },
+-  });
+-
+   for (const edge of edges) {
+     edgesFrame.add(edge);
+   }
+@@ -64,23 +37,36 @@ function convertTraceToGraph(data: TraceResponse): { nodes: Node[]; edges: Edge[
+   const edges: Edge[] = [];
+ 
+   const traceDuration = findTraceDuration(data.spans);
+-  const spanMap = makeSpanMap(data.spans);
++
++  const spanMap = makeSpanMap((index) => {
++    if (index >= data.spans.length) {
++      return undefined;
++    }
++    const span = data.spans[index];
++    return {
++      span,
++      id: span.spanID,
++      parentIds: span.references?.filter((r) => r.refType === 'CHILD_OF').map((r) => r.spanID) || [],
++    };
++  });
+ 
+   for (const span of data.spans) {
+     const process = data.processes[span.processID];
+-    const childrenDuration = getDuration(spanMap[span.spanID].children.map((c) => spanMap[c].span));
++
++    const ranges: Array<[number, number]> = spanMap[span.spanID].children.map((c) => {
++      const span = spanMap[c].span;
++      return [span.startTime, span.startTime + span.duration];
++    });
++    const childrenDuration = getNonOverlappingDuration(ranges);
+     const selfDuration = span.duration - childrenDuration;
++    const stats = getStats(span.duration / 1000, traceDuration / 1000, selfDuration / 1000);
+ 
+     nodes.push({
+       [Fields.id]: span.spanID,
+       [Fields.title]: process?.serviceName ?? '',
+       [Fields.subTitle]: span.operationName,
+-      [Fields.mainStat]: `${toFixedNoTrailingZeros(span.duration / 1000)}ms (${toFixedNoTrailingZeros(
+-        (span.duration / traceDuration) * 100
+-      )}%)`,
+-      [Fields.secondaryStat]: `${toFixedNoTrailingZeros(selfDuration / 1000)}ms (${toFixedNoTrailingZeros(
+-        (selfDuration / span.duration) * 100
+-      )}%)`,
++      [Fields.mainStat]: stats.main,
++      [Fields.secondaryStat]: stats.secondary,
+       [Fields.color]: selfDuration / traceDuration,
+     });
+ 
+@@ -98,10 +84,6 @@ function convertTraceToGraph(data: TraceResponse): { nodes: Node[]; edges: Edge[
+   return { nodes, edges };
+ }
+ 
+-function toFixedNoTrailingZeros(n: number) {
+-  return parseFloat(n.toFixed(2));
+-}
+-
+ /**
+  * Get the duration of the whole trace as it isn't a part of the response data.
+  * Note: Seems like this should be the same as just longest span, but this is probably safer.
+@@ -122,65 +104,3 @@ function findTraceDuration(spans: Span[]): number {
+ 
+   return traceEndTime - traceStartTime;
+ }
+-
+-/**
+- * Returns a map of the spans with children array for easier processing. It will also contain empty spans in case
+- * span is missing but other spans are it's children.
+- */
+-function makeSpanMap(spans: Span[]): { [id: string]: { span: Span; children: string[] } } {
+-  const spanMap: { [id: string]: { span?: Span; children: string[] } } = {};
+-
+-  for (const span of spans) {
+-    if (!spanMap[span.spanID]) {
+-      spanMap[span.spanID] = {
+-        span,
+-        children: [],
+-      };
+-    } else {
+-      spanMap[span.spanID].span = span;
+-    }
+-    for (const parent of span.references?.filter((r) => r.refType === 'CHILD_OF').map((r) => r.spanID) || []) {
+-      if (!spanMap[parent]) {
+-        spanMap[parent] = {
+-          span: undefined,
+-          children: [span.spanID],
+-        };
+-      } else {
+-        spanMap[parent].children.push(span.spanID);
+-      }
+-    }
+-  }
+-  return spanMap as { [id: string]: { span: Span; children: string[] } };
+-}
+-
+-/**
+- * Get non overlapping duration of the spans.
+- */
+-function getDuration(spans: Span[]): number {
+-  const ranges = spans.map<[number, number]>((span) => [span.startTime, span.startTime + span.duration]);
+-  ranges.sort((a, b) => a[0] - b[0]);
+-  const mergedRanges = ranges.reduce((acc, range) => {
+-    if (!acc.length) {
+-      return [range];
+-    }
+-    const tail = acc.slice(-1)[0];
+-    const [prevStart, prevEnd] = tail;
+-    const [start, end] = range;
+-    if (end < prevEnd) {
+-      // In this case the range is completely inside the prev range so we can just ignore it.
+-      return acc;
+-    }
+-
+-    if (start > prevEnd) {
+-      // There is no overlap so we can just add it to stack
+-      return [...acc, range];
+-    }
+-
+-    // We know there is overlap and current range ends later than previous so we can just extend the range
+-    return [...acc.slice(0, -1), [prevStart, end]] as Array<[number, number]>;
+-  }, [] as Array<[number, number]>);
+-
+-  return mergedRanges.reduce((acc, range) => {
+-    return acc + (range[1] - range[0]);
+-  }, 0);
+-}
+diff --git a/public/app/plugins/datasource/tempo/datasource.test.ts b/public/app/plugins/datasource/tempo/datasource.test.ts
+index eaad824a6e7..66b189924f1 100644
+--- a/public/app/plugins/datasource/tempo/datasource.test.ts
++++ b/public/app/plugins/datasource/tempo/datasource.test.ts
+@@ -52,8 +52,8 @@ describe('Tempo data source', () => {
+       { name: 'id', values: ['4322526419282105830'] },
+       { name: 'title', values: ['service'] },
+       { name: 'subTitle', values: ['store.validateQueryTimeRange'] },
+-      { name: 'mainStat', values: ['total: 14.98ms (100%)'] },
+-      { name: 'secondaryStat', values: ['self: 14.98ms (100%)'] },
++      { name: 'mainStat', values: ['14.98ms (100%)'] },
++      { name: 'secondaryStat', values: ['14.98ms (100%)'] },
+       { name: 'color', values: [1.000007560204647] },
+     ]);
+ 
+diff --git a/public/app/plugins/datasource/tempo/graphTransform.test.ts b/public/app/plugins/datasource/tempo/graphTransform.test.ts
+index bff6dae7094..446ddd6843d 100644
+--- a/public/app/plugins/datasource/tempo/graphTransform.test.ts
++++ b/public/app/plugins/datasource/tempo/graphTransform.test.ts
+@@ -14,8 +14,8 @@ describe('createGraphFrames', () => {
+       id: '4322526419282105830',
+       title: 'loki-all',
+       subTitle: 'store.validateQueryTimeRange',
+-      mainStat: 'total: 0ms (0.02%)',
+-      secondaryStat: 'self: 0ms (100%)',
++      mainStat: '0ms (0.02%)',
++      secondaryStat: '0ms (100%)',
+       color: 0.00021968356127648162,
+     });
+ 
+@@ -23,8 +23,8 @@ describe('createGraphFrames', () => {
+       id: '4450900759028499335',
+       title: 'loki-all',
+       subTitle: 'HTTP GET - loki_api_v1_query_range',
+-      mainStat: 'total: 18.21ms (100%)',
+-      secondaryStat: 'self: 3.22ms (17.71%)',
++      mainStat: '18.21ms (100%)',
++      secondaryStat: '3.22ms (17.71%)',
+       color: 0.17707117189595056,
+     });
+ 
+@@ -44,8 +44,8 @@ describe('createGraphFrames', () => {
+       id: '4322526419282105830',
+       title: 'loki-all',
+       subTitle: 'store.validateQueryTimeRange',
+-      mainStat: 'total: 14.98ms (100%)',
+-      secondaryStat: 'self: 14.98ms (100%)',
++      mainStat: '14.98ms (100%)',
++      secondaryStat: '14.98ms (100%)',
+       color: 1.000007560204647,
+     });
+   });
+diff --git a/public/app/plugins/datasource/tempo/graphTransform.ts b/public/app/plugins/datasource/tempo/graphTransform.ts
+index 20eacecc271..dbfa118d95e 100644
+--- a/public/app/plugins/datasource/tempo/graphTransform.ts
++++ b/public/app/plugins/datasource/tempo/graphTransform.ts
+@@ -1,10 +1,5 @@
+-import {
+-  DataFrame,
+-  DataFrameView,
+-  FieldType,
+-  MutableDataFrame,
+-  NodeGraphDataFrameFieldNames as Fields,
+-} from '@grafana/data';
++import { DataFrame, DataFrameView, NodeGraphDataFrameFieldNames as Fields } from '@grafana/data';
++import { getNonOverlappingDuration, getStats, makeFrames, makeSpanMap } from '../../../core/utils/tracing';
+ 
+ interface Row {
+   traceID: string;
+@@ -36,40 +31,11 @@ interface Edge {
+ 
+ export function createGraphFrames(data: DataFrame): DataFrame[] {
+   const { nodes, edges } = convertTraceToGraph(data);
+-
+-  const nodesFrame = new MutableDataFrame({
+-    fields: [
+-      { name: Fields.id, type: FieldType.string },
+-      { name: Fields.title, type: FieldType.string },
+-      { name: Fields.subTitle, type: FieldType.string },
+-      { name: Fields.mainStat, type: FieldType.string, config: { displayName: 'Total time (% of trace)' } },
+-      { name: Fields.secondaryStat, type: FieldType.string, config: { displayName: 'Self time (% of total)' } },
+-      {
+-        name: Fields.color,
+-        type: FieldType.number,
+-        config: { color: { mode: 'continuous-GrYlRd' }, displayName: 'Self time / Trace duration' },
+-      },
+-    ],
+-    meta: {
+-      preferredVisualisationType: 'nodeGraph',
+-    },
+-  });
++  const [nodesFrame, edgesFrame] = makeFrames();
+ 
+   for (const node of nodes) {
+     nodesFrame.add(node);
+   }
+-
+-  const edgesFrame = new MutableDataFrame({
+-    fields: [
+-      { name: Fields.id, type: FieldType.string },
+-      { name: Fields.target, type: FieldType.string },
+-      { name: Fields.source, type: FieldType.string },
+-    ],
+-    meta: {
+-      preferredVisualisationType: 'nodeGraph',
+-    },
+-  });
+-
+   for (const edge of edges) {
+     edgesFrame.add(edge);
+   }
+@@ -84,24 +50,35 @@ function convertTraceToGraph(data: DataFrame): { nodes: Node[]; edges: Edge[] }
+   const view = new DataFrameView<Row>(data);
+ 
+   const traceDuration = findTraceDuration(view);
+-  const spanMap = makeSpanMap(view);
++  const spanMap = makeSpanMap((index) => {
++    if (index >= data.length) {
++      return undefined;
++    }
++    const span = view.get(index);
++    return {
++      span: { ...span },
++      id: span.spanID,
++      parentIds: span.parentSpanID ? [span.parentSpanID] : [],
++    };
++  });
+ 
+   for (let i = 0; i < view.length; i++) {
+     const row = view.get(i);
+ 
+-    const childrenDuration = getDuration(spanMap[row.spanID].children.map((c) => spanMap[c].span));
++    const ranges: Array<[number, number]> = spanMap[row.spanID].children.map((c) => {
++      const span = spanMap[c].span;
++      return [span.startTime, span.startTime + span.duration];
++    });
++    const childrenDuration = getNonOverlappingDuration(ranges);
+     const selfDuration = row.duration - childrenDuration;
++    const stats = getStats(row.duration, traceDuration, selfDuration);
+ 
+     nodes.push({
+       [Fields.id]: row.spanID,
+       [Fields.title]: row.serviceName ?? '',
+       [Fields.subTitle]: row.operationName,
+-      [Fields.mainStat]: `total: ${toFixedNoTrailingZeros(row.duration)}ms (${toFixedNoTrailingZeros(
+-        (row.duration / traceDuration) * 100
+-      )}%)`,
+-      [Fields.secondaryStat]: `self: ${toFixedNoTrailingZeros(selfDuration)}ms (${toFixedNoTrailingZeros(
+-        (selfDuration / row.duration) * 100
+-      )}%)`,
++      [Fields.mainStat]: stats.main,
++      [Fields.secondaryStat]: stats.secondary,
+       [Fields.color]: selfDuration / traceDuration,
+     });
+ 
+@@ -118,10 +95,6 @@ function convertTraceToGraph(data: DataFrame): { nodes: Node[]; edges: Edge[] }
+   return { nodes, edges };
+ }
+ 
+-function toFixedNoTrailingZeros(n: number) {
+-  return parseFloat(n.toFixed(2));
+-}
+-
+ /**
+  * Get the duration of the whole trace as it isn't a part of the response data.
+  * Note: Seems like this should be the same as just longest span, but this is probably safer.
+@@ -144,66 +117,3 @@ function findTraceDuration(view: DataFrameView<Row>): number {
+ 
+   return traceEndTime - traceStartTime;
+ }
+-
+-/**
+- * Returns a map of the spans with children array for easier processing. It will also contain empty spans in case
+- * span is missing but other spans are it's children.
+- */
+-function makeSpanMap(view: DataFrameView<Row>): { [id: string]: { span: Row; children: string[] } } {
+-  const spanMap: { [id: string]: { span?: Row; children: string[] } } = {};
+-
+-  for (let i = 0; i < view.length; i++) {
+-    const row = view.get(i);
+-
+-    if (!spanMap[row.spanID]) {
+-      spanMap[row.spanID] = {
+-        // Need copy because of how the view works
+-        span: { ...row },
+-        children: [],
+-      };
+-    } else {
+-      spanMap[row.spanID].span = { ...row };
+-    }
+-    if (!spanMap[row.parentSpanID]) {
+-      spanMap[row.parentSpanID] = {
+-        span: undefined,
+-        children: [row.spanID],
+-      };
+-    } else {
+-      spanMap[row.parentSpanID].children.push(row.spanID);
+-    }
+-  }
+-  return spanMap as { [id: string]: { span: Row; children: string[] } };
+-}
+-
+-/**
+- * Get non overlapping duration of the spans.
+- */
+-function getDuration(rows: Row[]): number {
+-  const ranges = rows.map<[number, number]>((r) => [r.startTime, r.startTime + r.duration]);
+-  ranges.sort((a, b) => a[0] - b[0]);
+-  const mergedRanges = ranges.reduce((acc, range) => {
+-    if (!acc.length) {
+-      return [range];
+-    }
+-    const tail = acc.slice(-1)[0];
+-    const [prevStart, prevEnd] = tail;
+-    const [start, end] = range;
+-    if (end < prevEnd) {
+-      // In this case the range is completely inside the prev range so we can just ignore it.
+-      return acc;
+-    }
+-
+-    if (start > prevEnd) {
+-      // There is no overlap so we can just add it to stack
+-      return [...acc, range];
+-    }
+-
+-    // We know there is overlap and current range ends later than previous so we can just extend the range
+-    return [...acc.slice(0, -1), [prevStart, end]] as Array<[number, number]>;
+-  }, [] as Array<[number, number]>);
+-
+-  return mergedRanges.reduce((acc, range) => {
+-    return acc + (range[1] - range[0]);
+-  }, 0);
+-}
+diff --git a/public/app/plugins/datasource/zipkin/datasource.ts b/public/app/plugins/datasource/zipkin/datasource.ts
+index 69a15d53b2c..bd01b102f9a 100644
+--- a/public/app/plugins/datasource/zipkin/datasource.ts
++++ b/public/app/plugins/datasource/zipkin/datasource.ts
+@@ -14,6 +14,7 @@ import { serializeParams } from '../../../core/utils/fetch';
+ import { apiPrefix } from './constants';
+ import { ZipkinSpan } from './types';
+ import { transformResponse } from './utils/transforms';
++import { createGraphFrames } from './utils/graphTransform';
+ 
+ export interface ZipkinQuery extends DataQuery {
+   query: string;
+@@ -67,7 +68,7 @@ export class ZipkinDatasource extends DataSourceApi<ZipkinQuery> {
+ 
+ function responseToDataQueryResponse(response: { data: ZipkinSpan[] }): DataQueryResponse {
+   return {
+-    data: response?.data ? [transformResponse(response?.data)] : [],
++    data: response?.data ? [transformResponse(response?.data), ...createGraphFrames(response?.data)] : [],
+   };
+ }
+ 
+diff --git a/public/app/plugins/datasource/zipkin/utils/graphTransform.test.ts b/public/app/plugins/datasource/zipkin/utils/graphTransform.test.ts
+new file mode 100644
+index 00000000000..ab5bb91945b
+--- /dev/null
++++ b/public/app/plugins/datasource/zipkin/utils/graphTransform.test.ts
+@@ -0,0 +1,76 @@
++import { createGraphFrames } from './graphTransform';
++import {
++  testResponse,
++  testResponseEdgesFields,
++  testResponseNodesFields,
++  toEdgesFrame,
++  toNodesFrame,
++} from './testResponse';
++import { ZipkinSpan } from '../types';
++
++describe('createGraphFrames', () => {
++  it('transforms basic response into nodes and edges frame', async () => {
++    const frames = createGraphFrames(testResponse);
++    expect(frames.length).toBe(2);
++    expect(frames[0].fields).toMatchObject(testResponseNodesFields);
++    expect(frames[1].fields).toMatchObject(testResponseEdgesFields);
++  });
++
++  it('handles single span response', async () => {
++    const frames = createGraphFrames(singleSpanResponse);
++    expect(frames.length).toBe(2);
++    expect(frames[0].fields).toMatchObject(
++      toNodesFrame([
++        ['3fa414edcef6ad90'],
++        ['tempo-querier'],
++        ['HTTP GET - api_traces_traceid'],
++        ['1049.14ms (100%)'],
++        ['1049.14ms (100%)'],
++        [1],
++      ])
++    );
++    expect(frames[1].fields).toMatchObject(toEdgesFrame([[], [], []]));
++  });
++
++  it('handles missing spans', async () => {
++    const frames = createGraphFrames(missingSpanResponse);
++    expect(frames.length).toBe(2);
++    expect(frames[0].length).toBe(2);
++    expect(frames[1].length).toBe(0);
++  });
++});
++
++export const singleSpanResponse: ZipkinSpan[] = [
++  {
++    traceId: '3fa414edcef6ad90',
++    id: '3fa414edcef6ad90',
++    name: 'HTTP GET - api_traces_traceid',
++    timestamp: 1605873894680409,
++    duration: 1049141,
++    tags: {
++      component: 'gRPC',
++      spanKind: 'client',
++    },
++    localEndpoint: {
++      serviceName: 'tempo-querier',
++    },
++  },
++];
++
++export const missingSpanResponse: ZipkinSpan[] = [
++  {
++    traceId: '3fa414edcef6ad90',
++    id: '1',
++    name: 'HTTP GET - api_traces_traceid',
++    timestamp: 1605873894680409,
++    duration: 1049141,
++  },
++  {
++    traceId: '3fa414edcef6ad90',
++    id: '2',
++    name: 'HTTP GET - api_traces_traceid',
++    parentId: '3',
++    timestamp: 1605873894680409,
++    duration: 1049141,
++  },
++];
+diff --git a/public/app/plugins/datasource/zipkin/utils/graphTransform.ts b/public/app/plugins/datasource/zipkin/utils/graphTransform.ts
+new file mode 100644
+index 00000000000..0efa6f9cb21
+--- /dev/null
++++ b/public/app/plugins/datasource/zipkin/utils/graphTransform.ts
+@@ -0,0 +1,99 @@
++import { DataFrame, NodeGraphDataFrameFieldNames as Fields } from '@grafana/data';
++import { ZipkinSpan } from '../types';
++import { getNonOverlappingDuration, getStats, makeFrames, makeSpanMap } from '../../../../core/utils/tracing';
++
++interface Node {
++  [Fields.id]: string;
++  [Fields.title]: string;
++  [Fields.subTitle]: string;
++  [Fields.mainStat]: string;
++  [Fields.secondaryStat]: string;
++  [Fields.color]: number;
++}
++
++interface Edge {
++  [Fields.id]: string;
++  [Fields.target]: string;
++  [Fields.source]: string;
++}
++
++export function createGraphFrames(data: ZipkinSpan[]): DataFrame[] {
++  const { nodes, edges } = convertTraceToGraph(data);
++  const [nodesFrame, edgesFrame] = makeFrames();
++
++  for (const node of nodes) {
++    nodesFrame.add(node);
++  }
++
++  for (const edge of edges) {
++    edgesFrame.add(edge);
++  }
++
++  return [nodesFrame, edgesFrame];
++}
++
++function convertTraceToGraph(spans: ZipkinSpan[]): { nodes: Node[]; edges: Edge[] } {
++  const nodes: Node[] = [];
++  const edges: Edge[] = [];
++
++  const traceDuration = findTraceDuration(spans);
++  const spanMap = makeSpanMap((index) => {
++    if (index >= spans.length) {
++      return undefined;
++    }
++    return {
++      span: spans[index],
++      id: spans[index].id,
++      parentIds: spans[index].parentId ? [spans[index].parentId!] : [],
++    };
++  });
++
++  for (const span of spans) {
++    const ranges: Array<[number, number]> = spanMap[span.id].children.map((c) => {
++      const span = spanMap[c].span;
++      return [span.timestamp, span.timestamp + span.duration];
++    });
++    const childrenDuration = getNonOverlappingDuration(ranges);
++    const selfDuration = span.duration - childrenDuration;
++    const stats = getStats(span.duration / 1000, traceDuration / 1000, selfDuration / 1000);
++
++    nodes.push({
++      [Fields.id]: span.id,
++      [Fields.title]: span.localEndpoint?.serviceName || span.remoteEndpoint?.serviceName || 'unknown',
++      [Fields.subTitle]: span.name,
++      [Fields.mainStat]: stats.main,
++      [Fields.secondaryStat]: stats.secondary,
++      [Fields.color]: selfDuration / traceDuration,
++    });
++
++    if (span.parentId && spanMap[span.parentId].span) {
++      edges.push({
++        [Fields.id]: span.parentId + '--' + span.id,
++        [Fields.target]: span.id,
++        [Fields.source]: span.parentId,
++      });
++    }
++  }
++
++  return { nodes, edges };
++}
++
++/**
++ * Get the duration of the whole trace as it isn't a part of the response data.
++ * Note: Seems like this should be the same as just longest span, but this is probably safer.
++ */
++function findTraceDuration(spans: ZipkinSpan[]): number {
++  let traceEndTime = 0;
++  let traceStartTime = Infinity;
++
++  for (const span of spans) {
++    if (span.timestamp < traceStartTime) {
++      traceStartTime = span.timestamp;
++    }
++
++    if (span.timestamp + span.duration > traceEndTime) {
++      traceEndTime = span.timestamp + span.duration;
++    }
++  }
++  return traceEndTime - traceStartTime;
++}
+diff --git a/public/app/plugins/datasource/zipkin/utils/testResponse.ts b/public/app/plugins/datasource/zipkin/utils/testResponse.ts
+new file mode 100644
+index 00000000000..bdf76fdb35d
+--- /dev/null
++++ b/public/app/plugins/datasource/zipkin/utils/testResponse.ts
+@@ -0,0 +1,119 @@
++import { ArrayVector, FieldDTO } from '@grafana/data';
++import { ZipkinSpan } from '../types';
++
++export const testResponse: ZipkinSpan[] = [
++  {
++    traceId: '3fa414edcef6ad90',
++    id: '3fa414edcef6ad90',
++    name: 'HTTP GET - api_traces_traceid',
++    timestamp: 1605873894680409,
++    duration: 1049141,
++    tags: {
++      samplerType: 'probabilistic',
++      samplerParam: '1',
++    },
++    localEndpoint: {
++      serviceName: 'tempo-querier',
++    },
++  },
++  {
++    traceId: '3fa414edcef6ad90',
++    id: '0f5c1808567e4403',
++    name: '/tempopb.Querier/FindTraceByID',
++    parentId: '3fa414edcef6ad90',
++    timestamp: 1605873894680587,
++    duration: 1847,
++    tags: {
++      component: 'gRPC',
++      spanKind: 'client',
++    },
++    localEndpoint: {
++      serviceName: 'tempo-querier',
++    },
++  },
++];
++
++function toVectors(fields: FieldDTO[]) {
++  return fields.map((f) => ({ ...f, values: new ArrayVector<any>(f.values as any[]) }));
++}
++
++export const testResponseDataFrameFields = toVectors([
++  { name: 'traceID', values: ['3fa414edcef6ad90', '3fa414edcef6ad90'] },
++  { name: 'spanID', values: ['3fa414edcef6ad90', '0f5c1808567e4403'] },
++  { name: 'parentSpanID', values: [undefined, '3fa414edcef6ad90'] },
++  { name: 'operationName', values: ['HTTP GET - api_traces_traceid', '/tempopb.Querier/FindTraceByID'] },
++  { name: 'serviceName', values: ['tempo-querier', 'tempo-querier'] },
++  {
++    name: 'serviceTags',
++    values: [
++      [
++        { key: 'cluster', type: 'string', value: 'ops-tools1' },
++        { key: 'container', type: 'string', value: 'tempo-query' },
++      ],
++      [
++        { key: 'cluster', type: 'string', value: 'ops-tools1' },
++        { key: 'container', type: 'string', value: 'tempo-query' },
++      ],
++    ],
++  },
++  { name: 'startTime', values: [1605873894680.409, 1605873894680.587] },
++  { name: 'duration', values: [1049.141, 1.847] },
++  { name: 'logs', values: [[], []] },
++  {
++    name: 'tags',
++    values: [
++      [
++        { key: 'sampler.type', type: 'string', value: 'probabilistic' },
++        { key: 'sampler.param', type: 'float64', value: 1 },
++      ],
++      [
++        { key: 'component', type: 'string', value: 'gRPC' },
++        { key: 'span.kind', type: 'string', value: 'client' },
++      ],
++    ],
++  },
++  { name: 'warnings', values: [undefined, undefined] },
++  { name: 'stackTraces', values: [undefined, undefined] },
++]);
++
++export const testResponseNodesFields = toNodesFrame([
++  ['3fa414edcef6ad90', '0f5c1808567e4403'],
++  ['tempo-querier', 'tempo-querier'],
++  ['HTTP GET - api_traces_traceid', '/tempopb.Querier/FindTraceByID'],
++  ['1049.14ms (100%)', '1.85ms (0.18%)'],
++  ['1047.29ms (99.82%)', '1.85ms (100%)'],
++  [0.9982395121342127, 0.0017604878657873442],
++]);
++
++export const testResponseEdgesFields = toEdgesFrame([
++  ['3fa414edcef6ad90--0f5c1808567e4403'],
++  ['0f5c1808567e4403'],
++  ['3fa414edcef6ad90'],
++]);
++
++export function toNodesFrame(values: any[]) {
++  return toVectors([
++    { name: 'id', values: values[0] },
++    { name: 'title', values: values[1] },
++    { name: 'subTitle', values: values[2] },
++    { name: 'mainStat', values: values[3] },
++    { name: 'secondaryStat', values: values[4] },
++    {
++      name: 'color',
++      config: {
++        color: {
++          mode: 'continuous-GrYlRd',
++        },
++      },
++      values: values[5],
++    },
++  ]);
++}
++
++export function toEdgesFrame(values: any[]) {
++  return toVectors([
++    { name: 'id', values: values[0] },
++    { name: 'target', values: values[1] },
++    { name: 'source', values: values[2] },
++  ]);
++}

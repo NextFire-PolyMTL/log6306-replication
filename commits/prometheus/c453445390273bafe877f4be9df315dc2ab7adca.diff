@@ -1,0 +1,111 @@
+commit c453445390273bafe877f4be9df315dc2ab7adca (from d5f7eeef1388f3d307e6b690c94b304e7d5582f5)
+Merge: d5f7eeef1 f8b20f30a
+Author: juliusv <julius@soundcloud.com>
+Date:   Mon Aug 12 06:59:20 2013 -0700
+
+    Merge pull request #356 from prometheus/refactor/retrieval-ingester
+    
+    Make retrieval work with client's new Ingester interface.
+
+diff --git a/retrieval/target.go b/retrieval/target.go
+index 8bff1d7fd..9f90406e7 100644
+--- a/retrieval/target.go
++++ b/retrieval/target.go
+@@ -202,6 +202,19 @@ func (t *target) Scrape(earliest time.Time, results chan<- *extraction.Result) e
+ 
+ const acceptHeader = `application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,application/json;schema=prometheus/telemetry;version=0.0.2;q=0.2,*/*;q=0.1`
+ 
++type extendLabelsIngester struct {
++	baseLabels clientmodel.LabelSet
++	results chan<- *extraction.Result
++}
++
++func (i *extendLabelsIngester) Ingest(r *extraction.Result) error {
++	for _, s := range r.Samples {
++		s.Metric.MergeFromLabelSet(i.baseLabels, clientmodel.ExporterLabelPrefix)
++	}
++	i.results <- r
++	return nil
++}
++
+ func (t *target) scrape(timestamp time.Time, results chan<- *extraction.Result) (err error) {
+ 	defer func(start time.Time) {
+ 		ms := float64(time.Since(start)) / float64(time.Millisecond)
+@@ -238,20 +251,22 @@ func (t *target) scrape(timestamp time.Time, results chan<- *extraction.Result)
+ 		baseLabels[baseLabel] = baseValue
+ 	}
+ 
+-	processOptions := &extraction.ProcessOptions{
+-		Timestamp:  timestamp,
+-		BaseLabels: baseLabels,
+-	}
+-
+ 	// N.B. - It is explicitly required to extract the entire payload before
+-	//        attempting to deserialize, as the underlying reader expects will
+-	//        interpret pending data as a truncated message.
++	//        attempting to deserialize, as the underlying reader will interpret
++	//        pending data as a truncated message.
+ 	buf := new(bytes.Buffer)
+ 	if _, err := buf.ReadFrom(resp.Body); err != nil {
+ 		return err
+ 	}
+ 
+-	return processor.ProcessSingle(buf, results, processOptions)
++	ingester := &extendLabelsIngester{
++		baseLabels: baseLabels,
++		results: results,
++	}
++	processOptions := &extraction.ProcessOptions{
++		Timestamp:  timestamp,
++	}
++	return processor.ProcessSingle(buf, ingester, processOptions)
+ }
+ 
+ func (t *target) State() TargetState {
+
+commit c453445390273bafe877f4be9df315dc2ab7adca (from f8b20f30accd559c3bc14bc8c5a22bceafc0a1c4)
+Merge: d5f7eeef1 f8b20f30a
+Author: juliusv <julius@soundcloud.com>
+Date:   Mon Aug 12 06:59:20 2013 -0700
+
+    Merge pull request #356 from prometheus/refactor/retrieval-ingester
+    
+    Make retrieval work with client's new Ingester interface.
+
+diff --git a/.build/package/run_prometheus.sh b/.build/package/run_prometheus.sh
+index f79e8319d..12fbee2f4 100755
+--- a/.build/package/run_prometheus.sh
++++ b/.build/package/run_prometheus.sh
+@@ -26,4 +26,4 @@ if [[ "${platform}" == "darwin" ]]; then
+   export DYLD_LIBRARY_PATH="${binary_directory}/lib:${DYLD_LIBRARY_PATH}"
+ fi
+ 
+-"${binary_directory}/prometheus" "${@}" &
++exec "${binary_directory}/prometheus" "${@}"
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 000000000..b64b574fc
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,7 @@
++# Cannot use busybox image since Prometheus depends on libc.
++FROM base
++
++MAINTAINER Prometheus Team <prometheus-developers@googlegroups.com>
++EXPOSE 9090
++ENTRYPOINT ["/opt/prometheus/run_prometheus.sh"]
++ADD .build/package/ /opt/prometheus
+diff --git a/Makefile b/Makefile
+index efab12315..fbb51d634 100644
+--- a/Makefile
++++ b/Makefile
+@@ -31,6 +31,9 @@ build: config dependencies model preparation tools web
+ 	cp prometheus $(BUILD_PATH)/package/prometheus
+ 	rsync -av --delete $(BUILD_PATH)/root/lib/ $(BUILD_PATH)/package/lib/
+ 
++docker: build
++	docker build -t prometheus:$(REV) .
++
+ $(BUILD_PATH)/cache/$(GOPKG):
+ 	curl -o $@ http://go.googlecode.com/files/$(GOPKG)
+ 

@@ -1,0 +1,586 @@
+commit f54fa10f121e8ce31026ba38c2d979cc24d533a4 (from 1cc294872b970d605eb828fff370693ae3bb2a46)
+Merge: 1cc294872 32287092d
+Author: emile <emile@vauge.com>
+Date:   Wed Sep 16 14:49:08 2015 +0200
+
+    Merge branch 'vdemeester-refactor-builds'
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 000000000..303a52878
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,5 @@
++dist
++gen.go
++.idea
++log
++*.iml
+\ No newline at end of file
+diff --git a/Dockerfile b/Dockerfile
+index b0202e0f5..7a8c95153 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,3 +1,3 @@
+ FROM scratch
+-ADD traefik /
+-CMD ["/traefik"]
+\ No newline at end of file
++COPY dist/traefik_linux-386 /traefik
++ENTRYPOINT ["/traefik"]
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 000000000..135513585
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,48 @@
++.PHONY: all
++
++TRAEFIK_ENVS := \
++	-e OS_ARCH_ARG \
++	-e OS_PLATFORM_ARG \
++	-e TESTFLAGS
++
++BIND_DIR := $(if $(DOCKER_HOST),,dist)
++TRAEFIK_MOUNT := $(if $(BIND_DIR),-v "$(CURDIR)/$(BIND_DIR):/go/src/github.com/emilevauge/traefik/$(BIND_DIR)")
++
++GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
++TRAEFIK_DEV_IMAGE := traefik-dev$(if $(GIT_BRANCH),:$(GIT_BRANCH))
++TRAEFIK_IMAGE := $(if $(REPO),$(REPO),"emilevauge/traefik")
++
++DOCKER_RUN_TRAEFIK := docker run $(if $(CIRCLECI),,--rm) -it $(TRAEFIK_ENVS) $(TRAEFIK_MOUNT) "$(TRAEFIK_DEV_IMAGE)"
++
++default: binary
++
++binary: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh generate binary
++
++test: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh generate test-unit test-integration
++
++test-unit: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh generate test-unit
++
++test-integration: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh generate binary test-integration
++
++validate: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh validate-gofmt
++
++validate-gofmt: build
++	$(DOCKER_RUN_TRAEFIK) ./script/make.sh validate-gofmt
++
++build: dist
++	docker build -t "$(TRAEFIK_DEV_IMAGE)" -f build.Dockerfile .
++
++image: build
++	if ! [ -a dist/traefik_linux-386 ] ; \
++	then \
++		$(DOCKER_RUN_TRAEFIK) ./script/make.sh generate binary; \
++	fi;
++	docker build -t $(TRAEFIK_IMAGE) .
++
++dist:
++	mkdir dist
+diff --git a/build.Dockerfile b/build.Dockerfile
+new file mode 100644
+index 000000000..1e7425e0a
+--- /dev/null
++++ b/build.Dockerfile
+@@ -0,0 +1,27 @@
++FROM golang:1.5
++
++RUN go get github.com/mitchellh/gox
++RUN go get github.com/tcnksm/ghr
++# Install dependencies
++RUN go get github.com/BurntSushi/toml \
++    && go get github.com/BurntSushi/ty/fun
++RUN go get github.com/mailgun/oxy/forward \
++    && go get github.com/mailgun/oxy/roundrobin
++RUN go get github.com/gorilla/handlers \
++    && go get github.com/gorilla/mux
++RUN go get github.com/cenkalti/backoff \
++    && go get github.com/codegangsta/negroni \
++    && go get github.com/op/go-logging \
++    && go get github.com/elazarl/go-bindata-assetfs \
++    && go get github.com/leekchan/gtf \
++    && go get github.com/thoas/stats \
++    && go get github.com/tylerb/graceful \
++    && go get github.com/unrolled/render
++RUN go get github.com/fsouza/go-dockerclient \
++    && go get github.com/gambol99/go-marathon
++RUN go get gopkg.in/fsnotify.v1 \
++    && go get gopkg.in/alecthomas/kingpin.v2
++
++WORKDIR /go/src/github.com/emilevauge/traefik
++
++COPY . /go/src/github.com/emilevauge/traefik
+diff --git a/circle.yml b/circle.yml
+index 4d4e57e7b..887beb246 100644
+--- a/circle.yml
++++ b/circle.yml
+@@ -6,22 +6,23 @@ machine:
+ 
+ dependencies:
+   pre:
+-    - go generate
+-    - CGO_ENABLED=0 go build -a -installsuffix nocgo .
+-    - go get github.com/mitchellh/gox
+     - go get github.com/tcnksm/ghr
+-    - gox -verbose -os "linux darwin windows" --output "dist/{{.Dir}}_{{.OS}}_{{.Arch}}"
++    - make validate
++  override:
++    - make binary
+ 
++test:
+   override:
+-    - echo $REPO
+-    - docker build -t ${REPO,,} .
++    - make test
++  post:
++    - make image
+ 
+ deployment:
+-  github:
++  hub:
+     branch: master
+     commands:
+       - ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace --prerelease --debug v1.0 dist/
+       - docker login -e $DOCKER_EMAIL -u $DOCKER_USER -p $DOCKER_PASS
+       - docker push ${REPO,,}:latest
+       - docker tag ${REPO,,}:latest ${REPO,,}:$CIRCLE_SHA1
+-      - docker push ${REPO,,}:$CIRCLE_SHA1
+\ No newline at end of file
++      - docker push ${REPO,,}:$CIRCLE_SHA1
+diff --git a/configuration.go b/configuration.go
+index e89755e60..0796eb2cb 100644
+--- a/configuration.go
++++ b/configuration.go
+@@ -35,16 +35,16 @@ type Server struct {
+ }
+ 
+ type Route struct {
+-	Rule string
+-	Value    string
++	Rule  string
++	Value string
+ }
+ 
+ type Frontend struct {
+ 	Backend string
+-	Routes map[string]Route
++	Routes  map[string]Route
+ }
+ 
+ type Configuration struct {
+-	Backends map[string]Backend
++	Backends  map[string]Backend
+ 	Frontends map[string]Frontend
+ }
+diff --git a/docker.go b/docker.go
+index 1265e7e37..422e5d9e6 100644
+--- a/docker.go
++++ b/docker.go
+@@ -2,23 +2,23 @@ package main
+ 
+ import (
+ 	"bytes"
++	"errors"
+ 	"github.com/BurntSushi/toml"
+ 	"github.com/BurntSushi/ty/fun"
++	"github.com/cenkalti/backoff"
+ 	"github.com/fsouza/go-dockerclient"
+ 	"github.com/leekchan/gtf"
+-	"github.com/cenkalti/backoff"
+ 	"strconv"
+ 	"strings"
+ 	"text/template"
+-	"errors"
+ 	"time"
+ )
+ 
+ type DockerProvider struct {
+-	Watch        bool
+-	Endpoint     string
+-	Filename     string
+-	Domain       string
++	Watch    bool
++	Endpoint string
++	Filename string
++	Domain   string
+ }
+ 
+ func NewDockerProvider() *DockerProvider {
+@@ -45,7 +45,7 @@ var DockerFuncMap = template.FuncMap{
+ 				return value
+ 			}
+ 		}
+-		for key, _ := range container.NetworkSettings.Ports {
++		for key := range container.NetworkSettings.Ports {
+ 			return key.Port()
+ 		}
+ 		return ""
+@@ -64,7 +64,7 @@ var DockerFuncMap = template.FuncMap{
+ 	"getHost": getHost,
+ }
+ 
+-func (provider *DockerProvider) Provide(configurationChan chan <- *Configuration) {
++func (provider *DockerProvider) Provide(configurationChan chan<- *Configuration) {
+ 	if dockerClient, err := docker.NewClient(provider.Endpoint); err != nil {
+ 		log.Fatalf("Failed to create a client for docker, error: %s", err)
+ 	} else {
+@@ -83,9 +83,9 @@ func (provider *DockerProvider) Provide(configurationChan chan <- *Configuration
+ 						event := <-dockerEvents
+ 						if event == nil {
+ 							return errors.New("Docker event nil")
+-//							log.Fatalf("Docker connection error")
++							//							log.Fatalf("Docker connection error")
+ 						}
+-						if (event.Status == "start" || event.Status == "die" ) {
++						if event.Status == "start" || event.Status == "die" {
+ 							log.Debug("Docker event receveived %+v", event)
+ 							configuration := provider.loadDockerConfig(dockerClient)
+ 							if configuration != nil {
+diff --git a/file_test.go b/file_test.go
+new file mode 100644
+index 000000000..06ab7d0f9
+--- /dev/null
++++ b/file_test.go
+@@ -0,0 +1 @@
++package main
+diff --git a/middlewares/logger.go b/middlewares/logger.go
+index 1dc773f9a..650e671b8 100644
+--- a/middlewares/logger.go
++++ b/middlewares/logger.go
+@@ -4,10 +4,10 @@ Copyright
+ package middlewares
+ 
+ import (
++	"github.com/gorilla/handlers"
+ 	"log"
+ 	"net/http"
+ 	"os"
+-	"github.com/gorilla/handlers"
+ )
+ 
+ // Logger is a middleware handler that logs the request as it goes in and the response as it goes out.
+@@ -17,25 +17,25 @@ type Logger struct {
+ 
+ // NewLogger returns a new Logger instance
+ func NewLogger(file string) *Logger {
+-	if (len(file) > 0 ) {
+-		fi, err := os.OpenFile(file, os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
++	if len(file) > 0 {
++		fi, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+ 		if err != nil {
+ 			log.Fatal("Error opening file", err)
+ 		}
+ 		return &Logger{fi}
+-	}else {
++	} else {
+ 		return &Logger{nil}
+ 	}
+ }
+ 
+ func (l *Logger) ServeHTTP(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+-	if (l.file == nil) {
++	if l.file == nil {
+ 		next(rw, r)
+-	}else {
++	} else {
+ 		handlers.CombinedLoggingHandler(l.file, next).ServeHTTP(rw, r)
+ 	}
+ }
+ 
+ func (l *Logger) Close() {
+ 	l.file.Close()
+-}
+\ No newline at end of file
++}
+diff --git a/middlewares/routes.go b/middlewares/routes.go
+index 85889938a..1ab73db92 100644
+--- a/middlewares/routes.go
++++ b/middlewares/routes.go
+@@ -4,10 +4,10 @@ Copyright
+ package middlewares
+ 
+ import (
++	"encoding/json"
++	"github.com/gorilla/mux"
+ 	"log"
+ 	"net/http"
+-	"github.com/gorilla/mux"
+-	"encoding/json"
+ )
+ 
+ type Routes struct {
+@@ -19,8 +19,8 @@ func NewRoutes(router *mux.Router) *Routes {
+ }
+ 
+ func (router *Routes) ServeHTTP(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+-	routeMatch :=mux.RouteMatch{}
+-	if(router.router.Match(r, &routeMatch)){
++	routeMatch := mux.RouteMatch{}
++	if router.router.Match(r, &routeMatch) {
+ 		json, _ := json.Marshal(routeMatch.Handler)
+ 		log.Println("Request match route ", json)
+ 	}
+diff --git a/script/.validate b/script/.validate
+new file mode 100644
+index 000000000..7f4a81096
+--- /dev/null
++++ b/script/.validate
+@@ -0,0 +1,33 @@
++#!/bin/bash
++
++if [ -z "$VALIDATE_UPSTREAM" ]; then
++	# this is kind of an expensive check, so let's not do this twice if we
++	# are running more than one validate bundlescript
++	
++	VALIDATE_REPO='https://github.com/emilevauge/traefik.git'
++	VALIDATE_BRANCH='master'
++	
++	if [ "$TRAVIS" = 'true' -a "$TRAVIS_PULL_REQUEST" != 'false' ]; then
++		VALIDATE_REPO="https://github.com/${TRAVIS_REPO_SLUG}.git"
++		VALIDATE_BRANCH="${TRAVIS_BRANCH}"
++	fi
++	
++	VALIDATE_HEAD="$(git rev-parse --verify HEAD)"
++	
++	git fetch -q "$VALIDATE_REPO" "refs/heads/$VALIDATE_BRANCH"
++	VALIDATE_UPSTREAM="$(git rev-parse --verify FETCH_HEAD)"
++	
++	VALIDATE_COMMIT_LOG="$VALIDATE_UPSTREAM..$VALIDATE_HEAD"
++	VALIDATE_COMMIT_DIFF="$VALIDATE_UPSTREAM...$VALIDATE_HEAD"
++	
++	validate_diff() {
++		if [ "$VALIDATE_UPSTREAM" != "$VALIDATE_HEAD" ]; then
++			git diff "$VALIDATE_COMMIT_DIFF" "$@"
++		fi
++	}
++	validate_log() {
++		if [ "$VALIDATE_UPSTREAM" != "$VALIDATE_HEAD" ]; then
++			git log "$VALIDATE_COMMIT_LOG" "$@"
++		fi
++	}
++fi
+diff --git a/script/binary b/script/binary
+new file mode 100755
+index 000000000..7933a8cc5
+--- /dev/null
++++ b/script/binary
+@@ -0,0 +1,28 @@
++#!/bin/bash
++set -e
++
++if ! test -e gen.go; then
++	echo >&2 'error: generate must be run before binary'
++	false
++fi
++
++if [ -z "$1" ]; then
++    OS_PLATFORM_ARG=(-os="darwin linux windows")
++else
++    OS_PLATFORM_ARG=($1)
++fi
++
++if [ -z "$2" ]; then
++    OS_ARCH_ARG=(-arch="386 amd64 arm")
++else
++    OS_ARCH_ARG=($2)
++fi
++
++# Get rid of existing binaries
++rm -f dist/traefik*
++
++# Build binaries
++CGO_ENABLED=0 go build -a -installsuffix nocgo .
++gox "${OS_PLATFORM_ARG[@]}" "${OS_ARCH_ARG[@]}" \
++    -output="dist/traefik_{{.OS}}-{{.Arch}}"
++
+diff --git a/script/generate b/script/generate
+new file mode 100755
+index 000000000..539075810
+--- /dev/null
++++ b/script/generate
+@@ -0,0 +1,4 @@
++#!/bin/bash
++set -e
++
++go generate
+diff --git a/script/make.sh b/script/make.sh
+new file mode 100755
+index 000000000..2fc916bc5
+--- /dev/null
++++ b/script/make.sh
+@@ -0,0 +1,29 @@
++#!/usr/bin/env bash
++set -e
++
++# List of bundles to create when no argument is passed
++DEFAULT_BUNDLES=(
++	validate-gofmt
++	binary
++
++	test-unit
++	test-integration
++)
++
++bundle() {
++    local bundle="$1"; shift
++    echo "---> Making bundle: $(basename "$bundle") (in $DEST)"
++    source "script/$bundle" "$@"
++}
++
++if [ $# -lt 1 ]; then
++    bundles=(${DEFAULT_BUNDLES[@]})
++else
++    bundles=($@)
++fi
++for bundle in ${bundles[@]}; do
++    export DEST=.
++    ABS_DEST="$(cd "$DEST" && pwd -P)"
++    bundle "$bundle"
++    echo
++done
+diff --git a/script/test-integration b/script/test-integration
+new file mode 100755
+index 000000000..d374f8575
+--- /dev/null
++++ b/script/test-integration
+@@ -0,0 +1,8 @@
++#!/bin/bash
++
++export SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
++export DEST=.
++
++TESTFLAGS="$TESTFLAGS"
++#go test -v ./integration
++
+diff --git a/script/test-unit b/script/test-unit
+new file mode 100755
+index 000000000..f1e147f0c
+--- /dev/null
++++ b/script/test-unit
+@@ -0,0 +1,56 @@
++#!/bin/bash
++set -e
++
++if ! test -e gen.go; then
++	echo >&2 'error: generate must be run before binary'
++	false
++fi
++
++RED=$'\033[31m'
++GREEN=$'\033[32m'
++TEXTRESET=$'\033[0m' # reset the foreground colour
++
++# This helper function walks the current directory looking for directories
++# holding certain files ($1 parameter), and prints their paths on standard
++# output, one per line.
++find_dirs() {
++    find . -not \( \
++         \( \
++         -path './integration/*' \
++         -o -path './.git/*' \
++         \) \
++         -prune \
++         \) -name "$1" -print0 | xargs -0n1 dirname | sort -u
++}
++
++TESTFLAGS="-cover -coverprofile=cover.out ${TESTFLAGS}"
++
++if [ -z "$TESTDIRS" ]; then
++    TESTDIRS=$(find_dirs '*_test.go')
++fi
++
++TESTS_FAILED=()
++
++for dir in $TESTDIRS; do
++    echo '+ go test' $TESTFLAGS "${dir}"
++    go test ${TESTFLAGS} ${dir}
++    if [ $? != 0 ]; then
++        TESTS_FAILED+=("$dir")
++        echo
++        echo "${RED}Tests failed: $dir${TEXTRESET}"
++        sleep 1 # give it a second, so observers watching can take note
++    fi
++done
++echo
++
++# if some tests fail, we want the bundlescript to fail, but we want to
++# try running ALL the tests first, hence TESTS_FAILED
++if [ "${#TESTS_FAILED[@]}" -gt 0 ]; then
++    echo "${RED}Test failures in: ${TESTS_FAILED[@]}${TEXTRESET}"
++    echo
++    false
++else
++    echo "${GREEN}Test success${TEXTRESET}"
++    echo
++    true
++fi
+diff --git a/script/validate-gofmt b/script/validate-gofmt
+new file mode 100755
+index 000000000..0f59d3730
+--- /dev/null
++++ b/script/validate-gofmt
+@@ -0,0 +1,30 @@
++#!/bin/bash
++
++source "$(dirname "$BASH_SOURCE")/.validate"
++
++IFS=$'\n'
++files=( $(validate_diff --diff-filter=ACMR --name-only -- '*.go' || true) )
++unset IFS
++
++badFiles=()
++for f in "${files[@]}"; do
++	# we use "git show" here to validate that what's committed is formatted
++	if [ "$(git show "$VALIDATE_HEAD:$f" | gofmt -s -l)" ]; then
++		badFiles+=( "$f" )
++	fi
++done
++
++if [ ${#badFiles[@]} -eq 0 ]; then
++	echo 'Congratulations!  All Go source files are properly formatted.'
++else
++	{
++		echo "These files are not properly gofmt'd:"
++		for f in "${badFiles[@]}"; do
++			echo " - $f"
++		done
++		echo
++		echo 'Please reformat the above files using "gofmt -s -w" and commit the result.'
++		echo
++	} >&2
++	false
++fi
+diff --git a/traefik.go b/traefik.go
+index 5fa0b7100..b56764105 100644
+--- a/traefik.go
++++ b/traefik.go
+@@ -3,6 +3,7 @@ package main
+ import (
+ 	"github.com/BurntSushi/toml"
+ 	"github.com/codegangsta/negroni"
++	"github.com/emilevauge/traefik/middlewares"
+ 	"github.com/gorilla/mux"
+ 	"github.com/mailgun/oxy/forward"
+ 	"github.com/mailgun/oxy/roundrobin"
+@@ -11,7 +12,6 @@ import (
+ 	"github.com/tylerb/graceful"
+ 	"github.com/unrolled/render"
+ 	"gopkg.in/alecthomas/kingpin.v2"
+-	"./middlewares"
+ 	"net/http"
+ 	"net/url"
+ 	"os"
+@@ -215,7 +215,7 @@ func LoadConfig(configuration *Configuration, gloablConfiguration *GlobalConfigu
+ 
+ func Invoke(any interface{}, name string, args ...interface{}) []reflect.Value {
+ 	inputs := make([]reflect.Value, len(args))
+-	for i, _ := range args {
++	for i := range args {
+ 		inputs[i] = reflect.ValueOf(args[i])
+ 	}
+ 	return reflect.ValueOf(any).MethodByName(name).Call(inputs)

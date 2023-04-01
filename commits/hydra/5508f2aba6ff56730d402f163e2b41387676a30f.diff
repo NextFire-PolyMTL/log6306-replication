@@ -1,0 +1,148 @@
+commit 5508f2aba6ff56730d402f163e2b41387676a30f
+Author: aeneasr <3372410+aeneasr@users.noreply.github.com>
+Date:   Mon Oct 12 11:53:52 2020 +0200
+
+    refactor: move Dockerfiles to .docker directory
+
+diff --git a/Dockerfile-alpine b/.docker/Dockerfile-alpine
+similarity index 72%
+rename from Dockerfile-alpine
+rename to .docker/Dockerfile-alpine
+index 55d304b0b..d702db36e 100644
+--- a/Dockerfile-alpine
++++ b/.docker/Dockerfile-alpine
+@@ -1,6 +1,3 @@
+-# To compile this image manually run:
+-#
+-# $ GO111MODULE=on GOOS=linux GOARCH=amd64 go build && docker build -t oryd/hydra:v1.0.0-rc.7_oryOS.10 . && rm hydra
+ FROM alpine:3.12
+ 
+ RUN addgroup -S ory; \
+diff --git a/.docker/Dockerfile-build b/.docker/Dockerfile-build
+new file mode 100644
+index 000000000..466285850
+--- /dev/null
++++ b/.docker/Dockerfile-build
+@@ -0,0 +1,43 @@
++FROM golang:1.15-alpine AS builder
++
++RUN apk -U --no-cache add build-base git gcc bash
++
++WORKDIR /go/src/github.com/ory/hydra
++
++ADD go.mod go.mod
++ADD go.sum go.sum
++
++ENV GO111MODULE on
++ENV CGO_ENABLED 1
++
++RUN go mod download
++
++ADD . .
++
++RUN make pack && go build -tags sqlite -o /usr/bin/hydra
++
++FROM alpine:3.12
++
++RUN addgroup -S ory; \
++    adduser -S ory -G ory -D  -h /home/ory -s /bin/nologin; \
++    chown -R ory:ory /home/ory
++
++COPY --from=builder /usr/bin/hydra /usr/bin/hydra
++
++# By creating the sqlite folder as the ory user, the mounted volume will be owned by ory:ory, which
++# is required for read/write of SQLite.
++RUN mkdir -p /var/lib/sqlite
++RUN chown ory:ory /var/lib/sqlite
++VOLUME /var/lib/sqlite
++
++# Exposing the ory home directory to simplify passing in hydra configuration (e.g. if the file $HOME/.hydra.yaml
++# exists, it will be automatically used as the configuration file).
++VOLUME /home/ory
++
++# Declare the standard ports used by hydra (4433 for public service endpoint, 4434 for admin service endpoint)
++EXPOSE 4444 4445
++
++USER ory
++
++ENTRYPOINT ["hydra"]
++CMD ["serve"]
+diff --git a/Dockerfile b/.docker/Dockerfile-scratch
+similarity index 92%
+rename from Dockerfile
+rename to .docker/Dockerfile-scratch
+index c10e13f46..320ae23ee 100644
+--- a/Dockerfile
++++ b/.docker/Dockerfile-scratch
+@@ -1,5 +1,3 @@
+-# To compile this image manually run:
+-#
+ FROM alpine:3.12
+ 
+ RUN apk add -U --no-cache ca-certificates
+diff --git a/.docker/Dockerfile-sqlite b/.docker/Dockerfile-sqlite
+new file mode 100644
+index 000000000..cccca3c60
+--- /dev/null
++++ b/.docker/Dockerfile-sqlite
+@@ -0,0 +1,35 @@
++FROM alpine:3.12
++
++# Because this image is built for SQLite, we create /home/ory and /home/ory/sqlite which is owned by the ory user
++# and declare /home/ory/sqlite a volume.
++#
++# To get SQLite and Docker Volumes working with this image, mount the volume where SQLite should be written to at:
++#
++#   /home/ory/sqlite/some-file.
++
++RUN addgroup -S ory; \
++    adduser -S ory -G ory -D  -h /home/ory -s /bin/nologin; \
++    chown -R ory:ory /home/ory
++RUN apk add -U --no-cache ca-certificates
++
++WORKDIR /home/ory
++
++COPY kratos /usr/bin/kratos
++
++# By creating the sqlite folder as the ory user, the mounted volume will be owned by ory:ory, which
++# is required for read/write of SQLite.
++RUN mkdir -p /var/lib/sqlite
++RUN chown ory:ory /var/lib/sqlite
++VOLUME /var/lib/sqlite
++
++# Exposing the ory home directory to simplify passing in Kratos configuration (e.g. if the file $HOME/.kratos.yaml
++# exists, it will be automatically used as the configuration file).
++VOLUME /home/ory
++
++# Declare the standard ports used by Kratos (4433 for public service endpoint, 4434 for admin service endpoint)
++EXPOSE 4433 4434
++
++USER ory
++
++ENTRYPOINT ["kratos"]
++CMD ["serve"]
+diff --git a/Dockerfile-e2e b/Dockerfile-e2e
+deleted file mode 100644
+index 67d1836ae..000000000
+--- a/Dockerfile-e2e
++++ /dev/null
+@@ -1,19 +0,0 @@
+-FROM golang:1.15.2-alpine3.12
+-
+-ARG git_tag
+-ARG git_commit
+-
+-RUN apk add --no-cache git build-base
+-
+-WORKDIR /go/src/github.com/ory/hydra
+-
+-ENV GO111MODULE=on
+-
+-ADD . .
+-
+-RUN go install .
+-RUN go build -buildmode=plugin -tags sqlite -o /memtest.so ./test/e2e/plugin/memtest.go
+-
+-ENTRYPOINT ["hydra"]
+-
+-CMD ["serve", "all"]

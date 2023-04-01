@@ -1,0 +1,1168 @@
+commit 5254f7c658bfaf781d62c6ad687b455deab85c0e
+Author: Brennan Kinney <5098581+polarathene@users.noreply.github.com>
+Date:   Sun Nov 21 09:33:49 2021 +1300
+
+    fix: `check-for-changes.sh` should not fall out of sync with shared logic (#2260)
+    
+    Removes duplicate logic from `check-for-changes.sh` that is used/maintained elsewhere to avoid risk of problems, as this code is already starting to diverge / rot.
+    
+    ---
+    
+    Previously the change detection support has had code added for rebuilding config upon change detection which is the same as code run during startup scripts. Unfortunately over time this has fallen out of sync. Mostly the startup scripts would get maintenance and the contributor and reviewers may not have been aware of the duplicate code handled by `check-for-changes.sh`.
+    
+    That code was starting to diverge in addition to some changes in structure (_eg: relay host logic seems interleaved here vs separated out in startup scripts_). I wanted to address this before it risks becoming a much bigger headache.
+    
+    Rather than bloat `helper-functions.sh` further, I've added a `helpers/` folder extracting relevant common logic between startup scripts and `changedetector`. If you want to follow that process I've kept scoped commits to make those diffs easier. Some minor changes/improvements were added but nothing significant.
+    
+    ---
+    
+    - chore: Extract relay host logic to new `relay.sh` helper
+    - chore: Extract `/etc/postfix/sasl_passwd` logic to new `sasl.sh` helper
+    - chore: Extract `postfix-accounts.cf` logic to new `accounts.sh` helper
+    - chore: Extract `/etc/aliases` logic to new `aliases.sh` helper
+    - chore: Extract `/etc/postfix/vhost` logic to new `postfix.sh` helper
+    
+    - chore: Add inline docs for Postfix configs
+    > These are possibly more verbose than needed and can be reduced at a later stage.
+    > They are helpful during this refactor process while investigating that everything is handled correctly.
+    
+    `accounts.sh`:
+    - Add note regarding potential bug for bare domain setups with `/etc/postfix/vhost` and `mydestination` sharing same domain value.
+    
+    `relay.sh`:
+    - Remove the tabs for a single space delimiter, revised associated comment.
+    - Add PR reference for original `_populate_relayhost_map` implementation which has some useful details.
+    
+    
+    Co-authored-by: Georg Lauterbach <44545919+georglauterbach@users.noreply.github.com>
+    Co-authored-by: Casper <casperklein@users.noreply.github.com>
+
+diff --git a/Dockerfile b/Dockerfile
+index bd2b51c8..4e655735 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -282,6 +282,8 @@ COPY \
+ 
+ RUN chmod +x /usr/local/bin/*
+ 
++COPY ./target/scripts/helpers /usr/local/bin/helpers
++
+ WORKDIR /
+ 
+ EXPOSE 25 587 143 465 993 110 995 4190
+diff --git a/target/scripts/check-for-changes.sh b/target/scripts/check-for-changes.sh
+index dc65ca09..a638c04a 100755
+--- a/target/scripts/check-for-changes.sh
++++ b/target/scripts/check-for-changes.sh
+@@ -1,4 +1,6 @@
+ #! /bin/bash
++# TODO: Adapt for compatibility with LDAP
++# Only the cert renewal change detection may be relevant for LDAP?
+ 
+ # shellcheck source=./helper-functions.sh
+ . /usr/local/bin/helper-functions.sh
+@@ -97,145 +99,18 @@ do
+       esac
+     done
+ 
+-    # WARNING: This block of duplicate code is already out of sync
+-    # It appears to unneccesarily run, even if the related entry in the CHKSUM_FILE
+-    # has not changed?
+-    #
+-    # regenerate postix aliases
+-    echo "root: ${PM_ADDRESS}" >/etc/aliases
+-    if [[ -f /tmp/docker-mailserver/postfix-aliases.cf ]]
+-    then
+-      cat /tmp/docker-mailserver/postfix-aliases.cf >>/etc/aliases
+-    fi
+-    postalias /etc/aliases
+-
+     # regenerate postfix accounts
+-    : >/etc/postfix/vmailbox
+-    : >/etc/dovecot/userdb
+-
+-    if [[ -f /tmp/docker-mailserver/postfix-accounts.cf ]] && [[ ${ENABLE_LDAP} -ne 1 ]]
+-    then
+-      sed -i 's/\r//g' /tmp/docker-mailserver/postfix-accounts.cf
+-      echo "# WARNING: this file is auto-generated. Modify config/postfix-accounts.cf to edit user list." >/etc/postfix/vmailbox
+-
+-      # Checking that /tmp/docker-mailserver/postfix-accounts.cf ends with a newline
+-      # shellcheck disable=SC1003
+-      sed -i -e '$a\' /tmp/docker-mailserver/postfix-accounts.cf
+-      chown dovecot:dovecot /etc/dovecot/userdb
+-      chmod 640 /etc/dovecot/userdb
+-      sed -i -e '/\!include auth-ldap\.conf\.ext/s/^/#/' /etc/dovecot/conf.d/10-auth.conf
+-      sed -i -e '/\!include auth-passwdfile\.inc/s/^#//' /etc/dovecot/conf.d/10-auth.conf
+-
+-      # rebuild relay host
+-      if [[ -n ${RELAY_HOST} ]]
+-      then
+-        # keep old config
+-        : >/etc/postfix/sasl_passwd
+-        if [[ -n ${SASL_PASSWD} ]]
+-        then
+-          echo "${SASL_PASSWD}" >>/etc/postfix/sasl_passwd
+-        fi
+-
+-        # add domain-specific auth from config file
+-        if [[ -f /tmp/docker-mailserver/postfix-sasl-password.cf ]]
+-        then
+-          while read -r LINE
+-          do
+-            if ! grep -q -e "\s*#" <<< "${LINE}"
+-            then
+-              echo "${LINE}" >>/etc/postfix/sasl_passwd
+-            fi
+-          done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-sasl-password.cf || true)
+-        fi
+-
+-        # add default relay
+-        if [[ -n "${RELAY_USER}" ]] && [[ -n "${RELAY_PASSWORD}" ]]
+-        then
+-          echo "[${RELAY_HOST}]:${RELAY_PORT}		${RELAY_USER}:${RELAY_PASSWORD}" >>/etc/postfix/sasl_passwd
+-        fi
+-      fi
+-
+-      # creating users ; 'pass' is encrypted
+-      # comments and empty lines are ignored
+-      while IFS=$'|' read -r LOGIN PASS USER_ATTRIBUTES
+-      do
+-        USER=$(echo "${LOGIN}" | cut -d @ -f1)
+-        DOMAIN=$(echo "${LOGIN}" | cut -d @ -f2)
+-
+-        # test if user has a defined quota
+-        if [[ -f /tmp/docker-mailserver/dovecot-quotas.cf ]]
+-        then
+-          declare -a USER_QUOTA
+-          IFS=':' ; read -r -a USER_QUOTA < <(grep "${USER}@${DOMAIN}:" -i /tmp/docker-mailserver/dovecot-quotas.cf)
+-          unset IFS
+-
+-          [[ ${#USER_QUOTA[@]} -eq 2 ]] && USER_ATTRIBUTES="${USER_ATTRIBUTES} userdb_quota_rule=*:bytes=${USER_QUOTA[1]}"
+-        fi
+-
+-        echo "${LOGIN} ${DOMAIN}/${USER}/" >>/etc/postfix/vmailbox
+-
+-        # user database for dovecot has the following format:
+-        # user:password:uid:gid:(gecos):home:(shell):extra_fields
+-        # example :
+-        # ${LOGIN}:${PASS}:5000:5000::/var/mail/${DOMAIN}/${USER}::userdb_mail=maildir:/var/mail/${DOMAIN}/${USER}
+-        echo "${LOGIN}:${PASS}:5000:5000::/var/mail/${DOMAIN}/${USER}::${USER_ATTRIBUTES}" >>/etc/dovecot/userdb
+-        mkdir -p "/var/mail/${DOMAIN}/${USER}"
++    [[ ${SMTP_ONLY} -ne 1 ]] && _create_accounts
+ 
+-        if [[ -e /tmp/docker-mailserver/${LOGIN}.dovecot.sieve ]]
+-        then
+-          cp "/tmp/docker-mailserver/${LOGIN}.dovecot.sieve" "/var/mail/${DOMAIN}/${USER}/.dovecot.sieve"
+-        fi
++    _rebuild_relayhost
+ 
+-        echo "${DOMAIN}" >>/tmp/vhost.tmp
+-      done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-accounts.cf)
+-    fi
+-
+-    [[ -n ${RELAY_HOST} ]] && _populate_relayhost_map
+-
+-
+-    if [[ -f /etc/postfix/sasl_passwd ]]
+-    then
+-      chown root:root /etc/postfix/sasl_passwd
+-      chmod 0600 /etc/postfix/sasl_passwd
+-    fi
+-
+-    if [[ -f postfix-virtual.cf ]]
+-    then
+-      # regenerate postfix aliases
+-      : >/etc/postfix/virtual
+-      : >/etc/postfix/regexp
+-
+-      if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]]
+-      then
+-        cp -f /tmp/docker-mailserver/postfix-virtual.cf /etc/postfix/virtual
+-
+-        # the `to` seems to be important; don't delete it
+-        # shellcheck disable=SC2034
+-        while read -r FROM TO
+-        do
+-          UNAME=$(echo "${FROM}" | cut -d @ -f1)
+-          DOMAIN=$(echo "${FROM}" | cut -d @ -f2)
+-
+-          # if they are equal it means the line looks like: "user1	 other@domain.tld"
+-          [ "${UNAME}" != "${DOMAIN}" ] && echo "${DOMAIN}" >>/tmp/vhost.tmp
+-        done  < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true)
+-      fi
+-
+-      if [[ -f /tmp/docker-mailserver/postfix-regexp.cf ]]
+-      then
+-        cp -f /tmp/docker-mailserver/postfix-regexp.cf /etc/postfix/regexp
+-        sed -i -e '/^virtual_alias_maps/{
+-s/ regexp:.*//
+-s/$/ regexp:\/etc\/postfix\/regexp/
+-}' /etc/postfix/main.cf
+-      fi
+-    fi
++    # regenerate postix aliases
++    _create_aliases
+ 
+-    if [[ -f /tmp/vhost.tmp ]]
+-    then
+-      sort < /tmp/vhost.tmp | uniq >/etc/postfix/vhost
+-      rm /tmp/vhost.tmp
+-    fi
++    # regenerate /etc/postfix/vhost
++    # NOTE: If later adding support for LDAP with change detection and this method is called,
++    # be sure to mimic `setup-stack.sh:_setup_ldap` which appends to `/tmp/vhost.tmp`.
++    _create_postfix_vhost
+ 
+     if find /var/mail -maxdepth 3 -a \( \! -user 5000 -o \! -group 5000 \) | read -r
+     then
+diff --git a/target/scripts/helper-functions.sh b/target/scripts/helper-functions.sh
+index 318d36a7..f136c650 100755
+--- a/target/scripts/helper-functions.sh
++++ b/target/scripts/helper-functions.sh
+@@ -1,5 +1,10 @@
+ #! /bin/bash
+ 
++# These helpers are used by `setup-stack.sh` and `check-for-changes.sh`,
++# not by anything within `helper-functions.sh` itself:
++# shellcheck source=target/scripts/helpers/index.sh
++. /usr/local/bin/helpers/index.sh
++
+ DMS_DEBUG="${DMS_DEBUG:=0}"
+ SCRIPT_NAME="$(basename "$0")" # This becomes the sourcing script name (Example: check-for-changes.sh)
+ LOCK_ID="$(uuid)" # Used inside of lock files to identify them and prevent removal by other instances of docker-mailserver
+@@ -213,44 +218,6 @@ function _notify
+ }
+ export -f _notify
+ 
+-# ? --------------------------------------------- Relay Host Map
+-
+-# setup /etc/postfix/relayhost_map
+-# --
+-# @domain1.com        [smtp.mailgun.org]:587
+-# @domain2.com        [smtp.mailgun.org]:587
+-# @domain3.com        [smtp.mailgun.org]:587
+-function _populate_relayhost_map
+-{
+-  : >/etc/postfix/relayhost_map
+-  chown root:root /etc/postfix/relayhost_map
+-  chmod 0600 /etc/postfix/relayhost_map
+-
+-  if [[ -f /tmp/docker-mailserver/postfix-relaymap.cf ]]
+-  then
+-    _notify 'inf' "Adding relay mappings from postfix-relaymap.cf"
+-    # keep lines which are not a comment *and* have a destination.
+-    sed -n '/^\s*[^#[:space:]]\S*\s\+\S/p' /tmp/docker-mailserver/postfix-relaymap.cf >> /etc/postfix/relayhost_map
+-  fi
+-
+-  {
+-    # note: won't detect domains when lhs has spaces (but who does that?!)
+-    sed -n '/^\s*[^#[:space:]]/ s/^[^@|]*@\([^|]\+\)|.*$/\1/p' /tmp/docker-mailserver/postfix-accounts.cf
+-
+-    [ -f /tmp/docker-mailserver/postfix-virtual.cf ] && sed -n '/^\s*[^#[:space:]]/ s/^\s*[^@[:space:]]*@\(\S\+\)\s.*/\1/p' /tmp/docker-mailserver/postfix-virtual.cf
+-  } | while read -r DOMAIN
+-  do
+-    # DOMAIN not already present *and* not ignored
+-    if ! grep -q -e "^@${DOMAIN}\b" /etc/postfix/relayhost_map && ! grep -qs -e "^\s*@${DOMAIN}\s*$" /tmp/docker-mailserver/postfix-relaymap.cf
+-    then
+-      _notify 'inf' "Adding relay mapping for ${DOMAIN}"
+-      # shellcheck disable=SC2153
+-      echo "@${DOMAIN}    [${RELAY_HOST}]:${RELAY_PORT}" >> /etc/postfix/relayhost_map
+-    fi
+-  done
+-}
+-export -f _populate_relayhost_map
+-
+ # ? --------------------------------------------- File Checksums
+ 
+ # file storing the checksums of the monitored files.
+@@ -349,6 +316,12 @@ function _obtain_hostname_and_domainname
+   DOMAINNAME="${DOMAINNAME:-${HOSTNAME}}"
+ }
+ 
++# Remove string input with empty line, only whitespace or `#` as the first non-whitespace character.
++function _strip_comments
++{
++  grep -q -E "^\s*$|^\s*#" <<< "${1}"
++}
++
+ # Call this method when you want to panic (emit a 'FATAL' log level error, and exit uncleanly).
+ # `dms_panic` methods should be preferred if your failure type is supported.
+ function _shutdown
+diff --git a/target/scripts/helpers/accounts.sh b/target/scripts/helpers/accounts.sh
+new file mode 100755
+index 00000000..cff1dc49
+--- /dev/null
++++ b/target/scripts/helpers/accounts.sh
+@@ -0,0 +1,146 @@
++#! /bin/bash
++# Support for Postfix accounts managed via Dovecot
++
++# It looks like the DOMAIN in below logic is being stored in /etc/postfix/vhost,
++# even if it's a value used for Postfix `main.cf:mydestination`, which apparently isn't good?
++# Only an issue when $myhostname is an exact match (eg: bare domain FQDN).
++
++function _create_accounts
++{
++  : >/etc/postfix/vmailbox
++  : >/etc/dovecot/userdb
++
++  if [[ -f /tmp/docker-mailserver/postfix-accounts.cf ]] && [[ ${ENABLE_LDAP} -ne 1 ]]
++  then
++    _notify 'inf' "Checking file line endings"
++    sed -i 's|\r||g' /tmp/docker-mailserver/postfix-accounts.cf
++
++    _notify 'inf' "Regenerating postfix user list"
++    echo "# WARNING: this file is auto-generated. Modify /tmp/docker-mailserver/postfix-accounts.cf to edit the user list." > /etc/postfix/vmailbox
++
++    # checking that /tmp/docker-mailserver/postfix-accounts.cf ends with a newline
++    # shellcheck disable=SC1003
++    sed -i -e '$a\' /tmp/docker-mailserver/postfix-accounts.cf
++
++    chown dovecot:dovecot /etc/dovecot/userdb
++    chmod 640 /etc/dovecot/userdb
++
++    sed -i -e '/\!include auth-ldap\.conf\.ext/s/^/#/' /etc/dovecot/conf.d/10-auth.conf
++    sed -i -e '/\!include auth-passwdfile\.inc/s/^#//' /etc/dovecot/conf.d/10-auth.conf
++
++    # creating users ; 'pass' is encrypted
++    # comments and empty lines are ignored
++    local LOGIN PASS USER_ATTRIBUTES
++    while IFS=$'|' read -r LOGIN PASS USER_ATTRIBUTES
++    do
++      # Setting variables for better readability
++      USER=$(echo "${LOGIN}" | cut -d @ -f1)
++      DOMAIN=$(echo "${LOGIN}" | cut -d @ -f2)
++
++      # test if user has a defined quota
++      if [[ -f /tmp/docker-mailserver/dovecot-quotas.cf ]]
++      then
++        declare -a USER_QUOTA
++        IFS=':' read -r -a USER_QUOTA < <(grep "${USER}@${DOMAIN}:" -i /tmp/docker-mailserver/dovecot-quotas.cf)
++
++        if [[ ${#USER_QUOTA[@]} -eq 2 ]]
++        then
++          USER_ATTRIBUTES="${USER_ATTRIBUTES:+${USER_ATTRIBUTES} }userdb_quota_rule=*:bytes=${USER_QUOTA[1]}"
++        fi
++      fi
++
++      if [[ -z ${USER_ATTRIBUTES} ]]
++      then
++        _notify 'inf' "Creating user '${USER}' for domain '${DOMAIN}'"
++      else
++        _notify 'inf' "Creating user '${USER}' for domain '${DOMAIN}' with attributes '${USER_ATTRIBUTES}'"
++      fi
++
++      echo "${LOGIN} ${DOMAIN}/${USER}/" >> /etc/postfix/vmailbox
++      # Dovecot's userdb has the following format
++      # user:password:uid:gid:(gecos):home:(shell):extra_fields
++      echo \
++        "${LOGIN}:${PASS}:5000:5000::/var/mail/${DOMAIN}/${USER}::${USER_ATTRIBUTES}" \
++        >>/etc/dovecot/userdb
++
++      mkdir -p "/var/mail/${DOMAIN}/${USER}"
++
++      # copy user provided sieve file, if present
++      if [[ -e "/tmp/docker-mailserver/${LOGIN}.dovecot.sieve" ]]
++      then
++        cp "/tmp/docker-mailserver/${LOGIN}.dovecot.sieve" "/var/mail/${DOMAIN}/${USER}/.dovecot.sieve"
++      fi
++
++      echo "${DOMAIN}" >> /tmp/vhost.tmp
++    done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-accounts.cf)
++
++    _create_dovecot_alias_dummy_accounts
++  fi
++}
++
++# Required when using Dovecot Quotas to avoid blacklisting risk from backscatter
++# Note: This is a workaround only suitable for basic aliases that map to single real addresses,
++# not multiple addresses (real accounts or additional aliases), those will not work with Postfix
++# `quota-status` policy service and remain at risk of backscatter.
++#
++# see https://github.com/docker-mailserver/docker-mailserver/pull/2248#issuecomment-953313852
++# for more details on this method
++function _create_dovecot_alias_dummy_accounts
++{
++  if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]] && [[ ${ENABLE_QUOTAS} -eq 1 ]]
++  then
++    # adding aliases to Dovecot's userdb
++    # ${REAL_FQUN} is a user's fully-qualified username
++    local ALIAS REAL_FQUN
++    while read -r ALIAS REAL_FQUN
++    do
++      # ignore comments
++      [[ ${ALIAS} == \#* ]] && continue
++
++      # alias is assumed to not be a proper e-mail
++      # these aliases do not need to be added to Dovecot's userdb
++      [[ ! ${ALIAS} == *@* ]] && continue
++
++      # clear possibly already filled arrays
++      # do not remove the following line of code
++      unset REAL_ACC USER_QUOTA
++      declare -a REAL_ACC USER_QUOTA
++
++      local REAL_USERNAME REAL_DOMAINNAME
++      REAL_USERNAME=$(cut -d '@' -f 1 <<< "${REAL_FQUN}")
++      REAL_DOMAINNAME=$(cut -d '@' -f 2 <<< "${REAL_FQUN}")
++
++      if ! grep -q "${REAL_FQUN}" /tmp/docker-mailserver/postfix-accounts.cf
++      then
++        _notify 'inf' "Alias '${ALIAS}' is non-local (or mapped to a non-existing account) and will not be added to Dovecot's userdb"
++        continue
++      fi
++
++      _notify 'inf' "Adding alias '${ALIAS}' for user '${REAL_FQUN}' to Dovecot's userdb"
++
++      # ${REAL_ACC[0]} => real account name (e-mail address) == ${REAL_FQUN}
++      # ${REAL_ACC[1]} => password hash
++      # ${REAL_ACC[2]} => optional user attributes
++      IFS='|' read -r -a REAL_ACC < <(grep "${REAL_FQUN}" /tmp/docker-mailserver/postfix-accounts.cf)
++
++      if [[ -z ${REAL_ACC[1]} ]]
++      then
++        dms_panic__misconfigured 'postfix-accounts.cf' 'alias configuration'
++      fi
++
++      # test if user has a defined quota
++      if [[ -f /tmp/docker-mailserver/dovecot-quotas.cf ]]
++      then
++        IFS=':' read -r -a USER_QUOTA < <(grep "${REAL_FQUN}:" -i /tmp/docker-mailserver/dovecot-quotas.cf)
++        if [[ ${#USER_QUOTA[@]} -eq 2 ]]
++        then
++          REAL_ACC[2]="${REAL_ACC[2]:+${REAL_ACC[2]} }userdb_quota_rule=*:bytes=${USER_QUOTA[1]}"
++        fi
++      fi
++
++      echo \
++        "${ALIAS}:${REAL_ACC[1]}:5000:5000::/var/mail/${REAL_DOMAINNAME}/${REAL_USERNAME}::${REAL_ACC[2]:-}" \
++        >> /etc/dovecot/userdb
++    done < /tmp/docker-mailserver/postfix-virtual.cf
++  fi
++}
+diff --git a/target/scripts/helpers/aliases.sh b/target/scripts/helpers/aliases.sh
+new file mode 100755
+index 00000000..2c2ee519
+--- /dev/null
++++ b/target/scripts/helpers/aliases.sh
+@@ -0,0 +1,75 @@
++#! /bin/bash
++# Support for Postfix aliases
++
++# NOTE: LDAP doesn't appear to use this, but the docs page: "Use Cases | Forward-Only Mail-Server with LDAP"
++# does have an example where /etc/postfix/virtual is referenced in addition to ldap config for Postfix `main.cf:virtual_alias_maps`.
++# `setup-stack.sh:_setup_ldap` does not seem to configure for `/etc/postfix/virtual however.`
++
++# NOTE: `accounts.sh` and `relay.sh:_populate_relayhost_map` also process on `postfix-virtual.cf`.
++function _handle_postfix_virtual_config
++{
++  : >/etc/postfix/virtual
++  : >/etc/postfix/regexp
++
++  if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]]
++  then
++    # fixing old virtual user file
++    if grep -q ",$" /tmp/docker-mailserver/postfix-virtual.cf
++    then
++      sed -i -e "s|, |,|g" -e "s|,$||g" /tmp/docker-mailserver/postfix-virtual.cf
++    fi
++
++    cp -f /tmp/docker-mailserver/postfix-virtual.cf /etc/postfix/virtual
++
++    # the `to` is important, don't delete it
++    # shellcheck disable=SC2034
++    while read -r FROM TO
++    do
++      UNAME=$(echo "${FROM}" | cut -d @ -f1)
++      DOMAIN=$(echo "${FROM}" | cut -d @ -f2)
++
++      # if they are equal it means the line looks like: "user1     other@domain.tld"
++      [[ ${UNAME} != "${DOMAIN}" ]] && echo "${DOMAIN}" >>/tmp/vhost.tmp
++    done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true)
++  else
++    _notify 'inf' "Warning '/tmp/docker-mailserver/postfix-virtual.cf' is not provided. No mail alias/forward created."
++  fi
++}
++
++function _handle_postfix_regexp_config
++{
++  if [[ -f /tmp/docker-mailserver/postfix-regexp.cf ]]
++  then
++    _notify 'inf' "Adding regexp alias file postfix-regexp.cf"
++
++    cp -f /tmp/docker-mailserver/postfix-regexp.cf /etc/postfix/regexp
++    sed -i -E \
++      's|virtual_alias_maps(.*)|virtual_alias_maps\1 pcre:/etc/postfix/regexp|g' \
++      /etc/postfix/main.cf
++  fi
++}
++
++function _handle_postfix_aliases_config
++{
++  _notify 'inf' 'Configuring root alias'
++
++  echo "root: ${POSTMASTER_ADDRESS}" > /etc/aliases
++
++  if [[ -f /tmp/docker-mailserver/postfix-aliases.cf ]]
++  then
++    cat /tmp/docker-mailserver/postfix-aliases.cf >>/etc/aliases
++  else
++    _notify 'inf' "'/tmp/docker-mailserver/postfix-aliases.cf' is not provided, it will be auto created."
++    : >/tmp/docker-mailserver/postfix-aliases.cf
++  fi
++
++  postalias /etc/aliases
++}
++
++# Other scripts should call this method, rather than the ones above:
++function _create_aliases
++{
++  _handle_postfix_virtual_config
++  _handle_postfix_regexp_config
++  _handle_postfix_aliases_config
++}
+diff --git a/target/scripts/helpers/index.sh b/target/scripts/helpers/index.sh
+new file mode 100755
+index 00000000..699e1b2b
+--- /dev/null
++++ b/target/scripts/helpers/index.sh
+@@ -0,0 +1,15 @@
++#! /bin/bash
++# shellcheck source-path=target/scripts/helpers
++# This file serves as a single import for all helpers
++
++function _import_scripts
++{
++  local PATH_TO_SCRIPTS='/usr/local/bin/helpers'
++
++  . "${PATH_TO_SCRIPTS}/postfix.sh"
++  . "${PATH_TO_SCRIPTS}/accounts.sh"
++  . "${PATH_TO_SCRIPTS}/aliases.sh"
++  . "${PATH_TO_SCRIPTS}/relay.sh"
++  . "${PATH_TO_SCRIPTS}/sasl.sh"
++}
++_import_scripts
+diff --git a/target/scripts/helpers/postfix.sh b/target/scripts/helpers/postfix.sh
+new file mode 100755
+index 00000000..3d8c555a
+--- /dev/null
++++ b/target/scripts/helpers/postfix.sh
+@@ -0,0 +1,52 @@
++#! /bin/bash
++# Support for Postfix features
++
++# Docs - virtual_mailbox_domains (Used in /etc/postfix/main.cf):
++# http://www.postfix.org/ADDRESS_CLASS_README.html#virtual_mailbox_class
++# http://www.postfix.org/VIRTUAL_README.html
++# > If you omit this setting then Postfix will reject mail (relay access denied) or will not be able to deliver it.
++# > NEVER list a virtual MAILBOX domain name as a `mydestination` domain!
++# > NEVER list a virtual MAILBOX domain name as a virtual ALIAS domain!
++#
++# > Execute the command "postmap /etc/postfix/virtual" after changing the virtual file,
++# > execute "postmap /etc/postfix/vmailbox" after changing the vmailbox file,
++# > and execute the command "postfix reload" after changing the main.cf file.
++#
++# - virtual_alias_domains is not used by docker-mailserver at present, although LDAP docs reference it.
++# - `postmap` only seems relevant when the lookup type is one of these `file_type` values: http://www.postfix.org/postmap.1.html
++#   Should not be a concern for most types used by `docker-mailserver`: texthash, ldap, pcre, tcp, unionmap, unix.
++#   The only other type in use by `docker-mailserver` is the hash type for /etc/aliases, which `postalias` handles.
++function _create_postfix_vhost
++{
++  # `main.cf` configures `virtual_mailbox_domains = /etc/postfix/vhost`
++  # NOTE: Amavis also consumes this file.
++  : >/etc/postfix/vhost
++
++  # Account and Alias generation will store values in `/tmp/vhost.tmp`.
++  # Filter unique values to the proper config.
++  # NOTE: LDAP stores the domain value set by `docker-mailserver`,
++  # and correctly removes it from `mydestination` in `main.cf` in `setup-stack.sh`.
++  if [[ -f /tmp/vhost.tmp ]]
++  then
++    sort < /tmp/vhost.tmp | uniq >> /etc/postfix/vhost
++    rm /tmp/vhost.tmp
++  fi
++}
++
++# Docs - Postfix lookup table files:
++# http://www.postfix.org/DATABASE_README.html
++#
++# Types used in scripts or config: ldap, texthash, hash, pcre, tcp, unionmap, unix
++# ldap type changes are network based, no `postfix reload` required.
++# texthash type is read into memory when Postfix process starts, requires `postfix reload` to apply changes.
++# texthash type does not require running `postmap` after changes are made, other types might.
++#
++# Examples of different types actively used:
++# setup-stack.sh:_setup_spoof_protection uses texthash + hash + pcre, and conditionally unionmap
++# main.cf:
++# - alias_maps and alias_database both use hash:/etc/aliases
++# - virtual_mailbox_maps and virtual_alias_maps use texthash
++# - `alias.sh` may append pcre:/etc/postfix/regexp to virtual_alias_maps in `main.cf`
++#
++# /etc/aliases is handled by `alias.sh` and uses `postalias` to update the Postfix alias database. No need for `postmap`.
++# http://www.postfix.org/postalias.1.html
+diff --git a/target/scripts/helpers/relay.sh b/target/scripts/helpers/relay.sh
+new file mode 100755
+index 00000000..908d82ba
+--- /dev/null
++++ b/target/scripts/helpers/relay.sh
+@@ -0,0 +1,136 @@
++#! /bin/bash
++# Support for Relay Hosts
++
++function _relayhost_default_port_fallback
++{
++  RELAY_PORT=${RELAY_PORT:-25}
++}
++
++# setup /etc/postfix/sasl_passwd
++# --
++# @domain1.com        postmaster@domain1.com:your-password-1
++# @domain2.com        postmaster@domain2.com:your-password-2
++# @domain3.com        postmaster@domain3.com:your-password-3
++#
++# [smtp.mailgun.org]:587  postmaster@domain2.com:your-password-2
++function _relayhost_sasl
++{
++  if [[ ! -f /tmp/docker-mailserver/postfix-sasl-password.cf ]] && [[ -z ${RELAY_USER} || -z ${RELAY_PASSWORD} ]]
++  then
++    _notify 'warn' "No relay auth file found and no default set"
++    return 1
++  fi
++
++  if [[ -f /tmp/docker-mailserver/postfix-sasl-password.cf ]]
++  then
++    _notify 'inf' "Adding relay authentication from postfix-sasl-password.cf"
++
++    # add domain-specific auth from config file:
++    while read -r LINE
++    do
++      if ! _strip_comments "${LINE}"
++      then
++        echo "${LINE}" >> /etc/postfix/sasl_passwd
++      fi
++    done < /tmp/docker-mailserver/postfix-sasl-password.cf
++  fi
++
++  # add default relay
++  if [[ -n ${RELAY_USER} ]] && [[ -n ${RELAY_PASSWORD} ]]
++  then
++    # white-space separates value pairs (any length is valid)
++    echo "[${RELAY_HOST}]:${RELAY_PORT} ${RELAY_USER}:${RELAY_PASSWORD}" >> /etc/postfix/sasl_passwd
++  fi
++
++  _sasl_set_passwd_permissions
++}
++
++# Introduced by: https://github.com/docker-mailserver/docker-mailserver/pull/1596
++# setup /etc/postfix/relayhost_map
++# --
++# @domain1.com        [smtp.mailgun.org]:587
++# @domain2.com        [smtp.mailgun.org]:587
++# @domain3.com        [smtp.mailgun.org]:587
++function _populate_relayhost_map
++{
++  # Create the relayhost_map config file:
++  : >/etc/postfix/relayhost_map
++  chown root:root /etc/postfix/relayhost_map
++  chmod 0600 /etc/postfix/relayhost_map
++
++  if [[ -f /tmp/docker-mailserver/postfix-relaymap.cf ]]
++  then
++    _notify 'inf' "Adding relay mappings from postfix-relaymap.cf"
++    # keep lines which are not a comment *and* have a destination.
++    sed -n '/^\s*[^#[:space:]]\S*\s\+\S/p' /tmp/docker-mailserver/postfix-relaymap.cf >> /etc/postfix/relayhost_map
++  fi
++
++  {
++    # note: won't detect domains when lhs has spaces (but who does that?!)
++    sed -n '/^\s*[^#[:space:]]/ s/^[^@|]*@\([^|]\+\)|.*$/\1/p' /tmp/docker-mailserver/postfix-accounts.cf
++
++    [ -f /tmp/docker-mailserver/postfix-virtual.cf ] && sed -n '/^\s*[^#[:space:]]/ s/^\s*[^@[:space:]]*@\(\S\+\)\s.*/\1/p' /tmp/docker-mailserver/postfix-virtual.cf
++  } | while read -r DOMAIN
++  do
++    # DOMAIN not already present *and* not ignored
++    if ! grep -q -e "^@${DOMAIN}\b" /etc/postfix/relayhost_map && ! grep -qs -e "^\s*@${DOMAIN}\s*$" /tmp/docker-mailserver/postfix-relaymap.cf
++    then
++      _notify 'inf' "Adding relay mapping for ${DOMAIN}"
++      echo "@${DOMAIN}    [${RELAY_HOST}]:${RELAY_PORT}" >> /etc/postfix/relayhost_map
++    fi
++  done
++}
++
++function _relayhost_configure_postfix
++{
++  postconf -e \
++    "smtp_sasl_auth_enable = yes" \
++    "smtp_sasl_security_options = noanonymous" \
++    "smtp_sasl_password_maps = texthash:/etc/postfix/sasl_passwd" \
++    "smtp_tls_security_level = encrypt" \
++    "smtp_tls_note_starttls_offer = yes" \
++    "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt" \
++    "sender_dependent_relayhost_maps = texthash:/etc/postfix/relayhost_map" \
++    "smtp_sender_dependent_authentication = yes"
++}
++
++# ? --------------------------------------------- Callers
++
++# setup-stack.sh:
++function _setup_relayhost
++{
++  _notify 'task' 'Setting up Postfix Relay Hosts'
++
++  if [[ -n ${DEFAULT_RELAY_HOST} ]]
++  then
++    _notify 'inf' "Setting default relay host ${DEFAULT_RELAY_HOST} to /etc/postfix/main.cf"
++    postconf -e "relayhost = ${DEFAULT_RELAY_HOST}"
++  fi
++
++  if [[ -n ${RELAY_HOST} ]]
++  then
++    _relayhost_default_port_fallback
++    _notify 'inf' "Setting up outgoing email relaying via ${RELAY_HOST}:${RELAY_PORT}"
++
++    # Expects `_sasl_passwd_create` was called prior in `setup-stack.sh`
++    _relayhost_sasl
++    _populate_relayhost_map
++
++    _relayhost_configure_postfix
++  fi
++}
++
++# check-for-changes.sh:
++function _rebuild_relayhost
++{
++  if [[ -n ${RELAY_HOST} ]]
++  then
++    _relayhost_default_port_fallback
++
++    # Start from a new `/etc/postfix/sasl_passwd` state:
++    _sasl_passwd_create
++
++    _relayhost_sasl
++    _populate_relayhost_map
++  fi
++}
+diff --git a/target/scripts/helpers/sasl.sh b/target/scripts/helpers/sasl.sh
+new file mode 100755
+index 00000000..956a139d
+--- /dev/null
++++ b/target/scripts/helpers/sasl.sh
+@@ -0,0 +1,23 @@
++#! /bin/bash
++# Support for SASL
++
++function _sasl_passwd_create
++{
++  if [[ -n ${SASL_PASSWD} ]]
++  then
++    # create SASL password
++    echo "${SASL_PASSWD}" > /etc/postfix/sasl_passwd
++    _sasl_set_passwd_permissions
++  else
++    rm -f /etc/postfix/sasl_passwd
++  fi
++}
++
++function _sasl_set_passwd_permissions
++{
++  if [[ -f /etc/postfix/sasl_passwd ]]
++  then
++    chown root:root /etc/postfix/sasl_passwd
++    chmod 0600 /etc/postfix/sasl_passwd
++  fi
++}
+diff --git a/target/scripts/start-mailserver.sh b/target/scripts/start-mailserver.sh
+index 5c361e93..9948ff75 100755
+--- a/target/scripts/start-mailserver.sh
++++ b/target/scripts/start-mailserver.sh
+@@ -138,9 +138,8 @@ function register_functions
+   fi
+ 
+   _register_setup_function '_setup_postfix_access_control'
++  _register_setup_function '_setup_postfix_relay_hosts'
+ 
+-  [[ -n ${DEFAULT_RELAY_HOST} ]] && _register_setup_function '_setup_postfix_default_relay_host'
+-  [[ -n ${RELAY_HOST} ]] && _register_setup_function '_setup_postfix_relay_hosts'
+   [[ ${ENABLE_POSTFIX_VIRTUAL_TRANSPORT:-0} -eq 1 ]] && _register_setup_function '_setup_postfix_virtual_transport'
+ 
+   _register_setup_function '_setup_postfix_override_configuration'
+diff --git a/target/scripts/startup/setup-stack.sh b/target/scripts/startup/setup-stack.sh
+index 9e5e9063..397d8e3e 100644
+--- a/target/scripts/startup/setup-stack.sh
++++ b/target/scripts/startup/setup-stack.sh
+@@ -315,132 +315,11 @@ function _setup_dovecot_quota
+ function _setup_dovecot_local_user
+ {
+   _notify 'task' 'Setting up Dovecot Local User'
+-  : >/etc/postfix/vmailbox
+-  : >/etc/dovecot/userdb
+ 
+-  if [[ -f /tmp/docker-mailserver/postfix-accounts.cf ]] && [[ ${ENABLE_LDAP} -ne 1 ]]
+-  then
+-    _notify 'inf' "Checking file line endings"
+-    sed -i 's|\r||g' /tmp/docker-mailserver/postfix-accounts.cf
+-
+-    _notify 'inf' "Regenerating postfix user list"
+-    echo "# WARNING: this file is auto-generated. Modify /tmp/docker-mailserver/postfix-accounts.cf to edit the user list." > /etc/postfix/vmailbox
+-
+-    # checking that /tmp/docker-mailserver/postfix-accounts.cf ends with a newline
+-    # shellcheck disable=SC1003
+-    sed -i -e '$a\' /tmp/docker-mailserver/postfix-accounts.cf
+-
+-    chown dovecot:dovecot /etc/dovecot/userdb
+-    chmod 640 /etc/dovecot/userdb
+-
+-    sed -i -e '/\!include auth-ldap\.conf\.ext/s/^/#/' /etc/dovecot/conf.d/10-auth.conf
+-    sed -i -e '/\!include auth-passwdfile\.inc/s/^#//' /etc/dovecot/conf.d/10-auth.conf
+-
+-    # creating users ; 'pass' is encrypted
+-    # comments and empty lines are ignored
+-    local LOGIN PASS USER_ATTRIBUTES
+-    while IFS=$'|' read -r LOGIN PASS USER_ATTRIBUTES
+-    do
+-      # Setting variables for better readability
+-      USER=$(echo "${LOGIN}" | cut -d @ -f1)
+-      DOMAIN=$(echo "${LOGIN}" | cut -d @ -f2)
+-
+-      # test if user has a defined quota
+-      if [[ -f /tmp/docker-mailserver/dovecot-quotas.cf ]]
+-      then
+-        declare -a USER_QUOTA
+-        IFS=':' read -r -a USER_QUOTA < <(grep "${USER}@${DOMAIN}:" -i /tmp/docker-mailserver/dovecot-quotas.cf)
+-
+-        if [[ ${#USER_QUOTA[@]} -eq 2 ]]
+-        then
+-          USER_ATTRIBUTES="${USER_ATTRIBUTES:+${USER_ATTRIBUTES} }userdb_quota_rule=*:bytes=${USER_QUOTA[1]}"
+-        fi
+-      fi
++  _create_accounts
+ 
+-      if [[ -z ${USER_ATTRIBUTES} ]]
+-      then
+-        _notify 'inf' "Creating user '${USER}' for domain '${DOMAIN}'"
+-      else
+-        _notify 'inf' "Creating user '${USER}' for domain '${DOMAIN}' with attributes '${USER_ATTRIBUTES}'"
+-      fi
+-
+-      echo "${LOGIN} ${DOMAIN}/${USER}/" >> /etc/postfix/vmailbox
+-      # Dovecot's userdb has the following format
+-      # user:password:uid:gid:(gecos):home:(shell):extra_fields
+-      echo \
+-        "${LOGIN}:${PASS}:5000:5000::/var/mail/${DOMAIN}/${USER}::${USER_ATTRIBUTES}" \
+-        >>/etc/dovecot/userdb
+-
+-      mkdir -p "/var/mail/${DOMAIN}/${USER}"
+-
+-      # copy user provided sieve file, if present
+-      if [[ -e "/tmp/docker-mailserver/${LOGIN}.dovecot.sieve" ]]
+-      then
+-        cp "/tmp/docker-mailserver/${LOGIN}.dovecot.sieve" "/var/mail/${DOMAIN}/${USER}/.dovecot.sieve"
+-      fi
+-
+-      echo "${DOMAIN}" >> /tmp/vhost.tmp
+-    done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-accounts.cf)
+-
+-    # see https://github.com/docker-mailserver/docker-mailserver/pull/2248#issuecomment-953313852
+-    # for more details on this section
+-    if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]] && [[ ${ENABLE_QUOTAS} -eq 1 ]]
+-    then
+-      # adding aliases to Dovecot's userdb
+-      # ${REAL_FQUN} is a user's fully-qualified username
+-      local ALIAS REAL_FQUN
+-      while read -r ALIAS REAL_FQUN
+-      do
+-        # ignore comments
+-        [[ ${ALIAS} == \#* ]] && continue
+-
+-        # alias is assumed to not be a proper e-mail
+-        # these aliases do not need to be added to Dovecot's userdb
+-        [[ ! ${ALIAS} == *@* ]] && continue
+-
+-        # clear possibly already filled arrays
+-        # do not remove the following line of code
+-        unset REAL_ACC USER_QUOTA
+-        declare -a REAL_ACC USER_QUOTA
+-
+-        local REAL_USERNAME REAL_DOMAINNAME
+-        REAL_USERNAME=$(cut -d '@' -f 1 <<< "${REAL_FQUN}")
+-        REAL_DOMAINNAME=$(cut -d '@' -f 2 <<< "${REAL_FQUN}")
+-
+-        if ! grep -q "${REAL_FQUN}" /tmp/docker-mailserver/postfix-accounts.cf
+-        then
+-          _notify 'inf' "Alias '${ALIAS}' is non-local (or mapped to a non-existing account) and will not be added to Dovecot's userdb"
+-          continue
+-        fi
+-
+-        _notify 'inf' "Adding alias '${ALIAS}' for user '${REAL_FQUN}' to Dovecot's userdb"
+-
+-        # ${REAL_ACC[0]} => real account name (e-mail address) == ${REAL_FQUN}
+-        # ${REAL_ACC[1]} => password hash
+-        # ${REAL_ACC[2]} => optional user attributes
+-        IFS='|' read -r -a REAL_ACC < <(grep "${REAL_FQUN}" /tmp/docker-mailserver/postfix-accounts.cf)
+-
+-        if [[ -z ${REAL_ACC[1]} ]]
+-        then
+-          dms_panic__misconfigured 'postfix-accounts.cf' 'alias configuration'
+-        fi
+-
+-        # test if user has a defined quota
+-        if [[ -f /tmp/docker-mailserver/dovecot-quotas.cf ]]
+-        then
+-          IFS=':' read -r -a USER_QUOTA < <(grep "${REAL_FQUN}:" -i /tmp/docker-mailserver/dovecot-quotas.cf)
+-          if [[ ${#USER_QUOTA[@]} -eq 2 ]]
+-          then
+-            REAL_ACC[2]="${REAL_ACC[2]:+${REAL_ACC[2]} }userdb_quota_rule=*:bytes=${USER_QUOTA[1]}"
+-          fi
+-        fi
+-
+-        echo \
+-          "${ALIAS}:${REAL_ACC[1]}:5000:5000::/var/mail/${REAL_DOMAINNAME}/${REAL_USERNAME}::${REAL_ACC[2]:-}" \
+-          >> /etc/dovecot/userdb
+-      done < /tmp/docker-mailserver/postfix-virtual.cf
+-    fi
+-  else
++  if [[ ! -f /tmp/docker-mailserver/postfix-accounts.cf ]]
++  then
+     _notify 'inf' "'/tmp/docker-mailserver/postfix-accounts.cf' is not provided. No mail account created."
+   fi
+ 
+@@ -758,57 +637,7 @@ EOF
+ function _setup_postfix_aliases
+ {
+   _notify 'task' 'Setting up Postfix Aliases'
+-
+-  : >/etc/postfix/virtual
+-  : >/etc/postfix/regexp
+-
+-  if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]]
+-  then
+-    # fixing old virtual user file
+-    if grep -q ",$" /tmp/docker-mailserver/postfix-virtual.cf
+-    then
+-      sed -i -e "s|, |,|g" -e "s|,$||g" /tmp/docker-mailserver/postfix-virtual.cf
+-    fi
+-
+-    cp -f /tmp/docker-mailserver/postfix-virtual.cf /etc/postfix/virtual
+-
+-    # the `to` is important, don't delete it
+-    # shellcheck disable=SC2034
+-    while read -r FROM TO
+-    do
+-      UNAME=$(echo "${FROM}" | cut -d @ -f1)
+-      DOMAIN=$(echo "${FROM}" | cut -d @ -f2)
+-
+-      # if they are equal it means the line looks like: "user1     other@domain.tld"
+-      [[ ${UNAME} != "${DOMAIN}" ]] && echo "${DOMAIN}" >>/tmp/vhost.tmp
+-    done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true)
+-  else
+-    _notify 'inf' "Warning '/tmp/docker-mailserver/postfix-virtual.cf' is not provided. No mail alias/forward created."
+-  fi
+-
+-  if [[ -f /tmp/docker-mailserver/postfix-regexp.cf ]]
+-  then
+-    _notify 'inf' "Adding regexp alias file postfix-regexp.cf"
+-
+-    cp -f /tmp/docker-mailserver/postfix-regexp.cf /etc/postfix/regexp
+-    sed -i -E \
+-      's|virtual_alias_maps(.*)|virtual_alias_maps\1 pcre:/etc/postfix/regexp|g' \
+-      /etc/postfix/main.cf
+-  fi
+-
+-  _notify 'inf' 'Configuring root alias'
+-
+-  echo "root: ${POSTMASTER_ADDRESS}" > /etc/aliases
+-
+-  if [[ -f /tmp/docker-mailserver/postfix-aliases.cf ]]
+-  then
+-    cat /tmp/docker-mailserver/postfix-aliases.cf >>/etc/aliases
+-  else
+-    _notify 'inf' "'/tmp/docker-mailserver/postfix-aliases.cf' is not provided, it will be auto created."
+-    : >/tmp/docker-mailserver/postfix-aliases.cf
+-  fi
+-
+-  postalias /etc/aliases
++  _create_aliases
+ }
+ 
+ function _setup_SRS
+@@ -1262,15 +1091,7 @@ function _setup_ssl
+ function _setup_postfix_vhost
+ {
+   _notify 'task' "Setting up Postfix vhost"
+-
+-  if [[ -f /tmp/vhost.tmp ]]
+-  then
+-    sort < /tmp/vhost.tmp | uniq > /etc/postfix/vhost
+-    rm /tmp/vhost.tmp
+-  elif [[ ! -f /etc/postfix/vhost ]]
+-  then
+-    touch /etc/postfix/vhost
+-  fi
++  _create_postfix_vhost
+ }
+ 
+ function _setup_inet_protocols
+@@ -1396,90 +1217,19 @@ function _setup_postfix_sasl_password
+   _notify 'task' 'Setting up Postfix SASL Password'
+ 
+   # support general SASL password
+-  rm -f /etc/postfix/sasl_passwd
+-  if [[ -n ${SASL_PASSWD} ]]
+-  then
+-    echo "${SASL_PASSWD}" >> /etc/postfix/sasl_passwd
+-  fi
++  _sasl_passwd_create
+ 
+-  # install SASL passwords
+   if [[ -f /etc/postfix/sasl_passwd ]]
+   then
+-    chown root:root /etc/postfix/sasl_passwd
+-    chmod 0600 /etc/postfix/sasl_passwd
+     _notify 'inf' "Loaded SASL_PASSWD"
+   else
+-    _notify 'inf' "Warning: 'SASL_PASSWD' is not provided. /etc/postfix/sasl_passwd not created."
++    _notify 'inf' "Warning: 'SASL_PASSWD' was not provided. /etc/postfix/sasl_passwd not created."
+   fi
+ }
+ 
+-function _setup_postfix_default_relay_host
+-{
+-  _notify 'task' 'Applying default relay host to Postfix'
+-
+-  _notify 'inf' "Applying default relay host ${DEFAULT_RELAY_HOST} to /etc/postfix/main.cf"
+-  postconf -e "relayhost = ${DEFAULT_RELAY_HOST}"
+-}
+-
+ function _setup_postfix_relay_hosts
+ {
+-  _notify 'task' 'Setting up Postfix Relay Hosts'
+-
+-  [[ -z ${RELAY_PORT} ]] && RELAY_PORT=25
+-
+-  # shellcheck disable=SC2153
+-  _notify 'inf' "Setting up outgoing email relaying via ${RELAY_HOST}:${RELAY_PORT}"
+-
+-  # setup /etc/postfix/sasl_passwd
+-  # --
+-  # @domain1.com        postmaster@domain1.com:your-password-1
+-  # @domain2.com        postmaster@domain2.com:your-password-2
+-  # @domain3.com        postmaster@domain3.com:your-password-3
+-  #
+-  # [smtp.mailgun.org]:587  postmaster@domain2.com:your-password-2
+-
+-  if [[ -f /tmp/docker-mailserver/postfix-sasl-password.cf ]]
+-  then
+-    _notify 'inf' "Adding relay authentication from postfix-sasl-password.cf"
+-
+-    while read -r LINE
+-    do
+-      if ! echo "${LINE}" | grep -q -e "^\s*#"
+-      then
+-        echo "${LINE}" >> /etc/postfix/sasl_passwd
+-      fi
+-    done < /tmp/docker-mailserver/postfix-sasl-password.cf
+-  fi
+-
+-  # add default relay
+-  if [[ -n ${RELAY_USER} ]] && [[ -n ${RELAY_PASSWORD} ]]
+-  then
+-    echo "[${RELAY_HOST}]:${RELAY_PORT}		${RELAY_USER}:${RELAY_PASSWORD}" >> /etc/postfix/sasl_passwd
+-  else
+-    if [[ ! -f /tmp/docker-mailserver/postfix-sasl-password.cf ]]
+-    then
+-      _notify 'warn' "No relay auth file found and no default set"
+-    fi
+-  fi
+-
+-  if [[ -f /etc/postfix/sasl_passwd ]]
+-  then
+-    chown root:root /etc/postfix/sasl_passwd
+-    chmod 0600 /etc/postfix/sasl_passwd
+-  fi
+-  # end /etc/postfix/sasl_passwd
+-
+-  _populate_relayhost_map
+-
+-  postconf -e \
+-    "smtp_sasl_auth_enable = yes" \
+-    "smtp_sasl_security_options = noanonymous" \
+-    "smtp_sasl_password_maps = texthash:/etc/postfix/sasl_passwd" \
+-    "smtp_tls_security_level = encrypt" \
+-    "smtp_tls_note_starttls_offer = yes" \
+-    "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt" \
+-    "sender_dependent_relayhost_maps = texthash:/etc/postfix/relayhost_map" \
+-    "smtp_sender_dependent_authentication = yes"
++  _setup_relayhost
+ }
+ 
+ function _setup_postfix_dhparam
+diff --git a/test/linting/lint.sh b/test/linting/lint.sh
+index 74635331..a55001e4 100755
+--- a/test/linting/lint.sh
++++ b/test/linting/lint.sh
+@@ -96,7 +96,7 @@ function _hadolint
+ function _shellcheck
+ {
+   local SCRIPT='SHELLCHECK'
+-  
++
+   # File paths for shellcheck:
+   F_SH="$(find . -type f -iname '*.sh' \
+     -not -path './test/bats/*' \
+@@ -109,9 +109,12 @@ function _shellcheck
+   F_BIN="$(find 'target/bin' ${FIND_EXEC} -type f)"
+   F_BATS="$(find 'test' -maxdepth 1 -type f -iname '*.bats')"
+ 
+-  # This command is a bit easier to grok as multi-line. There is a `.shellcheckrc` file, but it's only supports half of the options below, thus kept as CLI:
+-  CMD_SHELLCHECK=(shellcheck 
+-    --external-sources 
++  # This command is a bit easier to grok as multi-line.
++  # There is a `.shellcheckrc` file, but it's only supports half of the options below, thus kept as CLI:
++  # `SCRIPTDIR` is a special value that represents the path of the script being linted,
++  # all sourced scripts share the same SCRIPTDIR source-path of the original script being linted.
++  CMD_SHELLCHECK=(shellcheck
++    --external-sources
+     --check-sourced
+     --severity=style
+     --color=auto
+@@ -121,7 +124,16 @@ function _shellcheck
+     --source-path=SCRIPTDIR
+     "${F_SH} ${F_BIN} ${F_BATS}"
+   )
+-  
++
++  # The linter can reference additional source-path values declared in scripts,
++  # which in our case rarely benefit from extending from `SCRIPTDIR` and instead
++  # should use a relative path from the project root (mounted at `/ci`), eg `target/scripts/`.
++  # Note that `SCRIPTDIR` will strip a prefix variable for a source path, which can be useful
++  # if `SCRIPTDIR` would always be the same value, and combined with relative path via another
++  # `source-path=SCRIPTDIR/relative/path/to/scripts` in the .sh file.
++  # These source-path values can apply to the entire file (and sourced files) if not wrapped in a function scope.
++  # Otherwise it only applies to the line below it. You can declare multiple source-paths, they don't override the previous.
++  # `source=relative/path/to/file.sh` will check the source value in each source-path as well.
+   # shellcheck disable=SC2068
+   if docker run --rm --tty \
+       --volume "${REPO_ROOT}:/ci:ro" \
+diff --git a/test/mail_changedetector.bats b/test/mail_changedetector.bats
+index 31c7f45b..0fc21754 100644
+--- a/test/mail_changedetector.bats
++++ b/test/mail_changedetector.bats
+@@ -1,5 +1,9 @@
+ load 'test_helper/common'
+ 
++# Note if tests fail asserting against `supervisorctl tail changedetector` output,
++# use `supervisorctl tail -<num bytes> changedetector` instead to increase log output.
++# Default `<num bytes>` appears to be around 1500.
++
+ function setup() {
+   run_setup_file_if_necessary
+ }
+@@ -84,7 +88,7 @@ function teardown_file() {
+   run docker exec mail_changedetector_one /bin/bash -c "supervisorctl tail changedetector"
+   assert_output --partial "check-for-changes.sh.lock exists"
+   sleep 65
+-  run docker exec mail_changedetector_one /bin/bash -c "supervisorctl tail changedetector"
++  run docker exec mail_changedetector_one /bin/bash -c "supervisorctl tail -3000 changedetector"
+   assert_output --partial "Removed stale lock"
+ }
+ 

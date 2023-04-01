@@ -1,0 +1,2503 @@
+commit 72d5215c6511d989f653f608b03cfb5620f3d7e6 (from 85751d9875802d08d663fab0f3b1e762befa938b)
+Merge: 85751d98758 3fc24fa964f
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Wed Mar 6 10:36:21 2019 +0100
+
+    Merge pull request #15783 from grafana/cli/refactor-commands
+    
+    Minor refactor of cli tasks (core start, @grafana/ui publishing)
+
+diff --git a/package.json b/package.json
+index 04a6967fdb9..6f74e2f38d2 100644
+--- a/package.json
++++ b/package.json
+@@ -123,10 +123,10 @@
+   },
+   "scripts": {
+     "dev": "webpack --progress --colors --mode development --config scripts/webpack/webpack.dev.js",
+-    "start": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --theme",
+-    "start:hot": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --hot --theme",
+-    "start:ignoreTheme": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --hot",
+-    "watch": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --theme -d watch,start",
++    "start": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts core:start --watchTheme",
++    "start:hot": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts core:start --hot --watchTheme",
++    "start:ignoreTheme": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts core:start --hot",
++    "watch": "yarn start -d watch,start core:start --watchTheme ",
+     "build": "grunt build",
+     "test": "grunt test",
+     "tslint": "tslint -c tslint.json --project tsconfig.json",
+@@ -136,8 +136,11 @@
+     "storybook": "cd packages/grafana-ui && yarn storybook",
+     "themes:generate": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/generateSassVariableFiles.ts",
+     "prettier:check": "prettier --list-different \"**/*.{ts,tsx,scss}\"",
+-    "gui:build": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --build",
+-    "gui:release": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --release"
++    "gui:build": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts gui:build",
++    "gui:releasePrepare": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts gui:release",
++    "gui:publish": "cd packages/grafana-ui/dist && npm publish --access public",
++    "gui:release": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts gui:release -p",
++    "cli:help": "ts-node --project ./scripts/cli/tsconfig.json ./scripts/cli/index.ts --help"
+   },
+   "husky": {
+     "hooks": {
+diff --git a/scripts/cli/index.ts b/scripts/cli/index.ts
+index f980944e2cd..559f7295ad0 100644
+--- a/scripts/cli/index.ts
++++ b/scripts/cli/index.ts
+@@ -1,33 +1,49 @@
+ import program from 'commander';
+-import chalk from 'chalk';
+ import { execTask } from './utils/execTask';
++import chalk from 'chalk';
++import { startTask } from './tasks/core.start';
++import { buildTask } from './tasks/grafanaui.build';
++import { releaseTask } from './tasks/grafanaui.release';
+ 
+-export type Task<T> = (options: T) => Promise<void>;
++program.option('-d, --depreciate <scripts>', 'Inform about npm script deprecation', v => v.split(','));
+ 
+-// TODO: Refactor to commander commands
+-// This will enable us to have command scoped options and limit the ifs below
+ program
+-  .option('-h, --hot', 'Runs front-end with hot reload enabled')
+-  .option('-t, --theme', 'Watches for theme changes and regenerates variables.scss files')
+-  .option('-d, --depreciate <scripts>', 'Inform about npm script deprecation', v => v.split(','))
+-  .option('-b, --build', 'Created @grafana/ui build')
+-  .option('-r, --release', 'Releases @grafana/ui to npm')
+-  .parse(process.argv);
++  .command('core:start')
++  .option('-h, --hot', 'Run front-end with HRM enabled')
++  .option('-t, --watchTheme', 'Watch for theme changes and regenerate variables.scss files')
++  .description('Starts Grafana front-end in development mode with watch enabled')
++  .action(async cmd => {
++    await execTask(startTask)({
++      watchThemes: cmd.theme,
++      hot: cmd.hot,
++    });
++  });
+ 
+-if (program.build) {
+-  execTask('grafanaui.build');
+-} else if (program.release) {
+-  execTask('grafanaui.release');
+-} else {
+-  if (program.depreciate && program.depreciate.length === 2) {
+-    console.log(
+-      chalk.yellow.bold(
+-        `[NPM script depreciation] ${program.depreciate[0]} is deprecated! Use ${program.depreciate[1]} instead!`
+-      )
+-    );
+-  }
+-  execTask('core.start', {
+-    watchThemes: !!program.theme,
+-    hot: !!program.hot,
++program
++  .command('gui:build')
++  .description('Builds @grafana/ui package to packages/grafana-ui/dist')
++  .action(async cmd => {
++    await execTask(buildTask)();
+   });
++
++program
++  .command('gui:release')
++  .description('Prepares @grafana/ui release (and publishes to npm on demand)')
++  .option('-p, --publish', 'Publish @grafana/ui to npm registry')
++  .option('-u, --usePackageJsonVersion', 'Use version specified in package.json')
++  .action(async cmd => {
++    await execTask(releaseTask)({
++      publishToNpm: !!cmd.publish,
++      usePackageJsonVersion: !!cmd.usePackageJsonVersion,
++    });
++  });
++
++program.parse(process.argv);
++
++if (program.depreciate && program.depreciate.length === 2) {
++  console.log(
++    chalk.yellow.bold(
++      `[NPM script depreciation] ${program.depreciate[0]} is deprecated! Use ${program.depreciate[1]} instead!`
++    )
++  );
+ }
+diff --git a/scripts/cli/tasks/core.start.ts b/scripts/cli/tasks/core.start.ts
+index 4e546c71b8c..dbd2dfe7119 100644
+--- a/scripts/cli/tasks/core.start.ts
++++ b/scripts/cli/tasks/core.start.ts
+@@ -1,35 +1,30 @@
+ import concurrently from 'concurrently';
+-import { Task } from '..';
++import { Task, TaskRunner } from './task';
+ 
+ interface StartTaskOptions {
+   watchThemes: boolean;
+   hot: boolean;
+ }
+ 
+-const startTask: Task<StartTaskOptions> = async ({ watchThemes, hot }) => {
+-  const jobs = [];
+-
+-  if (watchThemes) {
+-    jobs.push({
++const startTaskRunner: TaskRunner<StartTaskOptions> = async ({ watchThemes, hot }) => {
++  const jobs = [
++    watchThemes && {
+       command: 'nodemon -e ts -w ./packages/grafana-ui/src/themes -x yarn run themes:generate',
+       name: 'SASS variables generator',
+-    });
+-  }
+-
+-  if (!hot) {
+-    jobs.push({
+-      command: 'webpack --progress --colors --watch --mode development --config scripts/webpack/webpack.dev.js',
+-      name: 'Webpack',
+-    });
+-  } else {
+-    jobs.push({
+-      command: 'webpack-dev-server --progress --colors --mode development --config scripts/webpack/webpack.hot.js',
+-      name: 'Dev server',
+-    });
+-  }
++    },
++    hot
++      ? {
++          command: 'webpack-dev-server --progress --colors --mode development --config scripts/webpack/webpack.hot.js',
++          name: 'Dev server',
++        }
++      : {
++          command: 'webpack --progress --colors --watch --mode development --config scripts/webpack/webpack.dev.js',
++          name: 'Webpack',
++        },
++  ];
+ 
+   try {
+-    await concurrently(jobs, {
++    await concurrently(jobs.filter(job => !!job), {
+       killOthers: ['failure', 'failure'],
+     });
+   } catch (e) {
+@@ -38,4 +33,6 @@ const startTask: Task<StartTaskOptions> = async ({ watchThemes, hot }) => {
+   }
+ };
+ 
+-export default startTask;
++export const startTask = new Task<StartTaskOptions>();
++startTask.setName('Core startTask');
++startTask.setRunner(startTaskRunner);
+diff --git a/scripts/cli/tasks/grafanaui.build.ts b/scripts/cli/tasks/grafanaui.build.ts
+index f892c13e115..6fce809bef9 100644
+--- a/scripts/cli/tasks/grafanaui.build.ts
++++ b/scripts/cli/tasks/grafanaui.build.ts
+@@ -1,95 +1,66 @@
+ import execa from 'execa';
+ import fs from 'fs';
+-import { Task } from '..';
+ import { changeCwdToGrafanaUi, restoreCwd } from '../utils/cwd';
+ import chalk from 'chalk';
+-import { startSpinner } from '../utils/startSpinner';
++import { useSpinner } from '../utils/useSpinner';
++import { Task, TaskRunner } from './task';
+ 
+ let distDir, cwd;
+ 
+-const clean = async () => {
+-  const spinner = startSpinner('Cleaning');
+-  try {
+-    await execa('npm', ['run', 'clean']);
+-    spinner.succeed();
+-  } catch (e) {
+-    spinner.fail();
+-    throw e;
+-  }
+-};
+-
+-const compile = async () => {
+-  const spinner = startSpinner('Compiling sources');
+-  try {
+-    await execa('tsc', ['-p', './tsconfig.build.json']);
+-    spinner.succeed();
+-  } catch (e) {
+-    console.log(e);
+-    spinner.fail();
+-  }
+-};
++const clean = useSpinner<void>('Cleaning', async () => await execa('npm', ['run', 'clean']));
+ 
+-const rollup = async () => {
+-  const spinner = startSpinner('Bundling');
++const compile = useSpinner<void>('Compiling sources', () => execa('tsc', ['-p', './tsconfig.build.json']));
+ 
+-  try {
+-    await execa('npm', ['run', 'build']);
+-    spinner.succeed();
+-  } catch (e) {
+-    spinner.fail();
+-  }
+-};
+-
+-export const savePackage = async (path, pkg) => {
+-  const spinner = startSpinner('Updating package.json');
++const rollup = useSpinner<void>('Bundling', () => execa('npm', ['run', 'build']));
+ 
++export const savePackage = useSpinner<{
++  path: string;
++  pkg: {};
++}>('Updating package.json', async ({ path, pkg }) => {
+   return new Promise((resolve, reject) => {
+     fs.writeFile(path, JSON.stringify(pkg, null, 2), err => {
+       if (err) {
+-        spinner.fail();
+-        console.error(err);
+         reject(err);
+         return;
+       }
+-      spinner.succeed();
+       resolve();
+     });
+   });
+-};
++});
+ 
+ const preparePackage = async pkg => {
+   pkg.main = 'index.js';
+   pkg.types = 'index.d.ts';
+-  await savePackage(`${cwd}/dist/package.json`, pkg);
++  await savePackage({
++    path: `${cwd}/dist/package.json`,
++    pkg,
++  });
+ };
+ 
+-const moveFiles = async () => {
++const moveFiles = () => {
+   const files = ['README.md', 'CHANGELOG.md', 'index.js'];
+-  const spinner = startSpinner(`Moving ${files.join(', ')} files`);
+-
+-  const promises = files.map(file => {
+-    return fs.copyFile(`${cwd}/${file}`, `${distDir}/${file}`, err => {
+-      if (err) {
+-        console.error(err);
+-        return;
+-      }
++  return useSpinner<void>(`Moving ${files.join(', ')} files`, async () => {
++    const promises = files.map(file => {
++      return new Promise((resolve, reject) => {
++        fs.copyFile(`${cwd}/${file}`, `${distDir}/${file}`, err => {
++          if (err) {
++            reject(err);
++            return;
++          }
++          resolve();
++        });
++      });
+     });
+-  });
+ 
+-  try {
+     await Promise.all(promises);
+-    spinner.succeed();
+-  } catch (e) {
+-    spinner.fail();
+-  }
++  })();
+ };
+ 
+-const buildTask: Task<void> = async () => {
++const buildTaskRunner: TaskRunner<void> = async () => {
+   cwd = changeCwdToGrafanaUi();
+   distDir = `${cwd}/dist`;
+   const pkg = require(`${cwd}/package.json`);
+-
+-  console.log(chalk.yellow(`Building ${pkg.name} @ ${pkg.version}`));
++  console.log(chalk.yellow(`Building ${pkg.name} (package.json version: ${pkg.version})`));
+ 
+   await clean();
+   await compile();
+@@ -100,4 +71,6 @@ const buildTask: Task<void> = async () => {
+   restoreCwd();
+ };
+ 
+-export default buildTask;
++export const buildTask = new Task<void>();
++buildTask.setName('@grafana/ui build');
++buildTask.setRunner(buildTaskRunner);
+diff --git a/scripts/cli/tasks/grafanaui.release.ts b/scripts/cli/tasks/grafanaui.release.ts
+index 412c96e7fb5..a7fb8e4d6ea 100644
+--- a/scripts/cli/tasks/grafanaui.release.ts
++++ b/scripts/cli/tasks/grafanaui.release.ts
+@@ -1,14 +1,19 @@
+ import execa from 'execa';
+-import { Task } from '..';
+ import { execTask } from '../utils/execTask';
+ import { changeCwdToGrafanaUiDist, changeCwdToGrafanaUi } from '../utils/cwd';
+ import semver from 'semver';
+ import inquirer from 'inquirer';
+ import chalk from 'chalk';
+-import { startSpinner } from '../utils/startSpinner';
+-import { savePackage } from './grafanaui.build';
++import { useSpinner } from '../utils/useSpinner';
++import { savePackage, buildTask } from './grafanaui.build';
++import { TaskRunner, Task } from './task';
+ 
+-type VersionBumpType = 'patch' | 'minor' | 'major';
++type VersionBumpType = 'prerelease' | 'patch' | 'minor' | 'major';
++
++interface ReleaseTaskOptions {
++  publishToNpm: boolean;
++  usePackageJsonVersion: boolean;
++}
+ 
+ const promptBumpType = async () => {
+   return inquirer.prompt<{ type: VersionBumpType }>([
+@@ -16,7 +21,7 @@ const promptBumpType = async () => {
+       type: 'list',
+       message: 'Select version bump',
+       name: 'type',
+-      choices: ['patch', 'minor', 'major'],
++      choices: ['prerelease', 'patch', 'minor', 'major'],
+       validate: answer => {
+         if (answer.length < 1) {
+           return 'You must choose something';
+@@ -28,13 +33,13 @@ const promptBumpType = async () => {
+   ]);
+ };
+ 
+-const promptPrereleaseId = async () => {
++const promptPrereleaseId = async (message = 'Is this a prerelease?', allowNo = true) => {
+   return inquirer.prompt<{ id: string }>([
+     {
+       type: 'list',
+-      message: 'Is this a prerelease?',
++      message: message,
+       name: 'id',
+-      choices: ['no', 'alpha', 'beta'],
++      choices: allowNo ? ['no', 'alpha', 'beta'] : ['alpha', 'beta'],
+       validate: answer => {
+         if (answer.length < 1) {
+           return 'You must choose something';
+@@ -57,47 +62,45 @@ const promptConfirm = async (message?: string) => {
+   ]);
+ };
+ 
+-const bumpVersion = async (version: string) => {
+-  const spinner = startSpinner(`Saving version ${version} to package.json`);
+-  changeCwdToGrafanaUi();
+-
+-  try {
++const bumpVersion = (version: string) =>
++  useSpinner<void>(`Saving version ${version} to package.json`, async () => {
++    changeCwdToGrafanaUi();
+     await execa('npm', ['version', version]);
+-    spinner.succeed();
+-  } catch (e) {
+-    console.log(e);
+-    spinner.fail();
+-  }
+-
+-  changeCwdToGrafanaUiDist();
+-  const pkg = require(`${process.cwd()}/package.json`);
+-  pkg.version = version;
+-  await savePackage(`${process.cwd()}/package.json`, pkg);
+-};
+-
+-const publishPackage = async (name: string, version: string) => {
+-  changeCwdToGrafanaUiDist();
+-  console.log(chalk.yellowBright.bold(`\nReview dist package.json before proceeding!\n`));
+-  const { confirmed } = await promptConfirm('Are you ready to publish to npm?');
+-
+-  if (!confirmed) {
+-    process.exit();
+-  }
++    changeCwdToGrafanaUiDist();
++    const pkg = require(`${process.cwd()}/package.json`);
++    pkg.version = version;
++    await savePackage({ path: `${process.cwd()}/package.json`, pkg });
++  })();
++
++const publishPackage = (name: string, version: string) =>
++  useSpinner<void>(`Publishing ${name} @ ${version} to npm registry...`, async () => {
++    changeCwdToGrafanaUiDist();
++    console.log(chalk.yellowBright.bold(`\nReview dist package.json before proceeding!\n`));
++    const { confirmed } = await promptConfirm('Are you ready to publish to npm?');
++
++    if (!confirmed) {
++      process.exit();
++    }
++    await execa('npm', ['publish', '--access', 'public']);
++  })();
+ 
+-  const spinner = startSpinner(`Publishing ${name} @ ${version} to npm registry...`);
++const ensureMasterBranch = async () => {
++  const currentBranch = await execa.stdout('git', ['symbolic-ref', '--short', 'HEAD']);
++  const status = await execa.stdout('git', ['status', '--porcelain']);
+ 
+-  try {
+-    await execa('npm', ['publish', '--access', 'public']);
+-    spinner.succeed();
+-  } catch (e) {
+-    console.log(e);
+-    spinner.fail();
++  if (currentBranch !== 'master' && status !== '') {
++    console.error(chalk.red.bold('You need to be on clean master branch to release @grafana/ui'));
+     process.exit(1);
+   }
+ };
+ 
+-const releaseTask: Task<void> = async () => {
+-  await execTask('grafanaui.build');
++const releaseTaskRunner: TaskRunner<ReleaseTaskOptions> = async ({ publishToNpm, usePackageJsonVersion }) => {
++  if (publishToNpm) {
++    await ensureMasterBranch();
++  }
++
++  await execTask(buildTask)();
++
+   let releaseConfirmed = false;
+   let nextVersion;
+   changeCwdToGrafanaUiDist();
+@@ -107,27 +110,56 @@ const releaseTask: Task<void> = async () => {
+   console.log(`Current version: ${pkg.version}`);
+ 
+   do {
+-    const { type } = await promptBumpType();
+-    const { id } = await promptPrereleaseId();
+-
+-    if (id !== 'no') {
+-      nextVersion = semver.inc(pkg.version, `pre${type}`, id);
++    if (!usePackageJsonVersion) {
++      const { type } = await promptBumpType();
++      console.log(type);
++      if (type === 'prerelease') {
++        const { id } = await promptPrereleaseId('What kind of prerelease?', false);
++        nextVersion = semver.inc(pkg.version, type, id);
++      } else {
++        const { id } = await promptPrereleaseId();
++        if (id !== 'no') {
++          nextVersion = semver.inc(pkg.version, `pre${type}`, id);
++        } else {
++          nextVersion = semver.inc(pkg.version, type);
++        }
++      }
+     } else {
+-      nextVersion = semver.inc(pkg.version, type);
++      nextVersion = pkg.version;
+     }
+ 
+     console.log(chalk.yellowBright.bold(`You are going to release a new version of ${pkg.name}`));
+-    console.log(chalk.green(`Version bump: ${pkg.version} ->`), chalk.bold.yellowBright(`${nextVersion}`));
++
++    if (usePackageJsonVersion) {
++      console.log(chalk.green(`Version based on package.json: `), chalk.bold.yellowBright(`${nextVersion}`));
++    } else {
++      console.log(chalk.green(`Version bump: ${pkg.version} ->`), chalk.bold.yellowBright(`${nextVersion}`));
++    }
++
+     const { confirmed } = await promptConfirm();
+ 
+     releaseConfirmed = confirmed;
+   } while (!releaseConfirmed);
+ 
+-  await bumpVersion(nextVersion);
+-  await publishPackage(pkg.name, nextVersion);
++  if (!usePackageJsonVersion) {
++    await bumpVersion(nextVersion);
++  }
+ 
+-  console.log(chalk.green(`\nVersion ${nextVersion} of ${pkg.name} succesfully released!`));
+-  console.log(chalk.yellow(`\nUpdated @grafana/ui/package.json with version bump created - COMMIT THIS FILE!`));
++  if (publishToNpm) {
++    await publishPackage(pkg.name, nextVersion);
++    console.log(chalk.green(`\nVersion ${nextVersion} of ${pkg.name} succesfully released!`));
++    console.log(chalk.yellow(`\nUpdated @grafana/ui/package.json with version bump created - COMMIT THIS FILE!`));
++    process.exit();
++  } else {
++    console.log(
++      chalk.green(
++        `\nVersion ${nextVersion} of ${pkg.name} succesfully prepared for release. See packages/grafana-ui/dist`
++      )
++    );
++    console.log(chalk.green(`\nTo publish to npm registry run`), chalk.bold.blue(`npm run gui:publish`));
++  }
+ };
+ 
+-export default releaseTask;
++export const releaseTask = new Task<ReleaseTaskOptions>();
++releaseTask.setName('@grafana/ui release');
++releaseTask.setRunner(releaseTaskRunner);
+diff --git a/scripts/cli/tasks/task.ts b/scripts/cli/tasks/task.ts
+new file mode 100644
+index 00000000000..d88860b7017
+--- /dev/null
++++ b/scripts/cli/tasks/task.ts
+@@ -0,0 +1,23 @@
++export type TaskRunner<T> = (options: T) => Promise<void>;
++
++export class Task<TOptions> {
++  name: string;
++  runner: (options: TOptions) => Promise<void>;
++  options: TOptions;
++
++  setName = name => {
++    this.name = name;
++  };
++
++  setRunner = (runner: TaskRunner<TOptions>) => {
++    this.runner = runner;
++  };
++
++  setOptions = options => {
++    this.options = options;
++  };
++
++  exec = () => {
++    return this.runner(this.options);
++  };
++}
+diff --git a/scripts/cli/utils/execTask.ts b/scripts/cli/utils/execTask.ts
+index 36071134331..f404206b7a9 100644
+--- a/scripts/cli/utils/execTask.ts
++++ b/scripts/cli/utils/execTask.ts
+@@ -1,6 +1,15 @@
+-import { Task } from '..';
++import { Task } from '../tasks/task';
++import chalk from 'chalk';
+ 
+-export const execTask = async <T>(taskName, options?: T) => {
+-  const task = await import(`${__dirname}/../tasks/${taskName}.ts`);
+-  return task.default(options) as Task<T>;
++export const execTask = <TOptions>(task: Task<TOptions>) => async (options: TOptions) => {
++  console.log(chalk.yellow(`Running ${chalk.bold(task.name)} task`));
++  task.setOptions(options);
++  try {
++    console.group();
++    await task.exec();
++    console.groupEnd();
++  } catch (e) {
++    console.log(e);
++    process.exit(1);
++  }
+ };
+diff --git a/scripts/cli/utils/startSpinner.ts b/scripts/cli/utils/startSpinner.ts
+deleted file mode 100644
+index ce895dec722..00000000000
+--- a/scripts/cli/utils/startSpinner.ts
++++ /dev/null
+@@ -1,7 +0,0 @@
+-import ora from 'ora';
+-
+-export const startSpinner = (label: string) => {
+-  const spinner = new ora(label);
+-  spinner.start();
+-  return spinner;
+-};
+diff --git a/scripts/cli/utils/useSpinner.ts b/scripts/cli/utils/useSpinner.ts
+new file mode 100644
+index 00000000000..48167e4ec2a
+--- /dev/null
++++ b/scripts/cli/utils/useSpinner.ts
+@@ -0,0 +1,20 @@
++import ora from 'ora';
++
++type FnToSpin<T> = (options: T) => Promise<void>;
++
++export const useSpinner = <T>(spinnerLabel: string, fn: FnToSpin<T>, killProcess = true) => {
++  return async (options: T) => {
++    const spinner = new ora(spinnerLabel);
++    spinner.start();
++    try {
++      await fn(options);
++      spinner.succeed();
++    } catch (e) {
++      spinner.fail();
++      console.log(e);
++      if (killProcess) {
++        process.exit(1);
++      }
++    }
++  };
++};
+
+commit 72d5215c6511d989f653f608b03cfb5620f3d7e6 (from 3fc24fa964f57974591556810fcbeb5542c9b316)
+Merge: 85751d98758 3fc24fa964f
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Wed Mar 6 10:36:21 2019 +0100
+
+    Merge pull request #15783 from grafana/cli/refactor-commands
+    
+    Minor refactor of cli tasks (core start, @grafana/ui publishing)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c010a279c73..c0def4c8487 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,12 +1,17 @@
+ # 6.1.0 (unreleased)
+ 
++### New Features
++* **Prometheus**: adhoc filter support [#8253](https://github.com/grafana/grafana/issues/8253), thx [@mtanda](https://github.com/mtanda)
++
+ ### Minor
+ * **Cloudwatch**: Add AWS RDS MaximumUsedTransactionIDs metric [#15077](https://github.com/grafana/grafana/pull/15077), thx [@activeshadow](https://github.com/activeshadow)
+ 
++
+ ### Bug Fixes
+ * **Api**: Invalid org invite code [#10506](https://github.com/grafana/grafana/issues/10506)
+ * **Datasource**: Handles nil jsondata field gracefully [#14239](https://github.com/grafana/grafana/issues/14239)
+-* **Gauge**: Interpolate scoped variables in repeated gauges [#15732](https://github.com/grafana/grafana/pull/15752)
++* **Gauge**: Interpolate scoped variables in repeated gauges [#15739](https://github.com/grafana/grafana/issues/15739)
++* **Datasource**: Empty user/password was not updated when updating datasources [#15608](https://github.com/grafana/grafana/pull/15608), thx [@Maddin-619](https://github.com/Maddin-619)
+ 
+ # 6.0.1 (unreleased)
+ 
+diff --git a/devenv/docker/blocks/prometheus2/Dockerfile b/devenv/docker/blocks/prometheus2/Dockerfile
+index 03edf4c9ee2..c9a2327bd4a 100644
+--- a/devenv/docker/blocks/prometheus2/Dockerfile
++++ b/devenv/docker/blocks/prometheus2/Dockerfile
+@@ -1,3 +1,3 @@
+-FROM prom/prometheus:v2.2.0
++FROM prom/prometheus:v2.7.2
+ ADD prometheus.yml /etc/prometheus/
+ ADD alert.rules /etc/prometheus/
+diff --git a/docs/sources/features/datasources/prometheus.md b/docs/sources/features/datasources/prometheus.md
+index 2b2704e0d81..0a5c087803f 100644
+--- a/docs/sources/features/datasources/prometheus.md
++++ b/docs/sources/features/datasources/prometheus.md
+@@ -68,6 +68,7 @@ provides the following functions you can use in the `Query` input field.
+ 
+ Name | Description
+ ---- | --------
++*label_names()* | Returns a list of label names.
+ *label_values(label)* | Returns a list of label values for the `label` in every metric.
+ *label_values(metric, label)* | Returns a list of label values for the `label` in the specified metric.
+ *metrics(metric)* | Returns a list of metrics matching the specified `metric` regex.
+diff --git a/package.json b/package.json
+index c5136cf5e02..6f74e2f38d2 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+     "company": "Grafana Labs"
+   },
+   "name": "grafana",
+-  "version": "6.0.0-pre3",
++  "version": "6.1.0-pre",
+   "repository": {
+     "type": "git",
+     "url": "http://github.com/grafana/grafana.git"
+@@ -165,7 +165,7 @@
+   "license": "Apache-2.0",
+   "dependencies": {
+     "@babel/polyfill": "^7.0.0",
+-    "@torkelo/react-select": "2.1.1",
++    "@torkelo/react-select": "2.4.1",
+     "@types/reselect": "^2.2.0",
+     "angular": "1.6.6",
+     "angular-bindonce": "0.3.1",
+diff --git a/packages/grafana-ui/src/components/CustomScrollbar/CustomScrollbar.tsx b/packages/grafana-ui/src/components/CustomScrollbar/CustomScrollbar.tsx
+index 61fc584c7ca..945e3d825d8 100644
+--- a/packages/grafana-ui/src/components/CustomScrollbar/CustomScrollbar.tsx
++++ b/packages/grafana-ui/src/components/CustomScrollbar/CustomScrollbar.tsx
+@@ -15,6 +15,7 @@ interface Props {
+   scrollTop?: number;
+   setScrollTop: (event: any) => void;
+   autoHeightMin?: number | string;
++  updateAfterMountMs?: number;
+ }
+ 
+ /**
+@@ -42,16 +43,26 @@ export class CustomScrollbar extends Component<Props> {
+     const ref = this.ref.current;
+ 
+     if (ref && !isNil(this.props.scrollTop)) {
+-      if (this.props.scrollTop > 10000) {
+-        ref.scrollToBottom();
+-      } else {
+-        ref.scrollTop(this.props.scrollTop);
+-      }
++      ref.scrollTop(this.props.scrollTop);
+     }
+   }
+ 
+   componentDidMount() {
+     this.updateScroll();
++
++    // this logic is to make scrollbar visible when content is added body after mount
++    if (this.props.updateAfterMountMs) {
++      setTimeout(() => this.updateAfterMount(), this.props.updateAfterMountMs);
++    }
++  }
++
++  updateAfterMount() {
++    if (this.ref && this.ref.current) {
++      const scrollbar = this.ref.current as any;
++      if (scrollbar.update) {
++        scrollbar.update();
++      }
++    }
+   }
+ 
+   componentDidUpdate() {
+diff --git a/public/app/core/components/Select/UnitPicker.tsx b/packages/grafana-ui/src/components/UnitPicker/UnitPicker.tsx
+similarity index 87%
+rename from public/app/core/components/Select/UnitPicker.tsx
+rename to packages/grafana-ui/src/components/UnitPicker/UnitPicker.tsx
+index f9dbc0ae421..3a34df02a39 100644
+--- a/public/app/core/components/Select/UnitPicker.tsx
++++ b/packages/grafana-ui/src/components/UnitPicker/UnitPicker.tsx
+@@ -1,6 +1,8 @@
+ import React, { PureComponent } from 'react';
+-import { getValueFormats } from '@grafana/ui';
+-import { Select } from '@grafana/ui';
++
++import { Select } from '..';
++
++import { getValueFormats } from '../../utils';
+ 
+ interface Props {
+   onChange: (item: any) => void;
+@@ -8,7 +10,7 @@ interface Props {
+   width?: number;
+ }
+ 
+-export default class UnitPicker extends PureComponent<Props> {
++export class UnitPicker extends PureComponent<Props> {
+   static defaultProps = {
+     width: 12,
+   };
+diff --git a/packages/grafana-ui/src/components/index.ts b/packages/grafana-ui/src/components/index.ts
+index ca8899bd928..b62fdff6498 100644
+--- a/packages/grafana-ui/src/components/index.ts
++++ b/packages/grafana-ui/src/components/index.ts
+@@ -26,3 +26,4 @@ export { ValueMappingsEditor } from './ValueMappingsEditor/ValueMappingsEditor';
+ export { Gauge } from './Gauge/Gauge';
+ export { Switch } from './Switch/Switch';
+ export { EmptySearchResult } from './EmptySearchResult/EmptySearchResult';
++export { UnitPicker } from './UnitPicker/UnitPicker';
+diff --git a/packages/grafana-ui/src/types/panel.ts b/packages/grafana-ui/src/types/panel.ts
+index 2da48b0fec6..260ff78df76 100644
+--- a/packages/grafana-ui/src/types/panel.ts
++++ b/packages/grafana-ui/src/types/panel.ts
+@@ -1,8 +1,9 @@
+ import { ComponentClass } from 'react';
+ import { TimeSeries, LoadingState, TableData } from './data';
+ import { TimeRange } from './time';
++import { ScopedVars } from './datasource';
+ 
+-export type InterpolateFunction = (value: string, format?: string | Function) => string;
++export type InterpolateFunction = (value: string, scopedVars?: ScopedVars, format?: string | Function) => string;
+ 
+ export interface PanelProps<T = any> {
+   panelData: PanelData;
+@@ -12,7 +13,7 @@ export interface PanelProps<T = any> {
+   renderCounter: number;
+   width: number;
+   height: number;
+-  onInterpolate: InterpolateFunction;
++  replaceVariables: InterpolateFunction;
+ }
+ 
+ export interface PanelData {
+@@ -22,7 +23,7 @@ export interface PanelData {
+ 
+ export interface PanelEditorProps<T = any> {
+   options: T;
+-  onChange: (options: T) => void;
++  onOptionsChange: (options: T) => void;
+ }
+ 
+ export class ReactPanelPlugin<TOptions = any> {
+diff --git a/packaging/docker/Dockerfile b/packaging/docker/Dockerfile
+index d783cb14377..58fa8dae64c 100644
+--- a/packaging/docker/Dockerfile
++++ b/packaging/docker/Dockerfile
+@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -qq -y tar && \
+ 
+ COPY ${GRAFANA_TGZ} /tmp/grafana.tar.gz
+ 
+-RUN mkdir /tmp/grafana && tar xfvz /tmp/grafana.tar.gz --strip-components=1 -C /tmp/grafana
++# Change to tar xfzv to make tar print every file it extracts
++RUN mkdir /tmp/grafana && tar xfz /tmp/grafana.tar.gz --strip-components=1 -C /tmp/grafana
+ 
+ ARG BASE_IMAGE=debian:stretch-slim
+ FROM ${BASE_IMAGE}
+diff --git a/pkg/api/api.go b/pkg/api/api.go
+index 6da127fb550..81ea83eae61 100644
+--- a/pkg/api/api.go
++++ b/pkg/api/api.go
+@@ -33,17 +33,17 @@ func (hs *HTTPServer) registerRoutes() {
+ 	r.Get("/profile/", reqSignedIn, hs.Index)
+ 	r.Get("/profile/password", reqSignedIn, hs.Index)
+ 	r.Get("/profile/switch-org/:id", reqSignedIn, hs.ChangeActiveOrgAndRedirectToHome)
+-	r.Get("/org/", reqSignedIn, hs.Index)
+-	r.Get("/org/new", reqSignedIn, hs.Index)
+-	r.Get("/datasources/", reqSignedIn, hs.Index)
+-	r.Get("/datasources/new", reqSignedIn, hs.Index)
+-	r.Get("/datasources/edit/*", reqSignedIn, hs.Index)
+-	r.Get("/org/users", reqSignedIn, hs.Index)
+-	r.Get("/org/users/new", reqSignedIn, hs.Index)
+-	r.Get("/org/users/invite", reqSignedIn, hs.Index)
+-	r.Get("/org/teams", reqSignedIn, hs.Index)
+-	r.Get("/org/teams/*", reqSignedIn, hs.Index)
+-	r.Get("/org/apikeys/", reqSignedIn, hs.Index)
++	r.Get("/org/", reqOrgAdmin, hs.Index)
++	r.Get("/org/new", reqGrafanaAdmin, hs.Index)
++	r.Get("/datasources/", reqOrgAdmin, hs.Index)
++	r.Get("/datasources/new", reqOrgAdmin, hs.Index)
++	r.Get("/datasources/edit/*", reqOrgAdmin, hs.Index)
++	r.Get("/org/users", reqOrgAdmin, hs.Index)
++	r.Get("/org/users/new", reqOrgAdmin, hs.Index)
++	r.Get("/org/users/invite", reqOrgAdmin, hs.Index)
++	r.Get("/org/teams", reqOrgAdmin, hs.Index)
++	r.Get("/org/teams/*", reqOrgAdmin, hs.Index)
++	r.Get("/org/apikeys/", reqOrgAdmin, hs.Index)
+ 	r.Get("/dashboard/import/", reqSignedIn, hs.Index)
+ 	r.Get("/configuration", reqGrafanaAdmin, hs.Index)
+ 	r.Get("/admin", reqGrafanaAdmin, hs.Index)
+@@ -73,12 +73,12 @@ func (hs *HTTPServer) registerRoutes() {
+ 	r.Get("/dashboards/", reqSignedIn, hs.Index)
+ 	r.Get("/dashboards/*", reqSignedIn, hs.Index)
+ 
+-	r.Get("/explore", reqEditorRole, hs.Index)
++	r.Get("/explore", reqSignedIn, middleware.EnsureEditorOrViewerCanEdit, hs.Index)
+ 
+ 	r.Get("/playlists/", reqSignedIn, hs.Index)
+ 	r.Get("/playlists/*", reqSignedIn, hs.Index)
+-	r.Get("/alerting/", reqSignedIn, hs.Index)
+-	r.Get("/alerting/*", reqSignedIn, hs.Index)
++	r.Get("/alerting/", reqEditorRole, hs.Index)
++	r.Get("/alerting/*", reqEditorRole, hs.Index)
+ 
+ 	// sign up
+ 	r.Get("/signup", hs.Index)
+diff --git a/pkg/api/index.go b/pkg/api/index.go
+index 248ebf63f0f..904a885b171 100644
+--- a/pkg/api/index.go
++++ b/pkg/api/index.go
+@@ -307,33 +307,26 @@ func (hs *HTTPServer) setIndexViewData(c *m.ReqContext) (*dtos.IndexViewData, er
+ 			}
+ 		}
+ 
+-		if c.OrgRole == m.ROLE_ADMIN && c.IsGrafanaAdmin {
+-			cfgNode.Children = append(cfgNode.Children, &dtos.NavLink{
+-				Divider: true, HideFromTabs: true, Id: "admin-divider", Text: "Text",
+-			})
+-		}
+-
+-		if c.IsGrafanaAdmin {
+-			cfgNode.Children = append(cfgNode.Children, &dtos.NavLink{
+-				Text:         "Server Admin",
+-				HideFromTabs: true,
+-				SubTitle:     "Manage all users & orgs",
+-				Id:           "admin",
+-				Icon:         "gicon gicon-shield",
+-				Url:          setting.AppSubUrl + "/admin/users",
+-				Children: []*dtos.NavLink{
+-					{Text: "Users", Id: "global-users", Url: setting.AppSubUrl + "/admin/users", Icon: "gicon gicon-user"},
+-					{Text: "Orgs", Id: "global-orgs", Url: setting.AppSubUrl + "/admin/orgs", Icon: "gicon gicon-org"},
+-					{Text: "Settings", Id: "server-settings", Url: setting.AppSubUrl + "/admin/settings", Icon: "gicon gicon-preferences"},
+-					{Text: "Stats", Id: "server-stats", Url: setting.AppSubUrl + "/admin/stats", Icon: "fa fa-fw fa-bar-chart"},
+-					{Text: "Style Guide", Id: "styleguide", Url: setting.AppSubUrl + "/styleguide", Icon: "fa fa-fw fa-eyedropper"},
+-				},
+-			})
+-		}
+-
+ 		data.NavTree = append(data.NavTree, cfgNode)
+ 	}
+ 
++	if c.IsGrafanaAdmin {
++		data.NavTree = append(data.NavTree, &dtos.NavLink{
++			Text:         "Server Admin",
++			SubTitle:     "Manage all users & orgs",
++			HideFromTabs: true,
++			Id:           "admin",
++			Icon:         "gicon gicon-shield",
++			Url:          setting.AppSubUrl + "/admin/users",
++			Children: []*dtos.NavLink{
++				{Text: "Users", Id: "global-users", Url: setting.AppSubUrl + "/admin/users", Icon: "gicon gicon-user"},
++				{Text: "Orgs", Id: "global-orgs", Url: setting.AppSubUrl + "/admin/orgs", Icon: "gicon gicon-org"},
++				{Text: "Settings", Id: "server-settings", Url: setting.AppSubUrl + "/admin/settings", Icon: "gicon gicon-preferences"},
++				{Text: "Stats", Id: "server-stats", Url: setting.AppSubUrl + "/admin/stats", Icon: "fa fa-fw fa-bar-chart"},
++			},
++		})
++	}
++
+ 	data.NavTree = append(data.NavTree, &dtos.NavLink{
+ 		Text:         "Help",
+ 		SubTitle:     fmt.Sprintf(`%s v%s (%s)`, setting.ApplicationName, setting.BuildVersion, setting.BuildCommit),
+diff --git a/pkg/login/ldap.go b/pkg/login/ldap.go
+index c15cb865bd3..8bb331b7e59 100644
+--- a/pkg/login/ldap.go
++++ b/pkg/login/ldap.go
+@@ -18,6 +18,7 @@ import (
+ 
+ type ILdapConn interface {
+ 	Bind(username, password string) error
++	UnauthenticatedBind(username string) error
+ 	Search(*ldap.SearchRequest) (*ldap.SearchResult, error)
+ 	StartTLS(*tls.Config) error
+ 	Close()
+@@ -259,7 +260,17 @@ func (a *ldapAuther) initialBind(username, userPassword string) error {
+ 		bindPath = fmt.Sprintf(a.server.BindDN, username)
+ 	}
+ 
+-	if err := a.conn.Bind(bindPath, userPassword); err != nil {
++	bindFn := func() error {
++		return a.conn.Bind(bindPath, userPassword)
++	}
++
++	if userPassword == "" {
++		bindFn = func() error {
++			return a.conn.UnauthenticatedBind(bindPath)
++		}
++	}
++
++	if err := bindFn(); err != nil {
+ 		a.log.Info("Initial bind failed", "error", err)
+ 
+ 		if ldapErr, ok := err.(*ldap.Error); ok {
+diff --git a/pkg/login/ldap_test.go b/pkg/login/ldap_test.go
+index ef20feb1373..dabafee65a6 100644
+--- a/pkg/login/ldap_test.go
++++ b/pkg/login/ldap_test.go
+@@ -13,6 +13,70 @@ import (
+ )
+ 
+ func TestLdapAuther(t *testing.T) {
++	Convey("initialBind", t, func() {
++		Convey("Given bind dn and password configured", func() {
++			conn := &mockLdapConn{}
++			var actualUsername, actualPassword string
++			conn.bindProvider = func(username, password string) error {
++				actualUsername = username
++				actualPassword = password
++				return nil
++			}
++			ldapAuther := &ldapAuther{
++				conn: conn,
++				server: &LdapServerConf{
++					BindDN:       "cn=%s,o=users,dc=grafana,dc=org",
++					BindPassword: "bindpwd",
++				},
++			}
++			err := ldapAuther.initialBind("user", "pwd")
++			So(err, ShouldBeNil)
++			So(ldapAuther.requireSecondBind, ShouldBeTrue)
++			So(actualUsername, ShouldEqual, "cn=user,o=users,dc=grafana,dc=org")
++			So(actualPassword, ShouldEqual, "bindpwd")
++		})
++
++		Convey("Given bind dn configured", func() {
++			conn := &mockLdapConn{}
++			var actualUsername, actualPassword string
++			conn.bindProvider = func(username, password string) error {
++				actualUsername = username
++				actualPassword = password
++				return nil
++			}
++			ldapAuther := &ldapAuther{
++				conn: conn,
++				server: &LdapServerConf{
++					BindDN: "cn=%s,o=users,dc=grafana,dc=org",
++				},
++			}
++			err := ldapAuther.initialBind("user", "pwd")
++			So(err, ShouldBeNil)
++			So(ldapAuther.requireSecondBind, ShouldBeFalse)
++			So(actualUsername, ShouldEqual, "cn=user,o=users,dc=grafana,dc=org")
++			So(actualPassword, ShouldEqual, "pwd")
++		})
++
++		Convey("Given empty bind dn and password", func() {
++			conn := &mockLdapConn{}
++			unauthenticatedBindWasCalled := false
++			var actualUsername string
++			conn.unauthenticatedBindProvider = func(username string) error {
++				unauthenticatedBindWasCalled = true
++				actualUsername = username
++				return nil
++			}
++			ldapAuther := &ldapAuther{
++				conn:   conn,
++				server: &LdapServerConf{},
++			}
++			err := ldapAuther.initialBind("user", "pwd")
++			So(err, ShouldBeNil)
++			So(ldapAuther.requireSecondBind, ShouldBeTrue)
++			So(unauthenticatedBindWasCalled, ShouldBeTrue)
++			So(actualUsername, ShouldBeEmpty)
++		})
++	})
+ 
+ 	Convey("When translating ldap user to grafana user", t, func() {
+ 
+@@ -365,12 +429,26 @@ func TestLdapAuther(t *testing.T) {
+ }
+ 
+ type mockLdapConn struct {
+-	result           *ldap.SearchResult
+-	searchCalled     bool
+-	searchAttributes []string
++	result                      *ldap.SearchResult
++	searchCalled                bool
++	searchAttributes            []string
++	bindProvider                func(username, password string) error
++	unauthenticatedBindProvider func(username string) error
+ }
+ 
+ func (c *mockLdapConn) Bind(username, password string) error {
++	if c.bindProvider != nil {
++		return c.bindProvider(username, password)
++	}
++
++	return nil
++}
++
++func (c *mockLdapConn) UnauthenticatedBind(username string) error {
++	if c.unauthenticatedBindProvider != nil {
++		return c.unauthenticatedBindProvider(username)
++	}
++
+ 	return nil
+ }
+ 
+diff --git a/pkg/middleware/auth.go b/pkg/middleware/auth.go
+index 27248342c8d..e06409211eb 100644
+--- a/pkg/middleware/auth.go
++++ b/pkg/middleware/auth.go
+@@ -4,7 +4,7 @@ import (
+ 	"net/url"
+ 	"strings"
+ 
+-	"gopkg.in/macaron.v1"
++	macaron "gopkg.in/macaron.v1"
+ 
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+@@ -52,6 +52,12 @@ func notAuthorized(c *m.ReqContext) {
+ 	c.Redirect(setting.AppSubUrl + "/login")
+ }
+ 
++func EnsureEditorOrViewerCanEdit(c *m.ReqContext) {
++	if !c.SignedInUser.HasRole(m.ROLE_EDITOR) && !setting.ViewersCanEdit {
++		accessForbidden(c)
++	}
++}
++
+ func RoleAuth(roles ...m.RoleType) macaron.Handler {
+ 	return func(c *m.ReqContext) {
+ 		ok := false
+diff --git a/pkg/services/sqlstore/datasource.go b/pkg/services/sqlstore/datasource.go
+index 071577eb6d6..36fd7c5b023 100644
+--- a/pkg/services/sqlstore/datasource.go
++++ b/pkg/services/sqlstore/datasource.go
+@@ -174,11 +174,6 @@ func UpdateDataSource(cmd *m.UpdateDataSourceCommand) error {
+ 			Version:           cmd.Version + 1,
+ 		}
+ 
+-		sess.UseBool("is_default")
+-		sess.UseBool("basic_auth")
+-		sess.UseBool("with_credentials")
+-		sess.UseBool("read_only")
+-
+ 		var updateSession *xorm.Session
+ 		if cmd.Version != 0 {
+ 			// the reason we allow cmd.version > db.version is make it possible for people to force
+@@ -190,7 +185,7 @@ func UpdateDataSource(cmd *m.UpdateDataSourceCommand) error {
+ 			updateSession = sess.Where("id=? and org_id=?", ds.Id, ds.OrgId)
+ 		}
+ 
+-		affected, err := updateSession.Update(ds)
++		affected, err := updateSession.AllCols().Omit("created").Update(ds)
+ 		if err != nil {
+ 			return err
+ 		}
+diff --git a/public/app/core/utils/errors.test.ts b/public/app/core/utils/errors.test.ts
+new file mode 100644
+index 00000000000..a5783fe7204
+--- /dev/null
++++ b/public/app/core/utils/errors.test.ts
+@@ -0,0 +1,55 @@
++import { getMessageFromError } from 'app/core/utils/errors';
++
++describe('errors functions', () => {
++  let message;
++
++  describe('when getMessageFromError gets an error string', () => {
++    beforeEach(() => {
++      message = getMessageFromError('error string');
++    });
++
++    it('should return the string', () => {
++      expect(message).toBe('error string');
++    });
++  });
++
++  describe('when getMessageFromError gets an error object with message field', () => {
++    beforeEach(() => {
++      message = getMessageFromError({ message: 'error string' });
++    });
++
++    it('should return the message text', () => {
++      expect(message).toBe('error string');
++    });
++  });
++
++  describe('when getMessageFromError gets an error object with data.message field', () => {
++    beforeEach(() => {
++      message = getMessageFromError({ data: { message: 'error string' } });
++    });
++
++    it('should return the message text', () => {
++      expect(message).toBe('error string');
++    });
++  });
++
++  describe('when getMessageFromError gets an error object with statusText field', () => {
++    beforeEach(() => {
++      message = getMessageFromError({ statusText: 'error string' });
++    });
++
++    it('should return the statusText text', () => {
++      expect(message).toBe('error string');
++    });
++  });
++
++  describe('when getMessageFromError gets an error object', () => {
++    beforeEach(() => {
++      message = getMessageFromError({ customError: 'error string' });
++    });
++
++    it('should return the stringified error', () => {
++      expect(message).toBe('{"customError":"error string"}');
++    });
++  });
++});
+diff --git a/public/app/core/utils/errors.ts b/public/app/core/utils/errors.ts
+index 3f6f1cfbc8d..afdf5270ade 100644
+--- a/public/app/core/utils/errors.ts
++++ b/public/app/core/utils/errors.ts
+@@ -13,5 +13,5 @@ export function getMessageFromError(err: any): string | null {
+     }
+   }
+ 
+-  return null;
++  return err;
+ }
+diff --git a/public/app/features/admin/AdminEditOrgCtrl.ts b/public/app/features/admin/AdminEditOrgCtrl.ts
+index 60514a86392..4ce0e2366f6 100644
+--- a/public/app/features/admin/AdminEditOrgCtrl.ts
++++ b/public/app/features/admin/AdminEditOrgCtrl.ts
+@@ -2,7 +2,7 @@ export default class AdminEditOrgCtrl {
+   /** @ngInject */
+   constructor($scope, $routeParams, backendSrv, $location, navModelSrv) {
+     $scope.init = () => {
+-      $scope.navModel = navModelSrv.getNav('cfg', 'admin', 'global-orgs', 1);
++      $scope.navModel = navModelSrv.getNav('admin', 'global-orgs', 0);
+ 
+       if ($routeParams.id) {
+         $scope.getOrg($routeParams.id);
+diff --git a/public/app/features/admin/AdminEditUserCtrl.ts b/public/app/features/admin/AdminEditUserCtrl.ts
+index bf72c1746aa..a5dcae52d50 100644
+--- a/public/app/features/admin/AdminEditUserCtrl.ts
++++ b/public/app/features/admin/AdminEditUserCtrl.ts
+@@ -6,7 +6,7 @@ export default class AdminEditUserCtrl {
+     $scope.user = {};
+     $scope.newOrg = { name: '', role: 'Editor' };
+     $scope.permissions = {};
+-    $scope.navModel = navModelSrv.getNav('cfg', 'admin', 'global-users', 1);
++    $scope.navModel = navModelSrv.getNav('admin', 'global-users', 0);
+ 
+     $scope.init = () => {
+       if ($routeParams.id) {
+diff --git a/public/app/features/admin/AdminListOrgsCtrl.ts b/public/app/features/admin/AdminListOrgsCtrl.ts
+index 8783efc182c..d6ee4b33dbb 100644
+--- a/public/app/features/admin/AdminListOrgsCtrl.ts
++++ b/public/app/features/admin/AdminListOrgsCtrl.ts
+@@ -2,7 +2,7 @@ export default class AdminListOrgsCtrl {
+   /** @ngInject */
+   constructor($scope, backendSrv, navModelSrv) {
+     $scope.init = () => {
+-      $scope.navModel = navModelSrv.getNav('cfg', 'admin', 'global-orgs', 1);
++      $scope.navModel = navModelSrv.getNav('admin', 'global-orgs', 0);
+       $scope.getOrgs();
+     };
+ 
+diff --git a/public/app/features/admin/AdminListUsersCtrl.ts b/public/app/features/admin/AdminListUsersCtrl.ts
+index 1b5b27a4d66..5b5321d13ce 100644
+--- a/public/app/features/admin/AdminListUsersCtrl.ts
++++ b/public/app/features/admin/AdminListUsersCtrl.ts
+@@ -10,7 +10,7 @@ export default class AdminListUsersCtrl {
+ 
+   /** @ngInject */
+   constructor(private $scope, private backendSrv, navModelSrv) {
+-    this.navModel = navModelSrv.getNav('cfg', 'admin', 'global-users', 1);
++    this.navModel = navModelSrv.getNav('admin', 'global-users', 0);
+     this.query = '';
+     this.getUsers();
+   }
+diff --git a/public/app/features/admin/StyleGuideCtrl.ts b/public/app/features/admin/StyleGuideCtrl.ts
+index e38e1a3344d..6548aa09198 100644
+--- a/public/app/features/admin/StyleGuideCtrl.ts
++++ b/public/app/features/admin/StyleGuideCtrl.ts
+@@ -9,7 +9,7 @@ export default class StyleGuideCtrl {
+ 
+   /** @ngInject */
+   constructor(private $routeParams, private backendSrv, navModelSrv) {
+-    this.navModel = navModelSrv.getNav('cfg', 'admin', 'styleguide', 1);
++    this.navModel = navModelSrv.getNav('admin', 'styleguide', 0);
+     this.theme = config.bootData.user.lightTheme ? 'light' : 'dark';
+   }
+ 
+diff --git a/public/app/features/admin/index.ts b/public/app/features/admin/index.ts
+index 7d06155b6f8..fecc04bc410 100644
+--- a/public/app/features/admin/index.ts
++++ b/public/app/features/admin/index.ts
+@@ -11,7 +11,7 @@ class AdminSettingsCtrl {
+ 
+   /** @ngInject */
+   constructor($scope, backendSrv, navModelSrv) {
+-    this.navModel = navModelSrv.getNav('cfg', 'admin', 'server-settings', 1);
++    this.navModel = navModelSrv.getNav('admin', 'server-settings', 0);
+ 
+     backendSrv.get('/api/admin/settings').then(settings => {
+       $scope.settings = settings;
+@@ -24,7 +24,7 @@ class AdminHomeCtrl {
+ 
+   /** @ngInject */
+   constructor(navModelSrv) {
+-    this.navModel = navModelSrv.getNav('cfg', 'admin', 1);
++    this.navModel = navModelSrv.getNav('admin', 0);
+   }
+ }
+ 
+diff --git a/public/app/features/dashboard/components/DashNav/DashNav.tsx b/public/app/features/dashboard/components/DashNav/DashNav.tsx
+index 453c5d1f9ac..d2f22d7d010 100644
+--- a/public/app/features/dashboard/components/DashNav/DashNav.tsx
++++ b/public/app/features/dashboard/components/DashNav/DashNav.tsx
+@@ -8,6 +8,7 @@ import { appEvents } from 'app/core/app_events';
+ import { PlaylistSrv } from 'app/features/playlist/playlist_srv';
+ 
+ // Components
++import { ClickOutsideWrapper } from 'app/core/components/ClickOutsideWrapper/ClickOutsideWrapper';
+ import { DashNavButton } from './DashNavButton';
+ import { Tooltip } from '@grafana/ui';
+ 
+@@ -173,26 +174,28 @@ export class DashNav extends PureComponent<Props> {
+         {this.renderDashboardTitleSearchButton()}
+ 
+         {this.playlistSrv.isPlaying && (
+-          <div className="navbar-buttons navbar-buttons--playlist">
+-            <DashNavButton
+-              tooltip="Go to previous dashboard"
+-              classSuffix="tight"
+-              icon="fa fa-step-backward"
+-              onClick={this.onPlaylistPrev}
+-            />
+-            <DashNavButton
+-              tooltip="Stop playlist"
+-              classSuffix="tight"
+-              icon="fa fa-stop"
+-              onClick={this.onPlaylistStop}
+-            />
+-            <DashNavButton
+-              tooltip="Go to next dashboard"
+-              classSuffix="tight"
+-              icon="fa fa-forward"
+-              onClick={this.onPlaylistNext}
+-            />
+-          </div>
++          <ClickOutsideWrapper onClick={this.onPlaylistStop}>
++            <div className="navbar-buttons navbar-buttons--playlist">
++              <DashNavButton
++                tooltip="Go to previous dashboard"
++                classSuffix="tight"
++                icon="fa fa-step-backward"
++                onClick={this.onPlaylistPrev}
++              />
++              <DashNavButton
++                tooltip="Stop playlist"
++                classSuffix="tight"
++                icon="fa fa-stop"
++                onClick={this.onPlaylistStop}
++              />
++              <DashNavButton
++                tooltip="Go to next dashboard"
++                classSuffix="tight"
++                icon="fa fa-forward"
++                onClick={this.onPlaylistNext}
++              />
++            </div>
++          </ClickOutsideWrapper>
+         )}
+ 
+         <div className="navbar-buttons navbar-buttons--actions">
+diff --git a/public/app/features/dashboard/containers/DashboardPage.tsx b/public/app/features/dashboard/containers/DashboardPage.tsx
+index ce2d3fa74df..1a970d3edc0 100644
+--- a/public/app/features/dashboard/containers/DashboardPage.tsx
++++ b/public/app/features/dashboard/containers/DashboardPage.tsx
+@@ -272,6 +272,7 @@ export class DashboardPage extends PureComponent<Props, State> {
+             autoHeightMin={'100%'}
+             setScrollTop={this.setScrollTop}
+             scrollTop={scrollTop}
++            updateAfterMountMs={500}
+             className="custom-scrollbar--page"
+           >
+             {editview && <DashboardSettings dashboard={dashboard} />}
+diff --git a/public/app/features/dashboard/containers/__snapshots__/DashboardPage.test.tsx.snap b/public/app/features/dashboard/containers/__snapshots__/DashboardPage.test.tsx.snap
+index 0e3720bada0..745bac2a20d 100644
+--- a/public/app/features/dashboard/containers/__snapshots__/DashboardPage.test.tsx.snap
++++ b/public/app/features/dashboard/containers/__snapshots__/DashboardPage.test.tsx.snap
+@@ -113,6 +113,7 @@ exports[`DashboardPage Dashboard init completed  Should render dashboard grid 1`
+       hideTracksWhenNotNeeded={false}
+       scrollTop={0}
+       setScrollTop={[Function]}
++      updateAfterMountMs={500}
+     >
+       <div
+         className="dashboard-container"
+@@ -349,6 +350,7 @@ exports[`DashboardPage When dashboard has editview url state should render setti
+       hideTracksWhenNotNeeded={false}
+       scrollTop={0}
+       setScrollTop={[Function]}
++      updateAfterMountMs={500}
+     >
+       <DashboardSettings
+         dashboard={
+diff --git a/public/app/features/dashboard/dashgrid/PanelChrome.test.tsx b/public/app/features/dashboard/dashgrid/PanelChrome.test.tsx
+new file mode 100644
+index 00000000000..7136a14a907
+--- /dev/null
++++ b/public/app/features/dashboard/dashgrid/PanelChrome.test.tsx
+@@ -0,0 +1,35 @@
++import { PanelChrome } from './PanelChrome';
++
++jest.mock('sass/_variables.generated.scss', () => ({
++  panelhorizontalpadding: 10,
++  panelVerticalPadding: 10,
++}));
++
++describe('PanelChrome', () => {
++  let chrome: PanelChrome;
++
++  beforeEach(() => {
++    chrome = new PanelChrome({
++      panel: {
++        scopedVars: {
++          aaa: { value: 'AAA', text: 'upperA' },
++          bbb: { value: 'BBB', text: 'upperB' },
++        },
++      },
++      dashboard: {},
++      plugin: {},
++      isFullscreen: false,
++    });
++  });
++
++  it('Should replace a panel variable', () => {
++    const out = chrome.replaceVariables('hello $aaa');
++    expect(out).toBe('hello AAA');
++  });
++
++  it('But it should prefer the local variable value', () => {
++    const extra = { aaa: { text: '???', value: 'XXX' } };
++    const out = chrome.replaceVariables('hello $aaa and $bbb', extra);
++    expect(out).toBe('hello XXX and BBB');
++  });
++});
+diff --git a/public/app/features/dashboard/dashgrid/PanelChrome.tsx b/public/app/features/dashboard/dashgrid/PanelChrome.tsx
+index 16f8f0820bb..0a9d1d44ceb 100644
+--- a/public/app/features/dashboard/dashgrid/PanelChrome.tsx
++++ b/public/app/features/dashboard/dashgrid/PanelChrome.tsx
+@@ -19,6 +19,7 @@ import { profiler } from 'app/core/profiler';
+ import { DashboardModel, PanelModel } from '../state';
+ import { PanelPlugin } from 'app/types';
+ import { DataQueryResponse, TimeRange, LoadingState, PanelData, DataQueryError } from '@grafana/ui';
++import { ScopedVars } from '@grafana/ui';
+ 
+ import variables from 'sass/_variables.generated.scss';
+ import templateSrv from 'app/features/templating/template_srv';
+@@ -85,8 +86,12 @@ export class PanelChrome extends PureComponent<Props, State> {
+     });
+   };
+ 
+-  onInterpolate = (value: string, format?: string) => {
+-    return templateSrv.replace(value, this.props.panel.scopedVars, format);
++  replaceVariables = (value: string, extraVars?: ScopedVars, format?: string) => {
++    let vars = this.props.panel.scopedVars;
++    if (extraVars) {
++      vars = vars ? { ...vars, ...extraVars } : extraVars;
++    }
++    return templateSrv.replace(value, vars, format);
+   };
+ 
+   onDataResponse = (dataQueryResponse: DataQueryResponse) => {
+@@ -158,7 +163,7 @@ export class PanelChrome extends PureComponent<Props, State> {
+           width={width - 2 * variables.panelhorizontalpadding}
+           height={height - PANEL_HEADER_HEIGHT - variables.panelverticalpadding}
+           renderCounter={renderCounter}
+-          onInterpolate={this.onInterpolate}
++          replaceVariables={this.replaceVariables}
+         />
+       </div>
+     );
+diff --git a/public/app/features/dashboard/panel_editor/DataSourceOption.tsx b/public/app/features/dashboard/panel_editor/DataSourceOption.tsx
+index 08285960805..a72eaae6ed9 100644
+--- a/public/app/features/dashboard/panel_editor/DataSourceOption.tsx
++++ b/public/app/features/dashboard/panel_editor/DataSourceOption.tsx
+@@ -1,16 +1,17 @@
+-import React, { FC } from 'react';
++import React, { FC, ChangeEvent } from 'react';
+ import { FormLabel } from '@grafana/ui';
+ 
+ interface Props {
+   label: string;
+   placeholder?: string;
+-  name?: string;
+-  value?: string;
+-  onChange?: (evt: any) => void;
++  name: string;
++  value: string;
++  onBlur: (event: ChangeEvent<HTMLInputElement>) => void;
++  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+   tooltipInfo?: any;
+ }
+ 
+-export const DataSourceOptions: FC<Props> = ({ label, placeholder, name, value, onChange, tooltipInfo }) => {
++export const DataSourceOption: FC<Props> = ({ label, placeholder, name, value, onBlur, onChange, tooltipInfo }) => {
+   return (
+     <div className="gf-form gf-form--flex-end">
+       <FormLabel tooltip={tooltipInfo}>{label}</FormLabel>
+@@ -20,10 +21,10 @@ export const DataSourceOptions: FC<Props> = ({ label, placeholder, name, value,
+         placeholder={placeholder}
+         name={name}
+         spellCheck={false}
+-        onBlur={evt => onChange(evt.target.value)}
++        onBlur={onBlur}
++        onChange={onChange}
++        value={value}
+       />
+     </div>
+   );
+ };
+-
+-export default DataSourceOptions;
+diff --git a/public/app/features/dashboard/panel_editor/EditorTabBody.tsx b/public/app/features/dashboard/panel_editor/EditorTabBody.tsx
+index 0413cae8a7b..6d2ce838117 100644
+--- a/public/app/features/dashboard/panel_editor/EditorTabBody.tsx
++++ b/public/app/features/dashboard/panel_editor/EditorTabBody.tsx
+@@ -118,7 +118,7 @@ export class EditorTabBody extends PureComponent<Props, State> {
+           {toolbarItems.map(item => this.renderButton(item))}
+         </div>
+         <div className="panel-editor__scroll">
+-          <CustomScrollbar autoHide={false} scrollTop={scrollTop} setScrollTop={setScrollTop}>
++          <CustomScrollbar autoHide={false} scrollTop={scrollTop} setScrollTop={setScrollTop} updateAfterMountMs={300}>
+             <div className="panel-editor__content">
+               <FadeIn in={isOpen} duration={200} unmountOnExit={true}>
+                 {openView && this.renderOpenView(openView)}
+diff --git a/public/app/features/dashboard/panel_editor/QueryOptions.tsx b/public/app/features/dashboard/panel_editor/QueryOptions.tsx
+index d203f3bc25f..0d031cb12ba 100644
+--- a/public/app/features/dashboard/panel_editor/QueryOptions.tsx
++++ b/public/app/features/dashboard/panel_editor/QueryOptions.tsx
+@@ -1,5 +1,5 @@
+ // Libraries
+-import React, { PureComponent } from 'react';
++import React, { PureComponent, ChangeEvent, FocusEvent } from 'react';
+ 
+ // Utils
+ import { isValidTimeSpan } from 'app/core/utils/rangeutil';
+@@ -9,7 +9,7 @@ import { Switch } from '@grafana/ui';
+ import { Input } from 'app/core/components/Form';
+ import { EventsWithValidation } from 'app/core/components/Form/Input';
+ import { InputStatus } from 'app/core/components/Form/Input';
+-import DataSourceOption from './DataSourceOption';
++import { DataSourceOption } from './DataSourceOption';
+ import { FormLabel } from '@grafana/ui';
+ 
+ // Types
+@@ -43,32 +43,79 @@ interface Props {
+ interface State {
+   relativeTime: string;
+   timeShift: string;
++  cacheTimeout: string;
++  maxDataPoints: string;
++  interval: string;
++  hideTimeOverride: boolean;
+ }
+ 
+ export class QueryOptions extends PureComponent<Props, State> {
++  allOptions = {
++    cacheTimeout: {
++      label: 'Cache timeout',
++      placeholder: '60',
++      name: 'cacheTimeout',
++      tooltipInfo: (
++        <>
++          If your time series store has a query cache this option can override the default cache timeout. Specify a
++          numeric value in seconds.
++        </>
++      ),
++    },
++    maxDataPoints: {
++      label: 'Max data points',
++      placeholder: 'auto',
++      name: 'maxDataPoints',
++      tooltipInfo: (
++        <>
++          The maximum data points the query should return. For graphs this is automatically set to one data point per
++          pixel.
++        </>
++      ),
++    },
++    minInterval: {
++      label: 'Min time interval',
++      placeholder: '0',
++      name: 'minInterval',
++      panelKey: 'interval',
++      tooltipInfo: (
++        <>
++          A lower limit for the auto group by time interval. Recommended to be set to write frequency, for example{' '}
++          <code>1m</code> if your data is written every minute. Access auto interval via variable{' '}
++          <code>$__interval</code> for time range string and <code>$__interval_ms</code> for numeric variable that can
++          be used in math expressions.
++        </>
++      ),
++    },
++  };
++
+   constructor(props) {
+     super(props);
+ 
+     this.state = {
+       relativeTime: props.panel.timeFrom || '',
+       timeShift: props.panel.timeShift || '',
++      cacheTimeout: props.panel.cacheTimeout || '',
++      maxDataPoints: props.panel.maxDataPoints || '',
++      interval: props.panel.interval || '',
++      hideTimeOverride: props.panel.hideTimeOverride || false,
+     };
+   }
+ 
+-  onRelativeTimeChange = event => {
++  onRelativeTimeChange = (event: ChangeEvent<HTMLInputElement>) => {
+     this.setState({
+       relativeTime: event.target.value,
+     });
+   };
+ 
+-  onTimeShiftChange = event => {
++  onTimeShiftChange = (event: ChangeEvent<HTMLInputElement>) => {
+     this.setState({
+       timeShift: event.target.value,
+     });
+   };
+ 
+-  onOverrideTime = (evt, status: InputStatus) => {
+-    const { value } = evt.target;
++  onOverrideTime = (event: FocusEvent<HTMLInputElement>, status: InputStatus) => {
++    const { value } = event.target;
+     const { panel } = this.props;
+     const emptyToNullValue = emptyToNull(value);
+     if (status === InputStatus.Valid && panel.timeFrom !== emptyToNullValue) {
+@@ -77,8 +124,8 @@ export class QueryOptions extends PureComponent<Props, State> {
+     }
+   };
+ 
+-  onTimeShift = (evt, status: InputStatus) => {
+-    const { value } = evt.target;
++  onTimeShift = (event: FocusEvent<HTMLInputElement>, status: InputStatus) => {
++    const { value } = event.target;
+     const { panel } = this.props;
+     const emptyToNullValue = emptyToNull(value);
+     if (status === InputStatus.Valid && panel.timeShift !== emptyToNullValue) {
+@@ -89,77 +136,49 @@ export class QueryOptions extends PureComponent<Props, State> {
+ 
+   onToggleTimeOverride = () => {
+     const { panel } = this.props;
+-    panel.hideTimeOverride = !panel.hideTimeOverride;
++    this.setState({ hideTimeOverride: !this.state.hideTimeOverride }, () => {
++      panel.hideTimeOverride = this.state.hideTimeOverride;
++      panel.refresh();
++    });
++  };
++
++  onDataSourceOptionBlur = (panelKey: string) => () => {
++    const { panel } = this.props;
++
++    panel[panelKey] = this.state[panelKey];
+     panel.refresh();
+   };
+ 
+-  renderOptions() {
+-    const { datasource, panel } = this.props;
++  onDataSourceOptionChange = (panelKey: string) => (event: ChangeEvent<HTMLInputElement>) => {
++    this.setState({ ...this.state, [panelKey]: event.target.value });
++  };
++
++  renderOptions = () => {
++    const { datasource } = this.props;
+     const { queryOptions } = datasource.meta;
+ 
+     if (!queryOptions) {
+       return null;
+     }
+ 
+-    const onChangeFn = (panelKey: string) => {
+-      return (value: string | number) => {
+-        panel[panelKey] = value;
+-        panel.refresh();
+-      };
+-    };
+-
+-    const allOptions = {
+-      cacheTimeout: {
+-        label: 'Cache timeout',
+-        placeholder: '60',
+-        name: 'cacheTimeout',
+-        value: panel.cacheTimeout,
+-        tooltipInfo: (
+-          <>
+-            If your time series store has a query cache this option can override the default cache timeout. Specify a
+-            numeric value in seconds.
+-          </>
+-        ),
+-      },
+-      maxDataPoints: {
+-        label: 'Max data points',
+-        placeholder: 'auto',
+-        name: 'maxDataPoints',
+-        value: panel.maxDataPoints,
+-        tooltipInfo: (
+-          <>
+-            The maximum data points the query should return. For graphs this is automatically set to one data point per
+-            pixel.
+-          </>
+-        ),
+-      },
+-      minInterval: {
+-        label: 'Min time interval',
+-        placeholder: '0',
+-        name: 'minInterval',
+-        value: panel.interval,
+-        panelKey: 'interval',
+-        tooltipInfo: (
+-          <>
+-            A lower limit for the auto group by time interval. Recommended to be set to write frequency, for example{' '}
+-            <code>1m</code> if your data is written every minute. Access auto interval via variable{' '}
+-            <code>$__interval</code> for time range string and <code>$__interval_ms</code> for numeric variable that can
+-            be used in math expressions.
+-          </>
+-        ),
+-      },
+-    };
+-
+     return Object.keys(queryOptions).map(key => {
+-      const options = allOptions[key];
+-      return <DataSourceOption key={key} {...options} onChange={onChangeFn(allOptions[key].panelKey || key)} />;
++      const options = this.allOptions[key];
++      const panelKey = options.panelKey || key;
++      return (
++        <DataSourceOption
++          key={key}
++          {...options}
++          onChange={this.onDataSourceOptionChange(panelKey)}
++          onBlur={this.onDataSourceOptionBlur(panelKey)}
++          value={this.state[panelKey]}
++        />
++      );
+     });
+-  }
++  };
+ 
+   render() {
+-    const hideTimeOverride = this.props.panel.hideTimeOverride;
++    const { hideTimeOverride } = this.state;
+     const { relativeTime, timeShift } = this.state;
+-
+     return (
+       <div className="gf-form-inline">
+         {this.renderOptions()}
+@@ -191,10 +210,11 @@ export class QueryOptions extends PureComponent<Props, State> {
+             value={timeShift}
+           />
+         </div>
+-
+-        <div className="gf-form-inline">
+-          <Switch label="Hide time info" checked={hideTimeOverride} onChange={this.onToggleTimeOverride} />
+-        </div>
++        {(timeShift || relativeTime) && (
++          <div className="gf-form-inline">
++            <Switch label="Hide time info" checked={hideTimeOverride} onChange={this.onToggleTimeOverride} />
++          </div>
++        )}
+       </div>
+     );
+   }
+diff --git a/public/app/features/dashboard/panel_editor/VisualizationTab.tsx b/public/app/features/dashboard/panel_editor/VisualizationTab.tsx
+index 8a904961a4f..5330baf1be6 100644
+--- a/public/app/features/dashboard/panel_editor/VisualizationTab.tsx
++++ b/public/app/features/dashboard/panel_editor/VisualizationTab.tsx
+@@ -66,7 +66,7 @@ export class VisualizationTab extends PureComponent<Props, State> {
+       const PanelEditor = plugin.exports.reactPanel.editor;
+ 
+       if (PanelEditor) {
+-        return <PanelEditor options={this.getReactPanelOptions()} onChange={this.onPanelOptionsChanged} />;
++        return <PanelEditor options={this.getReactPanelOptions()} onOptionsChange={this.onPanelOptionsChanged} />;
+       }
+     }
+ 
+diff --git a/public/app/features/datasources/settings/DataSourceSettingsPage.tsx b/public/app/features/datasources/settings/DataSourceSettingsPage.tsx
+index 01eea098ea4..27f60865c21 100644
+--- a/public/app/features/datasources/settings/DataSourceSettingsPage.tsx
++++ b/public/app/features/datasources/settings/DataSourceSettingsPage.tsx
+@@ -64,6 +64,14 @@ export class DataSourceSettingsPage extends PureComponent<Props, State> {
+     await loadDataSource(pageId);
+   }
+ 
++  componentDidUpdate(prevProps: Props) {
++    const { dataSource } = this.props;
++
++    if (prevProps.dataSource !== dataSource) {
++      this.setState({ dataSource });
++    }
++  }
++
+   onSubmit = async (evt: React.FormEvent<HTMLFormElement>) => {
+     evt.preventDefault();
+ 
+@@ -95,9 +103,7 @@ export class DataSourceSettingsPage extends PureComponent<Props, State> {
+   };
+ 
+   onModelChange = (dataSource: DataSourceSettings) => {
+-    this.setState({
+-      dataSource: dataSource,
+-    });
++    this.setState({ dataSource });
+   };
+ 
+   isReadOnly() {
+diff --git a/public/app/features/explore/QueryEditor.tsx b/public/app/features/explore/QueryEditor.tsx
+index 1d329f1c56e..d158f6bb9f3 100644
+--- a/public/app/features/explore/QueryEditor.tsx
++++ b/public/app/features/explore/QueryEditor.tsx
+@@ -43,6 +43,9 @@ export default class QueryEditor extends PureComponent<QueryEditorProps, any> {
+           this.props.onQueryChange(target);
+           this.props.onExecuteQuery();
+         },
++        onQueryChange: () => {
++          this.props.onQueryChange(target);
++        },
+         events: exploreEvents,
+         panel: { datasource, targets: [target] },
+         dashboard: {},
+diff --git a/public/app/features/org/NewOrgCtrl.ts b/public/app/features/org/NewOrgCtrl.ts
+index 6a8808abfac..46c12b1d5d5 100644
+--- a/public/app/features/org/NewOrgCtrl.ts
++++ b/public/app/features/org/NewOrgCtrl.ts
+@@ -4,7 +4,7 @@ import config from 'app/core/config';
+ export class NewOrgCtrl {
+   /** @ngInject */
+   constructor($scope, $http, backendSrv, navModelSrv) {
+-    $scope.navModel = navModelSrv.getNav('cfg', 'admin', 'global-orgs', 1);
++    $scope.navModel = navModelSrv.getNav('admin', 'global-orgs', 0);
+     $scope.newOrg = { name: '' };
+ 
+     $scope.createOrg = () => {
+diff --git a/public/app/features/panel/metrics_panel_ctrl.ts b/public/app/features/panel/metrics_panel_ctrl.ts
+index ceebfd82335..028585ae21e 100644
+--- a/public/app/features/panel/metrics_panel_ctrl.ts
++++ b/public/app/features/panel/metrics_panel_ctrl.ts
+@@ -224,7 +224,7 @@ class MetricsPanelCtrl extends PanelCtrl {
+       items.push({
+         text: 'Explore',
+         click: 'ctrl.explore();',
+-        icon: 'fa fa-fw fa-rocket',
++        icon: 'gicon gicon-explore',
+         shortcut: 'x',
+       });
+     }
+diff --git a/public/app/features/plugins/partials/plugin_edit.html b/public/app/features/plugins/partials/plugin_edit.html
+index 16cdfc1d1b2..d84196c47b0 100644
+--- a/public/app/features/plugins/partials/plugin_edit.html
++++ b/public/app/features/plugins/partials/plugin_edit.html
+@@ -25,7 +25,7 @@
+       </div>
+ 
+       <aside class="page-sidebar">
+-        <section class="page-sidebar-section">
++        <section class="page-sidebar-section" ng-if="ctrl.model.info.version">
+           <h4>Version</h4>
+           <span>{{ctrl.model.info.version}}</span>
+           <div ng-show="ctrl.model.hasUpdate">
+@@ -54,7 +54,7 @@
+             </li>
+           </ul>
+         </section>
+-        <section class="page-sidebar-section">
++        <section class="page-sidebar-section" ng-if="ctrl.model.info.links">
+           <h5>Links</h4>
+           <ul class="ui-list">
+             <li ng-repeat="link in ctrl.model.info.links">
+diff --git a/public/app/features/templating/template_srv.ts b/public/app/features/templating/template_srv.ts
+index 11e90cbb5f7..e0d35295556 100644
+--- a/public/app/features/templating/template_srv.ts
++++ b/public/app/features/templating/template_srv.ts
+@@ -1,7 +1,7 @@
+ import kbn from 'app/core/utils/kbn';
+ import _ from 'lodash';
+ import { variableRegex } from 'app/features/templating/variable';
+-import { TimeRange } from '@grafana/ui/src';
++import { TimeRange, ScopedVars } from '@grafana/ui/src';
+ 
+ function luceneEscape(value) {
+   return value.replace(/([\!\*\+\-\=<>\s\&\|\(\)\[\]\{\}\^\~\?\:\\/"])/g, '\\$1');
+@@ -220,7 +220,7 @@ export class TemplateSrv {
+     return values;
+   }
+ 
+-  replace(target, scopedVars?, format?) {
++  replace(target: string, scopedVars?: ScopedVars, format?: string | Function) {
+     if (!target) {
+       return target;
+     }
+diff --git a/public/app/plugins/datasource/cloudwatch/plugin.json b/public/app/plugins/datasource/cloudwatch/plugin.json
+index 20cfcf661c5..c131c768880 100644
+--- a/public/app/plugins/datasource/cloudwatch/plugin.json
++++ b/public/app/plugins/datasource/cloudwatch/plugin.json
+@@ -16,7 +16,6 @@
+     "logos": {
+       "small": "img/amazon-web-services.png",
+       "large": "img/amazon-web-services.png"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/datasource/elasticsearch/plugin.json b/public/app/plugins/datasource/elasticsearch/plugin.json
+index 89cca1251d5..26d88092c48 100644
+--- a/public/app/plugins/datasource/elasticsearch/plugin.json
++++ b/public/app/plugins/datasource/elasticsearch/plugin.json
+@@ -14,10 +14,7 @@
+       "small": "img/elasticsearch.svg",
+       "large": "img/elasticsearch.svg"
+     },
+-    "links": [
+-      {"name": "elastic.co", "url": "https://www.elastic.co/products/elasticsearch"}
+-    ],
+-    "version": "5.0.0"
++    "links": [{ "name": "elastic.co", "url": "https://www.elastic.co/products/elasticsearch" }]
+   },
+ 
+   "alerting": true,
+diff --git a/public/app/plugins/datasource/graphite/plugin.json b/public/app/plugins/datasource/graphite/plugin.json
+index 3066d80c9a9..a28ef8249a1 100644
+--- a/public/app/plugins/datasource/graphite/plugin.json
++++ b/public/app/plugins/datasource/graphite/plugin.json
+@@ -31,7 +31,6 @@
+         "name": "Graphite 1.1 Release",
+         "url": "https://grafana.com/blog/2018/01/11/graphite-1.1-teaching-an-old-dog-new-tricks/"
+       }
+-    ],
+-    "version": "5.0.0"
++    ]
+   }
+ }
+diff --git a/public/app/plugins/datasource/influxdb/plugin.json b/public/app/plugins/datasource/influxdb/plugin.json
+index ab8f36c29cb..c666a2085ea 100644
+--- a/public/app/plugins/datasource/influxdb/plugin.json
++++ b/public/app/plugins/datasource/influxdb/plugin.json
+@@ -22,7 +22,6 @@
+     "logos": {
+       "small": "img/influxdb_logo.svg",
+       "large": "img/influxdb_logo.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/datasource/mssql/datasource.ts b/public/app/plugins/datasource/mssql/datasource.ts
+index 303cd0471d7..9343e0f3860 100644
+--- a/public/app/plugins/datasource/mssql/datasource.ts
++++ b/public/app/plugins/datasource/mssql/datasource.ts
+@@ -12,7 +12,7 @@ export class MssqlDatasource {
+     this.name = instanceSettings.name;
+     this.id = instanceSettings.id;
+     this.responseParser = new ResponseParser(this.$q);
+-    this.interval = (instanceSettings.jsonData || {}).timeInterval;
++    this.interval = (instanceSettings.jsonData || {}).timeInterval || '1m';
+   }
+ 
+   interpolateVariable(value, variable) {
+diff --git a/public/app/plugins/datasource/mysql/datasource.ts b/public/app/plugins/datasource/mysql/datasource.ts
+index f0381d53b70..a864d42fcc4 100644
+--- a/public/app/plugins/datasource/mysql/datasource.ts
++++ b/public/app/plugins/datasource/mysql/datasource.ts
+@@ -15,7 +15,7 @@ export class MysqlDatasource {
+     this.id = instanceSettings.id;
+     this.responseParser = new ResponseParser(this.$q);
+     this.queryModel = new MysqlQuery({});
+-    this.interval = (instanceSettings.jsonData || {}).timeInterval;
++    this.interval = (instanceSettings.jsonData || {}).timeInterval || '1m';
+   }
+ 
+   interpolateVariable = (value, variable) => {
+diff --git a/public/app/plugins/datasource/mysql/plugin.json b/public/app/plugins/datasource/mysql/plugin.json
+index b03e48f4cec..cbb22130c13 100644
+--- a/public/app/plugins/datasource/mysql/plugin.json
++++ b/public/app/plugins/datasource/mysql/plugin.json
+@@ -12,8 +12,7 @@
+     "logos": {
+       "small": "img/mysql_logo.svg",
+       "large": "img/mysql_logo.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   },
+ 
+   "alerting": true,
+diff --git a/public/app/plugins/datasource/opentsdb/plugin.json b/public/app/plugins/datasource/opentsdb/plugin.json
+index 711ecd8512a..4dbd677af84 100644
+--- a/public/app/plugins/datasource/opentsdb/plugin.json
++++ b/public/app/plugins/datasource/opentsdb/plugin.json
+@@ -18,7 +18,6 @@
+     "logos": {
+       "small": "img/opentsdb_logo.png",
+       "large": "img/opentsdb_logo.png"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/datasource/postgres/datasource.ts b/public/app/plugins/datasource/postgres/datasource.ts
+index 13948c5d793..be27cdd37b6 100644
+--- a/public/app/plugins/datasource/postgres/datasource.ts
++++ b/public/app/plugins/datasource/postgres/datasource.ts
+@@ -17,7 +17,7 @@ export class PostgresDatasource {
+     this.jsonData = instanceSettings.jsonData;
+     this.responseParser = new ResponseParser(this.$q);
+     this.queryModel = new PostgresQuery({});
+-    this.interval = (instanceSettings.jsonData || {}).timeInterval;
++    this.interval = (instanceSettings.jsonData || {}).timeInterval || '1m';
+   }
+ 
+   interpolateVariable = (value, variable) => {
+diff --git a/public/app/plugins/datasource/postgres/plugin.json b/public/app/plugins/datasource/postgres/plugin.json
+index e90e3e9e7cd..bce485264ea 100644
+--- a/public/app/plugins/datasource/postgres/plugin.json
++++ b/public/app/plugins/datasource/postgres/plugin.json
+@@ -12,8 +12,7 @@
+     "logos": {
+       "small": "img/postgresql_logo.svg",
+       "large": "img/postgresql_logo.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   },
+ 
+   "alerting": true,
+diff --git a/public/app/plugins/datasource/prometheus/datasource.ts b/public/app/plugins/datasource/prometheus/datasource.ts
+index e4028e2687e..bde56431683 100644
+--- a/public/app/plugins/datasource/prometheus/datasource.ts
++++ b/public/app/plugins/datasource/prometheus/datasource.ts
+@@ -379,6 +379,24 @@ export class PrometheusDatasource implements DataSourceApi<PromQuery> {
+     });
+   }
+ 
++  getTagKeys(options) {
++    const url = '/api/v1/labels';
++    return this.metadataRequest(url).then(result => {
++      return _.map(result.data.data, value => {
++        return { text: value };
++      });
++    });
++  }
++
++  getTagValues(options) {
++    const url = '/api/v1/label/' + options.key + '/values';
++    return this.metadataRequest(url).then(result => {
++      return _.map(result.data.data, value => {
++        return { text: value };
++      });
++    });
++  }
++
+   testDatasource() {
+     const now = new Date().getTime();
+     return this.performInstantQuery({ expr: '1+1' }, now / 1000).then(response => {
+diff --git a/public/app/plugins/datasource/prometheus/metric_find_query.ts b/public/app/plugins/datasource/prometheus/metric_find_query.ts
+index 680f7a8fb98..5992efbf61c 100644
+--- a/public/app/plugins/datasource/prometheus/metric_find_query.ts
++++ b/public/app/plugins/datasource/prometheus/metric_find_query.ts
+@@ -12,10 +12,16 @@ export default class PrometheusMetricFindQuery {
+   }
+ 
+   process() {
++    const labelNamesRegex = /^label_names\(\)\s*$/;
+     const labelValuesRegex = /^label_values\((?:(.+),\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\)\s*$/;
+     const metricNamesRegex = /^metrics\((.+)\)\s*$/;
+     const queryResultRegex = /^query_result\((.+)\)\s*$/;
+ 
++    const labelNamesQuery = this.query.match(labelNamesRegex);
++    if (labelNamesQuery) {
++      return this.labelNamesQuery();
++    }
++
+     const labelValuesQuery = this.query.match(labelValuesRegex);
+     if (labelValuesQuery) {
+       if (labelValuesQuery[1]) {
+@@ -39,6 +45,15 @@ export default class PrometheusMetricFindQuery {
+     return this.metricNameAndLabelsQuery(this.query);
+   }
+ 
++  labelNamesQuery() {
++    const url = '/api/v1/labels';
++    return this.datasource.metadataRequest(url).then(result => {
++      return _.map(result.data.data, value => {
++        return { text: value };
++      });
++    });
++  }
++
+   labelValuesQuery(label, metric) {
+     let url;
+ 
+diff --git a/public/app/plugins/datasource/prometheus/plugin.json b/public/app/plugins/datasource/prometheus/plugin.json
+index f5ea3b7f224..6d2b526a7c7 100644
+--- a/public/app/plugins/datasource/prometheus/plugin.json
++++ b/public/app/plugins/datasource/prometheus/plugin.json
+@@ -42,7 +42,6 @@
+         "name": "Prometheus",
+         "url": "https://prometheus.io/"
+       }
+-    ],
+-    "version": "5.0.0"
++    ]
+   }
+ }
+diff --git a/public/app/plugins/datasource/prometheus/specs/metric_find_query.test.ts b/public/app/plugins/datasource/prometheus/specs/metric_find_query.test.ts
+index 1466bd8ac96..5e45f56303a 100644
+--- a/public/app/plugins/datasource/prometheus/specs/metric_find_query.test.ts
++++ b/public/app/plugins/datasource/prometheus/specs/metric_find_query.test.ts
+@@ -42,6 +42,24 @@ describe('PrometheusMetricFindQuery', () => {
+   });
+ 
+   describe('When performing metricFindQuery', () => {
++    it('label_names() should generate label name search query', async () => {
++      const query = ctx.setupMetricFindQuery({
++        query: 'label_names()',
++        response: {
++          data: ['name1', 'name2', 'name3'],
++        },
++      });
++      const results = await query.process();
++
++      expect(results).toHaveLength(3);
++      expect(ctx.backendSrvMock.datasourceRequest).toHaveBeenCalledTimes(1);
++      expect(ctx.backendSrvMock.datasourceRequest).toHaveBeenCalledWith({
++        method: 'GET',
++        url: 'proxied/api/v1/labels',
++        silent: true,
++      });
++    });
++
+     it('label_values(resource) should generate label search query', async () => {
+       const query = ctx.setupMetricFindQuery({
+         query: 'label_values(resource)',
+diff --git a/public/app/plugins/panel/alertlist/plugin.json b/public/app/plugins/panel/alertlist/plugin.json
+index 130c307ae6c..e1f427b1611 100644
+--- a/public/app/plugins/panel/alertlist/plugin.json
++++ b/public/app/plugins/panel/alertlist/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-singlestat-panel.svg",
+       "large": "img/icn-singlestat-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/dashlist/plugin.json b/public/app/plugins/panel/dashlist/plugin.json
+index 11f9db928b0..4915722d2ca 100644
+--- a/public/app/plugins/panel/dashlist/plugin.json
++++ b/public/app/plugins/panel/dashlist/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-dashlist-panel.svg",
+       "large": "img/icn-dashlist-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/gauge/GaugeOptionsBox.tsx b/public/app/plugins/panel/gauge/GaugeOptionsBox.tsx
+index b5d6acca806..bb3043ddd8b 100644
+--- a/public/app/plugins/panel/gauge/GaugeOptionsBox.tsx
++++ b/public/app/plugins/panel/gauge/GaugeOptionsBox.tsx
+@@ -10,14 +10,17 @@ import { GaugeOptions } from './types';
+ 
+ export class GaugeOptionsBox extends PureComponent<PanelEditorProps<GaugeOptions>> {
+   onToggleThresholdLabels = () =>
+-    this.props.onChange({ ...this.props.options, showThresholdLabels: !this.props.options.showThresholdLabels });
++    this.props.onOptionsChange({ ...this.props.options, showThresholdLabels: !this.props.options.showThresholdLabels });
+ 
+   onToggleThresholdMarkers = () =>
+-    this.props.onChange({ ...this.props.options, showThresholdMarkers: !this.props.options.showThresholdMarkers });
++    this.props.onOptionsChange({
++      ...this.props.options,
++      showThresholdMarkers: !this.props.options.showThresholdMarkers,
++    });
+ 
+-  onMinValueChange = ({ target }) => this.props.onChange({ ...this.props.options, minValue: target.value });
++  onMinValueChange = ({ target }) => this.props.onOptionsChange({ ...this.props.options, minValue: target.value });
+ 
+-  onMaxValueChange = ({ target }) => this.props.onChange({ ...this.props.options, maxValue: target.value });
++  onMaxValueChange = ({ target }) => this.props.onOptionsChange({ ...this.props.options, maxValue: target.value });
+ 
+   render() {
+     const { options } = this.props;
+diff --git a/public/app/plugins/panel/gauge/GaugePanel.tsx b/public/app/plugins/panel/gauge/GaugePanel.tsx
+index e7e60a7c417..2a42e31b9ab 100644
+--- a/public/app/plugins/panel/gauge/GaugePanel.tsx
++++ b/public/app/plugins/panel/gauge/GaugePanel.tsx
+@@ -15,11 +15,11 @@ interface Props extends PanelProps<GaugeOptions> {}
+ 
+ export class GaugePanel extends PureComponent<Props> {
+   render() {
+-    const { panelData, width, height, onInterpolate, options } = this.props;
++    const { panelData, width, height, replaceVariables, options } = this.props;
+     const { valueOptions } = options;
+ 
+-    const prefix = onInterpolate(valueOptions.prefix);
+-    const suffix = onInterpolate(valueOptions.suffix);
++    const prefix = replaceVariables(valueOptions.prefix);
++    const suffix = replaceVariables(valueOptions.suffix);
+     let value: TimeSeriesValue;
+ 
+     if (panelData.timeSeries) {
+diff --git a/public/app/plugins/panel/gauge/GaugePanelEditor.tsx b/public/app/plugins/panel/gauge/GaugePanelEditor.tsx
+index 63031f9d895..f226be7328c 100644
+--- a/public/app/plugins/panel/gauge/GaugePanelEditor.tsx
++++ b/public/app/plugins/panel/gauge/GaugePanelEditor.tsx
+@@ -14,31 +14,31 @@ import { GaugeOptions, SingleStatValueOptions } from './types';
+ 
+ export class GaugePanelEditor extends PureComponent<PanelEditorProps<GaugeOptions>> {
+   onThresholdsChanged = (thresholds: Threshold[]) =>
+-    this.props.onChange({
++    this.props.onOptionsChange({
+       ...this.props.options,
+       thresholds,
+     });
+ 
+   onValueMappingsChanged = (valueMappings: ValueMapping[]) =>
+-    this.props.onChange({
++    this.props.onOptionsChange({
+       ...this.props.options,
+       valueMappings,
+     });
+ 
+   onValueOptionsChanged = (valueOptions: SingleStatValueOptions) =>
+-    this.props.onChange({
++    this.props.onOptionsChange({
+       ...this.props.options,
+       valueOptions,
+     });
+ 
+   render() {
+-    const { onChange, options } = this.props;
++    const { onOptionsChange, options } = this.props;
+ 
+     return (
+       <>
+         <PanelOptionsGrid>
+           <SingleStatValueEditor onChange={this.onValueOptionsChanged} options={options.valueOptions} />
+-          <GaugeOptionsBox onChange={onChange} options={options} />
++          <GaugeOptionsBox onOptionsChange={onOptionsChange} options={options} />
+           <ThresholdsEditor onChange={this.onThresholdsChanged} thresholds={options.thresholds} />
+         </PanelOptionsGrid>
+ 
+diff --git a/public/app/plugins/panel/gauge/SingleStatValueEditor.tsx b/public/app/plugins/panel/gauge/SingleStatValueEditor.tsx
+index 86c177bb5e5..e711df6a2d3 100644
+--- a/public/app/plugins/panel/gauge/SingleStatValueEditor.tsx
++++ b/public/app/plugins/panel/gauge/SingleStatValueEditor.tsx
+@@ -2,8 +2,7 @@
+ import React, { PureComponent } from 'react';
+ 
+ // Components
+-import UnitPicker from 'app/core/components/Select/UnitPicker';
+-import { FormField, FormLabel, PanelOptionsGroup, Select } from '@grafana/ui';
++import { FormField, FormLabel, PanelOptionsGroup, Select, UnitPicker } from '@grafana/ui';
+ 
+ // Types
+ import { SingleStatValueOptions } from './types';
+diff --git a/public/app/plugins/panel/graph/plugin.json b/public/app/plugins/panel/graph/plugin.json
+index 81f7c6c54cf..7aed6f972cd 100644
+--- a/public/app/plugins/panel/graph/plugin.json
++++ b/public/app/plugins/panel/graph/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-graph-panel.svg",
+       "large": "img/icn-graph-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/graph2/GraphPanelEditor.tsx b/public/app/plugins/panel/graph2/GraphPanelEditor.tsx
+index 80b17ccd5c4..1a64290759c 100644
+--- a/public/app/plugins/panel/graph2/GraphPanelEditor.tsx
++++ b/public/app/plugins/panel/graph2/GraphPanelEditor.tsx
+@@ -8,15 +8,15 @@ import { Options } from './types';
+ 
+ export class GraphPanelEditor extends PureComponent<PanelEditorProps<Options>> {
+   onToggleLines = () => {
+-    this.props.onChange({ ...this.props.options, showLines: !this.props.options.showLines });
++    this.props.onOptionsChange({ ...this.props.options, showLines: !this.props.options.showLines });
+   };
+ 
+   onToggleBars = () => {
+-    this.props.onChange({ ...this.props.options, showBars: !this.props.options.showBars });
++    this.props.onOptionsChange({ ...this.props.options, showBars: !this.props.options.showBars });
+   };
+ 
+   onTogglePoints = () => {
+-    this.props.onChange({ ...this.props.options, showPoints: !this.props.options.showPoints });
++    this.props.onOptionsChange({ ...this.props.options, showPoints: !this.props.options.showPoints });
+   };
+ 
+   render() {
+diff --git a/public/app/plugins/panel/heatmap/plugin.json b/public/app/plugins/panel/heatmap/plugin.json
+index ca5d424ede2..d72f12f4723 100644
+--- a/public/app/plugins/panel/heatmap/plugin.json
++++ b/public/app/plugins/panel/heatmap/plugin.json
+@@ -18,7 +18,6 @@
+     "links": [
+       { "name": "Brendan Gregg - Heatmaps", "url": "http://www.brendangregg.com/heatmaps.html" },
+       { "name": "Brendan Gregg - Latency Heatmaps", "url": " http://www.brendangregg.com/HeatMaps/latency.html" }
+-    ],
+-    "version": "5.0.0"
++    ]
+   }
+ }
+diff --git a/public/app/plugins/panel/pluginlist/plugin.json b/public/app/plugins/panel/pluginlist/plugin.json
+index 8927b25b880..95166f57e9e 100644
+--- a/public/app/plugins/panel/pluginlist/plugin.json
++++ b/public/app/plugins/panel/pluginlist/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-dashlist-panel.svg",
+       "large": "img/icn-dashlist-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/singlestat/plugin.json b/public/app/plugins/panel/singlestat/plugin.json
+index e64d0ec7fe0..3f803a6b270 100644
+--- a/public/app/plugins/panel/singlestat/plugin.json
++++ b/public/app/plugins/panel/singlestat/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-singlestat-panel.svg",
+       "large": "img/icn-singlestat-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/table/plugin.json b/public/app/plugins/panel/table/plugin.json
+index 212688fbfa8..6177a3d2695 100644
+--- a/public/app/plugins/panel/table/plugin.json
++++ b/public/app/plugins/panel/table/plugin.json
+@@ -14,7 +14,6 @@
+     "logos": {
+       "small": "img/icn-table-panel.svg",
+       "large": "img/icn-table-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/app/plugins/panel/text/plugin.json b/public/app/plugins/panel/text/plugin.json
+index 6667185ba4a..e0f03f580e4 100644
+--- a/public/app/plugins/panel/text/plugin.json
++++ b/public/app/plugins/panel/text/plugin.json
+@@ -13,7 +13,6 @@
+     "logos": {
+       "small": "img/icn-text-panel.svg",
+       "large": "img/icn-text-panel.svg"
+-    },
+-    "version": "5.0.0"
++    }
+   }
+ }
+diff --git a/public/sass/base/_icons.scss b/public/sass/base/_icons.scss
+index 8d171673f6b..4e5751c6919 100644
+--- a/public/sass/base/_icons.scss
++++ b/public/sass/base/_icons.scss
+@@ -212,6 +212,9 @@
+   .gicon-explore {
+     background-image: url('../img/icons_dark_theme/icon_explore.svg');
+   }
++  .gicon-shield {
++    background-image: url('../img/icons_dark_theme/icon_shield.svg');
++  }
+ }
+ 
+ .fa--permissions-list {
+diff --git a/public/sass/components/_dropdown.scss b/public/sass/components/_dropdown.scss
+index 9e7f46fe514..7ad75644d5c 100644
+--- a/public/sass/components/_dropdown.scss
++++ b/public/sass/components/_dropdown.scss
+@@ -93,7 +93,9 @@
+       }
+ 
+       .gicon {
+-        opacity: 0.9;
++        opacity: 0.7;
++        width: 14px;
++        height: 14px;
+       }
+     }
+   }
+diff --git a/scripts/webpack/webpack.common.js b/scripts/webpack/webpack.common.js
+index cdc17b5ec00..600e5b480c8 100644
+--- a/scripts/webpack/webpack.common.js
++++ b/scripts/webpack/webpack.common.js
+@@ -10,7 +10,7 @@ module.exports = {
+     path: path.resolve(__dirname, '../../public/build'),
+     filename: '[name].[hash].js',
+     // Keep publicPath relative for host.com/grafana/ deployments
+-    publicPath: "public/build/",
++    publicPath: 'public/build/',
+   },
+   resolve: {
+     extensions: ['.ts', '.tsx', '.es6', '.js', '.json', '.svg'],
+@@ -61,6 +61,18 @@ module.exports = {
+       }
+     ]
+   },
++  // https://webpack.js.org/plugins/split-chunks-plugin/#split-chunks-example-3
++  optimization: {
++    splitChunks: {
++      cacheGroups: {
++        commons: {
++          test: /[\\/]node_modules[\\/].*[jt]sx?$/,
++          name: 'vendor',
++          chunks: 'all'
++        }
++      }
++    }
++  },
+   plugins: [
+     new ForkTsCheckerWebpackPlugin({
+       checkSyntacticErrors: true,
+diff --git a/scripts/webpack/webpack.dev.js b/scripts/webpack/webpack.dev.js
+index 7e103b32606..c10722b2732 100644
+--- a/scripts/webpack/webpack.dev.js
++++ b/scripts/webpack/webpack.dev.js
+@@ -58,25 +58,6 @@ module.exports = merge(common, {
+     ]
+   },
+ 
+-  optimization: {
+-    splitChunks: {
+-      cacheGroups: {
+-        manifest: {
+-          chunks: "initial",
+-          test: "vendor",
+-          name: "vendor",
+-          enforce: true
+-        },
+-        vendor: {
+-          chunks: "initial",
+-          test: "vendor",
+-          name: "vendor",
+-          enforce: true
+-        }
+-      }
+-    }
+-  },
+-
+   plugins: [
+     new CleanWebpackPlugin('../../public/build', { allowExternal: true }),
+     new MiniCssExtractPlugin({
+diff --git a/scripts/webpack/webpack.prod.js b/scripts/webpack/webpack.prod.js
+index 880b7e08ed2..0a3cf3ba814 100644
+--- a/scripts/webpack/webpack.prod.js
++++ b/scripts/webpack/webpack.prod.js
+@@ -47,17 +47,7 @@ module.exports = merge(common, {
+       })
+     ]
+   },
+-
+   optimization: {
+-    splitChunks: {
+-      cacheGroups: {
+-        commons: {
+-          test: /[\\/]node_modules[\\/].*[jt]sx?$/,
+-          name: "vendor",
+-          chunks: "all"
+-        }
+-      }
+-    },
+     minimizer: [
+       new UglifyJsPlugin({
+         cache: true,
+@@ -67,7 +57,6 @@ module.exports = merge(common, {
+       new OptimizeCSSAssetsPlugin({})
+     ]
+   },
+-
+   plugins: [
+     new MiniCssExtractPlugin({
+       filename: "grafana.[name].[hash].css"
+diff --git a/style_guides/frontend.md b/style_guides/frontend.md
+index 8d0849506a3..caef4f711ef 100644
+--- a/style_guides/frontend.md
++++ b/style_guides/frontend.md
+@@ -21,10 +21,8 @@ Generally we follow the Airbnb  [React Style Guide](https://github.com/airbnb/ja
+ 
+ * Components and types that needs to be used by external plugins needs to go into @grafana/ui
+ * Components should get their own folder under features/xxx/components
+-  * Sub components can live in that component folders, so not small component needs their own folder
+-  * Place test next to their component file (same dir)
+-  * Mocks in __mocks__ dir
+-  * Test utils in __tests__ dir
++  * Sub components can live in that component folders, so small component do not need their own folder
++  * Place test next to their component file (same dir)  
+   * Component sass should live in the same folder as component code
+ * State logic & domain models should live in features/xxx/state
+ * Containers (pages) can live in feature root features/xxx
+diff --git a/yarn.lock b/yarn.lock
+index 3d97ef64374..cec36884075 100644
+--- a/yarn.lock
++++ b/yarn.lock
+@@ -1501,6 +1501,19 @@
+     react-input-autosize "^2.2.1"
+     react-transition-group "^2.2.1"
+ 
++"@torkelo/react-select@2.4.1":
++  version "2.4.1"
++  resolved "https://registry.yarnpkg.com/@torkelo/react-select/-/react-select-2.4.1.tgz#fb7bcb8f7a12b3453bb817ca9a1294edecd1363b"
++  integrity sha512-x8798Y7WT4PSyNiEhk8JbsS5/EA+sxrObWkmfAnWNUJCDKoELWDCPrPBinRvITlCQYzLww5RaoNJutI5VBqKOQ==
++  dependencies:
++    classnames "^2.2.5"
++    emotion "^9.1.2"
++    memoize-one "^5.0.0"
++    prop-types "^15.6.0"
++    raf "^3.4.0"
++    react-input-autosize "^2.2.1"
++    react-transition-group "^2.2.1"
++
+ "@types/chalk@^2.2.0":
+   version "2.2.0"
+   resolved "https://registry.yarnpkg.com/@types/chalk/-/chalk-2.2.0.tgz#b7f6e446f4511029ee8e3f43075fb5b73fbaa0ba"
+@@ -11412,6 +11425,11 @@ memoize-one@^4.0.0:
+   resolved "https://registry.yarnpkg.com/memoize-one/-/memoize-one-4.1.0.tgz#a2387c58c03fff27ca390c31b764a79addf3f906"
+   integrity sha512-2GApq0yI/b22J2j9rhbrAlsHb0Qcz+7yWxeLG8h+95sl1XPUgeLimQSOdur4Vw7cUhrBHwaUZxWFZueojqNRzA==
+ 
++memoize-one@^5.0.0:
++  version "5.0.0"
++  resolved "https://registry.yarnpkg.com/memoize-one/-/memoize-one-5.0.0.tgz#d55007dffefb8de7546659a1722a5d42e128286e"
++  integrity sha512-7g0+ejkOaI9w5x6LvQwmj68kUj6rxROywPSCqmclG/HBacmFnZqhVscQ8kovkn9FBCNJmOz6SY42+jnvZzDWdw==
++
+ memory-fs@^0.4.0, memory-fs@~0.4.1:
+   version "0.4.1"
+   resolved "https://registry.yarnpkg.com/memory-fs/-/memory-fs-0.4.1.tgz#3a9a20b8462523e447cfbc7e8bb80ed667bfc552"

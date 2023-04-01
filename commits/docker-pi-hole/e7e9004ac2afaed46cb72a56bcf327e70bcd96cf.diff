@@ -1,0 +1,1140 @@
+commit e7e9004ac2afaed46cb72a56bcf327e70bcd96cf (from 2c963a0f01afdb1be962b80431b5878015ed7c38)
+Merge: 2c963a0 318720f
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Fri Jul 15 18:02:11 2022 +0100
+
+    Merge branch 'dev' into massive-refactor
+
+diff --git a/.github/workflows/test-and-build.yaml b/.github/workflows/test-and-build.yaml
+index 961d37a..9b7129f 100644
+--- a/.github/workflows/test-and-build.yaml
++++ b/.github/workflows/test-and-build.yaml
+@@ -5,7 +5,6 @@ on:
+   push:
+     branches:
+       - dev
+-      - massive-refactor
+   pull_request:
+   release:
+     types: [published]
+
+commit e7e9004ac2afaed46cb72a56bcf327e70bcd96cf (from 318720fab9c2e0d23bef3b4dbcb995142d0100bd)
+Merge: 2c963a0 318720f
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Fri Jul 15 18:02:11 2022 +0100
+
+    Merge branch 'dev' into massive-refactor
+
+diff --git a/.github/workflows/test-and-build.yaml b/.github/workflows/test-and-build.yaml
+index 9a6dc9a..9b7129f 100644
+--- a/.github/workflows/test-and-build.yaml
++++ b/.github/workflows/test-and-build.yaml
+@@ -12,16 +12,13 @@ on:
+ jobs:
+   test:
+     runs-on: ubuntu-latest
+-    env:
+-      ARCH: amd64
+-      DEBIAN_VERSION: bullseye
+     steps:
+       - name: Checkout Repo
+         uses: actions/checkout@v3
+       - name: Run Tests
+         run: |
+-          echo "Building ${ARCH}-${DEBIAN_VERSION}"
+-          ./gh-actions-test.sh
++          echo "Building image to test"
++          ./build-and-test.sh
+ 
+   build-and-publish:
+     if: github.event_name != 'pull_request'
+@@ -76,7 +73,7 @@ jobs:
+         name: Build and push
+         uses: docker/build-push-action@v3
+         with:
+-          context: .
++          context: ./src/
+           platforms: linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/arm/v6
+           build-args: |
+             PIHOLE_DOCKER_TAG=${{ steps.meta.outputs.version }}
+diff --git a/Dockerfile.py b/Dockerfile.py
+deleted file mode 100755
+index 4775487..0000000
+--- a/Dockerfile.py
++++ /dev/null
+@@ -1,82 +0,0 @@
+-#!/usr/bin/env python3
+-""" Dockerfile.py - generates and build dockerfiles
+-
+-Usage:
+-  Dockerfile.py [--hub_tag=<tag>] [--arch=<arch> ...] [--debian=<version> ...] [-v] [-t] [--no-build] [--no-cache] [--fail-fast]
+-
+-Options:
+-    --no-build           Skip building the docker images
+-    --no-cache           Build without using any cache data
+-    --fail-fast          Exit on first build error
+-    --hub_tag=<tag>      What the Docker Hub Image should be tagged as [default: None]
+-    --arch=<arch>        What Architecture(s) to build     [default: amd64 armel armhf arm64]
+-    --debian=<version>   What debian version(s) to build   [default: stretch buster bullseye]
+-    -v                   Print docker's command output     [default: False]
+-    -t                   Print docker's build time         [default: False]
+-
+-Examples:
+-"""
+-from docopt import docopt
+-import os
+-import sys
+-import subprocess
+-from dotenv import dotenv_values
+-
+-def build_dockerfiles(args) -> bool:
+-    all_success = True
+-    if args['-v']:
+-        print(args)
+-    if args['--no-build']:
+-        print(" ::: Skipping Dockerfile building")
+-        return all_success
+-
+-    for arch in args['--arch']:
+-        for debian_version in args['--debian']:
+-            all_success = build('pihole', arch, debian_version, args['--hub_tag'], args['-t'], args['--no-cache'], args['-v']) and all_success
+-            if not all_success and args['--fail-fast']:
+-                return False
+-    return all_success
+-
+-
+-def run_and_stream_command_output(command, environment_vars, verbose) -> bool:
+-    print("Running", command)
+-    build_result = subprocess.Popen(command.split(), env=environment_vars, stdout=subprocess.PIPE,
+-                                    stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
+-    if verbose:
+-        while build_result.poll() is None:
+-            for line in build_result.stdout:
+-                print(line, end='')
+-    build_result.wait()
+-    if build_result.returncode != 0:
+-        print(f'     ::: Error running: {command}')
+-        print(build_result.stderr)
+-    return build_result.returncode == 0
+-
+-
+-def build(docker_repo: str, arch: str, debian_version: str, hub_tag: str, show_time: bool, no_cache: bool, verbose: bool) -> bool:
+-    # remove the `pihole/pihole:` from hub_tag for use elsewhere
+-    tag_name = hub_tag.split(":",1)[1]
+-    create_tag = f'{docker_repo}:{tag_name}'
+-    print(f' ::: Building {create_tag}')
+-    time_arg = 'time' if show_time else ''
+-    cache_arg = '--no-cache' if no_cache else ''
+-    build_env = os.environ.copy()
+-    build_env['PIHOLE_DOCKER_TAG'] = os.environ.get('GIT_TAG', None)
+-    build_env['DEBIAN_VERSION'] = debian_version
+-    build_command = f'{time_arg} docker-compose -f build.yml build {cache_arg} --pull {arch}'
+-    print(f' ::: Building {arch} into {create_tag}')
+-    success = run_and_stream_command_output(build_command, build_env, verbose)
+-    if verbose:
+-        print(build_command, '\n')
+-    if success and hub_tag:
+-        hub_tag_command = f'{time_arg} docker tag {create_tag} {hub_tag}'
+-        print(f' ::: Tagging {create_tag} into {hub_tag}')
+-        success = run_and_stream_command_output(hub_tag_command, build_env, verbose)
+-    return success
+-
+-
+-if __name__ == '__main__':
+-    args = docopt(__doc__, version='Dockerfile 1.1')
+-    success = build_dockerfiles(args)
+-    exit_code = 0 if success else 1
+-    sys.exit(exit_code)
+diff --git a/Dockerfile.sh b/Dockerfile.sh
+deleted file mode 100755
+index 52e003c..0000000
+--- a/Dockerfile.sh
++++ /dev/null
+@@ -1,13 +0,0 @@
+-#!/usr/bin/env bash
+-
+-# @param ${ARCH}             The architecture to build. Example: amd64
+-# @param ${DEBIAN_VERSION}   The debian version to build. Example: bullseye
+-# @param ${ARCH_IMAGE}       What the Docker Hub Image should be tagged as [default: None]
+-
+-set -eux
+-./Dockerfile.py -v --no-cache --arch="${ARCH}" --debian="${DEBIAN_VERSION}" --hub_tag="${ARCH_IMAGE}"
+-docker images
+-
+-# TODO: Add junitxml output and have something consume it
+-# 2 parallel max b/c race condition with docker fixture (I think?)
+-py.test -vv -n 2 -k "${ARCH}" ./test/
+diff --git a/README.md b/README.md
+index af0ea13..26ce028 100644
+--- a/README.md
++++ b/README.md
+@@ -56,7 +56,7 @@ services:
+ 2. Run `docker-compose up -d` to build and start pi-hole
+ 3. Use the Pi-hole web UI to change the DNS settings *Interface listening behavior* to "Listen on all interfaces, permit all origins", if using Docker's default `bridge` network setting
+ 
+-[Here is an equivalent docker run script](https://github.com/pi-hole/docker-pi-hole/blob/master/docker_run.sh).
++[Here is an equivalent docker run script](https://github.com/pi-hole/docker-pi-hole/blob/master/examples/docker_run.sh).
+ 
+ ## Overview
+ 
+@@ -70,7 +70,7 @@ A [Docker](https://www.docker.com/what-docker) project to make a lightweight x86
+ 
+ ## Running Pi-hole Docker
+ 
+-This container uses 2 popular ports, port 53 and port 80, so **may conflict with existing applications ports**.  If you have no other services or docker containers using port 53/80 (if you do, keep reading below for a reverse proxy example), the minimum arguments required to run this container are in the script [docker_run.sh](https://github.com/pi-hole/docker-pi-hole/blob/master/docker_run.sh)
++This container uses 2 popular ports, port 53 and port 80, so **may conflict with existing applications ports**.  If you have no other services or docker containers using port 53/80 (if you do, keep reading below for a reverse proxy example), the minimum arguments required to run this container are in the script [docker_run.sh](https://github.com/pi-hole/docker-pi-hole/blob/master/examples/docker_run.sh)
+ 
+ If you're using a Red Hat based distribution with an SELinux Enforcing policy add `:z` to line with volumes like so:
+ 
+@@ -191,7 +191,7 @@ Here is a rundown of other arguments for your docker-compose / docker run.
+   * Don't forget to stop your services from auto-starting again after you reboot
+   * Ubuntu users see below for more detailed information
+ * You can map other ports to Pi-hole port 80 using docker's port forwarding like this `-p 8080:80` if you are using the default blocking mode. If you are using the legacy IP blocking mode, you should not remap this port.
+-  * [Here is an example of running with nginxproxy/nginx-proxy](https://github.com/pi-hole/docker-pi-hole/blob/master/docker-compose-nginx-proxy.yml) (an nginx auto-configuring docker reverse proxy for docker) on my port 80 with Pi-hole on another port.  Pi-hole needs to be `DEFAULT_HOST` env in nginxproxy/nginx-proxy and you need to set the matching `VIRTUAL_HOST` for the Pi-hole's container.  Please read nginxproxy/nginx-proxy readme for more info if you have trouble.
++  * [Here is an example of running with nginxproxy/nginx-proxy](https://github.com/pi-hole/docker-pi-hole/blob/master/examples/docker-compose-nginx-proxy.yml) (an nginx auto-configuring docker reverse proxy for docker) on my port 80 with Pi-hole on another port.  Pi-hole needs to be `DEFAULT_HOST` env in nginxproxy/nginx-proxy and you need to set the matching `VIRTUAL_HOST` for the Pi-hole's container.  Please read nginxproxy/nginx-proxy readme for more info if you have trouble.
+ * Docker's default network mode `bridge` isolates the container from the host's network. This is a more secure setting, but requires setting the Pi-hole DNS option for *Interface listening behavior* to "Listen on all interfaces, permit all origins".
+ 
+ ### Installing on Ubuntu
+@@ -272,7 +272,7 @@ Similarly for the webserver you can customize configs in /etc/lighttpd
+ 
+ ### Systemd init script
+ 
+-As long as your docker system service auto starts on boot and you run your container with `--restart=unless-stopped` your container should always start on boot and restart on crashes.  If you prefer to have your docker container run as a systemd service instead, add the file [pihole.service](https://raw.githubusercontent.com/pi-hole/docker-pi-hole/master/pihole.service) to "/etc/systemd/system"; customize whatever your container name is and remove `--restart=unless-stopped` from your docker run.  Then after you have initially created the docker container using the docker run command above, you can control it with "systemctl start pihole" or "systemctl stop pihole" (instead of `docker start`/`docker stop`).  You can also enable it to auto-start on boot with "systemctl enable pihole" (as opposed to `--restart=unless-stopped` and making sure docker service auto-starts on boot).
++As long as your docker system service auto starts on boot and you run your container with `--restart=unless-stopped` your container should always start on boot and restart on crashes.  If you prefer to have your docker container run as a systemd service instead, add the file [pihole.service](https://raw.githubusercontent.com/pi-hole/docker-pi-hole/master/examples/pihole.service) to "/etc/systemd/system"; customize whatever your container name is and remove `--restart=unless-stopped` from your docker run.  Then after you have initially created the docker container using the docker run command above, you can control it with "systemctl start pihole" or "systemctl stop pihole" (instead of `docker start`/`docker stop`).  You can also enable it to auto-start on boot with "systemctl enable pihole" (as opposed to `--restart=unless-stopped` and making sure docker service auto-starts on boot).
+ 
+ NOTE:  After initial run you may need to manually stop the docker container with "docker stop pihole" before the systemctl can start controlling the container.
+ 
+diff --git a/TESTING.md b/TESTING.md
+deleted file mode 100644
+index 133a77c..0000000
+--- a/TESTING.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+-# Prerequisites 
+-
+-Make sure you have bash & docker installed.  
+-Python and some test hacks are crammed into the `Dockerfile_build` file for now.  
+-Revisions in the future may re-enable running python on your host (not just in docker).
+-
+-# Running tests locally
+-
+-`ARCH=amd64 ./gh-actions-test.sh`
+-
+-Should result in:
+-
+-- An image named `pihole:amd64` being built
+-- Tests being ran to confirm the image doesn't have any regressions
+-
+-# Local image names
+-
+-Docker images built by `Dockerfile.py` are named the same but stripped of the `pihole/` docker repository namespace.
+-
+-e.g. `pi-hole:debian_amd64` or `pi-hole-multiarch:debian_arm64`
+-
+-You can run the multiarch images on an amd64 development system if you [enable binfmt-support as described in the multiarch image docs](https://hub.docker.com/r/multiarch/debian-debootstrap/)
+-
+-`docker run --rm --privileged multiarch/qemu-user-static:register --reset`
+diff --git a/autotest b/autotest
+deleted file mode 100755
+index 6a02656..0000000
+--- a/autotest
++++ /dev/null
+@@ -1 +0,0 @@
+-py.test -f ./test -v $@
+diff --git a/build-and-test.sh b/build-and-test.sh
+new file mode 100755
+index 0000000..28af1e4
+--- /dev/null
++++ b/build-and-test.sh
+@@ -0,0 +1,20 @@
++#!/usr/bin/env bash
++set -ex
++
++if [[ "$1" == "enter" ]]; then
++    enter="-it --entrypoint=bash"
++fi
++
++GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD | sed "s/\//-/g")
++GIT_TAG=$(git describe --tags --exact-match 2> /dev/null || true)
++GIT_TAG="${GIT_TAG:-$GIT_BRANCH}"
++
++# generate and build dockerfile
++docker build --tag image_pipenv --file test/Dockerfile test/
++docker run --rm \
++    --volume /var/run/docker.sock:/var/run/docker.sock \
++    --volume "$(pwd):/$(pwd)" \
++    --workdir "$(pwd)" \
++    --env PIPENV_CACHE_DIR="$(pwd)/.pipenv" \
++    --env GIT_TAG="${GIT_TAG}" \
++    ${enter} image_pipenv
+diff --git a/build.yml b/build.yml
+deleted file mode 100644
+index 812bce5..0000000
+--- a/build.yml
++++ /dev/null
+@@ -1,17 +0,0 @@
+-# Docker Compose build file: docker-compose -f build.yml build
+-version: "3.7"
+-
+-x-common-args: &common-args
+-  PIHOLE_DOCKER_TAG: ${PIHOLE_DOCKER_TAG}
+-  CORE_VERSION: ${CORE_VERSION}
+-  WEB_VERSION: ${WEB_VERSION}
+-  FTL_VERSION: ${FTL_VERSION}
+-
+-services:
+-  amd64:
+-    image: pihole:${PIHOLE_DOCKER_TAG}-amd64-${DEBIAN_VERSION:-bullseye}
+-    build:
+-      context: .
+-      args:
+-        <<: *common-args
+-        PIHOLE_BASE: ghcr.io/pi-hole/docker-pi-hole-base:${DEBIAN_VERSION:-bullseye}-slim
+\ No newline at end of file
+diff --git a/docker-compose-nginx-proxy.yml b/examples/docker-compose-nginx-proxy.yml
+similarity index 100%
+rename from docker-compose-nginx-proxy.yml
+rename to examples/docker-compose-nginx-proxy.yml
+diff --git a/docker-compose.yml.example b/examples/docker-compose.yml.example
+similarity index 100%
+rename from docker-compose.yml.example
+rename to examples/docker-compose.yml.example
+diff --git a/docker-pi-hole.cron b/examples/docker-pi-hole.cron
+similarity index 100%
+rename from docker-pi-hole.cron
+rename to examples/docker-pi-hole.cron
+diff --git a/docker_run.sh b/examples/docker_run.sh
+similarity index 100%
+rename from docker_run.sh
+rename to examples/docker_run.sh
+diff --git a/pihole.service b/examples/pihole.service
+similarity index 100%
+rename from pihole.service
+rename to examples/pihole.service
+diff --git a/gh-actions-deploy.sh b/gh-actions-deploy.sh
+deleted file mode 100755
+index c1aa2aa..0000000
+--- a/gh-actions-deploy.sh
++++ /dev/null
+@@ -1,74 +0,0 @@
+-#!/usr/bin/env bash
+-set -ex
+-# Github Actions Job for merging/deploying all architectures (post-test passing)
+-. gh-actions-vars.sh
+-
+-function annotate() {
+-    local base=$1
+-    local image=$2
+-    local arch=$3
+-    local annotate_flags="${annotate_map[$arch]}"
+-
+-    $dry docker manifest annotate ${base} ${image} --os linux ${annotate_flags}
+-}
+-
+-function create_manifest() {
+-    local debian_version=$1
+-    local images=()
+-    cd "${debian_version}"
+-
+-    for arch in *; do
+-        arch_image=$(cat "${arch}")
+-        docker pull "${arch_image}"
+-        images+=("${arch_image}")
+-    done
+-
+-    multiarch_images=$(get_multiarch_images)
+-    for docker_tag in ${multiarch_images}; do
+-        docker manifest create ${docker_tag} ${images[*]}
+-        for arch in *; do
+-            arch_image=$(cat "${arch}")
+-            annotate "${docker_tag}" "${arch_image}" "${arch}"
+-        done
+-
+-        docker manifest inspect "${docker_tag}"
+-        docker manifest push --purge "${docker_tag}"
+-    done
+-    cd ../
+-}
+-
+-function get_multiarch_images() {
+-    multiarch_images="${MULTIARCH_IMAGE}-${debian_version}"
+-    if [[ "${debian_version}" == "${DEFAULT_DEBIAN_VERSION}" ]] ; then
+-        # default debian version gets a non-debian tag as well as latest tag
+-        multiarch_images="${multiarch_images} ${MULTIARCH_IMAGE} ${LATEST_IMAGE}"
+-    fi
+-    echo "${multiarch_images}"
+-}
+-
+-
+-# Keep in sync with build.yml names
+-declare -A annotate_map=( 
+-    ["amd64"]="--arch amd64" 
+-    ["armel"]="--arch arm --variant v6" 
+-    ["armhf"]="--arch arm --variant v7" 
+-    ["arm64"]="--arch arm64 --variant v8"
+-    ["i386"]="--arch 386" 
+-)
+-
+-mkdir -p ~/.docker
+-export DOCKER_CLI_EXPERIMENTAL='enabled'
+-echo "{}" | jq '.experimental="enabled"' | tee ~/.docker/config.json
+-# I tried to keep this login command outside of this script
+-# but for some reason auth would always fail in Github Actions.
+-# I think setting up a cred store would fix it
+-# https://docs.docker.com/engine/reference/commandline/login/#credentials-store
+-echo "${DOCKERHUB_PASS}" | docker login --username="${DOCKERHUB_USER}" --password-stdin
+-docker info
+-
+-ls -lat ./.gh-workspace/
+-cd .gh-workspace
+-
+-for debian_version in *; do
+-    create_manifest "${debian_version}"
+-done
+diff --git a/gh-actions-test.sh b/gh-actions-test.sh
+deleted file mode 100755
+index 9d342c7..0000000
+--- a/gh-actions-test.sh
++++ /dev/null
+@@ -1,35 +0,0 @@
+-#!/usr/bin/env bash
+-set -ex
+-
+-# Script ran by Github actions for tests
+-#
+-# @environment ${ARCH}              The architecture to build. Example: amd64.
+-# @environment ${DEBIAN_VERSION}    Debian version to build. ('bullseye' or 'buster').
+-# @environment ${ARCH_IMAGE}        What the Docker Hub Image should be tagged as. Example: pihole/pihole:master-amd64-bullseye
+-
+-# setup qemu/variables
+-docker run --rm --privileged multiarch/qemu-user-static:register --reset > /dev/null
+-. gh-actions-vars.sh
+-
+-if [[ "$1" == "enter" ]]; then
+-    enter="-it --entrypoint=sh"
+-fi
+-
+-# generate and build dockerfile
+-docker build --tag image_pipenv --file Dockerfile_build .
+-docker run --rm \
+-    --volume /var/run/docker.sock:/var/run/docker.sock \
+-    --volume "$(pwd):/$(pwd)" \
+-    --workdir "$(pwd)" \
+-    --env PIPENV_CACHE_DIR="$(pwd)/.pipenv" \
+-    --env ARCH="${ARCH}" \
+-    --env ARCH_IMAGE="${ARCH_IMAGE}" \
+-    --env DEBIAN_VERSION="${DEBIAN_VERSION}" \
+-    --env GIT_TAG="${GIT_TAG}" \
+-    --env CORE_VERSION="${CORE_VERSION}" \
+-    --env WEB_VERSION="${WEB_VERSION}" \
+-    --env FTL_VERSION="${FTL_VERSION}" \
+-    ${enter} image_pipenv
+-
+-mkdir -p ".gh-workspace/${DEBIAN_VERSION}/"
+-echo "${ARCH_IMAGE}" | tee "./.gh-workspace/${DEBIAN_VERSION}/${ARCH}"
+diff --git a/gh-actions-vars.sh b/gh-actions-vars.sh
+deleted file mode 100755
+index 1959062..0000000
+--- a/gh-actions-vars.sh
++++ /dev/null
+@@ -1,53 +0,0 @@
+-#!/usr/bin/env bash
+-set -a
+-
+-# @environment ${ARCH}                    The architecture to build. Defaults to 'amd64'.
+-# @environment ${DEBIAN_VERSION}          Debian version to build. Defaults to 'bullseye'.
+-# @environment ${DOCKER_HUB_REPO}         The docker hub repo to tag images for. Defaults to 'pihole'.
+-# @environment ${DOCKER_HUB_IMAGE_NAME}   The name of the resulting image. Defaults to 'pihole'.
+-
+-GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD | sed "s/\//-/g")
+-GIT_TAG=$(git describe --tags --exact-match 2> /dev/null || true)
+-
+-DEFAULT_DEBIAN_VERSION="bullseye"
+-
+-if [[ -z "${ARCH}" ]]; then
+-    ARCH="amd64"
+-    echo "Defaulting arch to ${ARCH}"
+-fi
+-
+-if [[ -z "${DEBIAN_VERSION}" ]]; then
+-    DEBIAN_VERSION="${DEFAULT_DEBIAN_VERSION}"
+-    echo "Defaulting DEBIAN_VERSION to ${DEBIAN_VERSION}"
+-fi
+-
+-if [[ -z "${DOCKER_HUB_REPO}" ]]; then
+-    DOCKER_HUB_REPO="pihole"
+-    echo "Defaulting DOCKER_HUB_REPO to ${DOCKER_HUB_REPO}"
+-fi
+-
+-if [[ -z "${DOCKER_HUB_IMAGE_NAME}" ]]; then
+-    DOCKER_HUB_IMAGE_NAME="pihole"
+-    echo "Defaulting DOCKER_HUB_IMAGE_NAME to ${DOCKER_HUB_IMAGE_NAME}"
+-fi
+-
+-BASE_IMAGE="${DOCKER_HUB_REPO}/${DOCKER_HUB_IMAGE_NAME}"
+-
+-GIT_TAG="${GIT_TAG:-$GIT_BRANCH}"
+-ARCH_IMAGE="${BASE_IMAGE}:${GIT_TAG}-${ARCH}-${DEBIAN_VERSION}"
+-MULTIARCH_IMAGE="${BASE_IMAGE}:${GIT_TAG}"
+-
+-
+-
+-# To get latest released, cut a release on https://github.com/pi-hole/docker-pi-hole/releases (manually gated for quality control)
+-latest_tag='UNKNOWN'
+-if ! latest_tag=$(curl -sI https://github.com/pi-hole/docker-pi-hole/releases/latest | grep --color=never -i Location: | awk -F / '{print $NF}' | tr -d '[:cntrl:]'); then
+-    print "Failed to retrieve latest docker-pi-hole release metadata"
+-else
+-    if [[ "${GIT_TAG}" == "${latest_tag}" ]] ; then
+-        LATEST_IMAGE="${BASE_IMAGE}:latest"
+-    fi
+-fi
+-
+-
+-set +a
+diff --git a/setup.py b/setup.py
+deleted file mode 100644
+index 0e393bc..0000000
+--- a/setup.py
++++ /dev/null
+@@ -1,6 +0,0 @@
+-from setuptools import setup
+-
+-setup(
+-    setup_requires=['pytest-runner'],
+-    tests_require=['pytest'],
+-)
+diff --git a/.dockerignore b/src/.dockerignore
+similarity index 100%
+rename from .dockerignore
+rename to src/.dockerignore
+diff --git a/Dockerfile b/src/Dockerfile
+similarity index 100%
+rename from Dockerfile
+rename to src/Dockerfile
+diff --git a/s6/debian-root/etc/cont-init.d/05-changer-uid-gid.sh b/src/s6/debian-root/etc/cont-init.d/05-changer-uid-gid.sh
+similarity index 100%
+rename from s6/debian-root/etc/cont-init.d/05-changer-uid-gid.sh
+rename to src/s6/debian-root/etc/cont-init.d/05-changer-uid-gid.sh
+diff --git a/s6/debian-root/etc/fix-attrs.d/01-resolver-resolv b/src/s6/debian-root/etc/fix-attrs.d/01-resolver-resolv
+similarity index 100%
+rename from s6/debian-root/etc/fix-attrs.d/01-resolver-resolv
+rename to src/s6/debian-root/etc/fix-attrs.d/01-resolver-resolv
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/dependencies b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/dependencies
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/dependencies
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/dependencies
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/up b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/up
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/up
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-gravityonboot/up
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/up b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/up
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/up
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/1-startup/up
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/finish b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/finish
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/cron/finish
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/finish
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/run b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/run
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/cron/run
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/run
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/cron/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/cron/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/down b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/down
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/down
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/down
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/finish b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/finish
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/finish
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/finish
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/run b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/run
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/run
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/run
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-access-log/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/down b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/down
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/down
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/down
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/finish b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/finish
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/finish
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/finish
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/run b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/run
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/run
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/run
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd-error-log/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/dependencies b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/dependencies
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/dependencies
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/dependencies
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/finish b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/finish
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/finish
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/finish
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/run b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/run
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/run
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/run
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/lighttpd/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/dependencies b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/dependencies
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/dependencies
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/dependencies
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/finish b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/finish
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/finish
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/finish
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/run b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/run
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/run
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/run
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/type b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/type
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/type
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/pihole-FTL/type
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-gravityonboot b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-gravityonboot
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-gravityonboot
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-gravityonboot
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-startup b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-startup
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-startup
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/1-startup
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/cron b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/cron
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/cron
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/cron
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/lighttpd b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/lighttpd
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/lighttpd
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/lighttpd
+diff --git a/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/pihole-FTL b/src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/pihole-FTL
+similarity index 100%
+rename from s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/pihole-FTL
+rename to src/s6/debian-root/etc/s6-overlay/s6-rc.d/user/contents.d/pihole-FTL
+diff --git a/s6/debian-root/usr/bin/host-ip b/src/s6/debian-root/usr/bin/host-ip
+similarity index 100%
+rename from s6/debian-root/usr/bin/host-ip
+rename to src/s6/debian-root/usr/bin/host-ip
+diff --git a/s6/debian-root/usr/bin/set-contenv b/src/s6/debian-root/usr/bin/set-contenv
+similarity index 100%
+rename from s6/debian-root/usr/bin/set-contenv
+rename to src/s6/debian-root/usr/bin/set-contenv
+diff --git a/s6/service b/src/s6/service
+similarity index 100%
+rename from s6/service
+rename to src/s6/service
+diff --git a/s6/timeout b/src/s6/timeout
+similarity index 100%
+rename from s6/timeout
+rename to src/s6/timeout
+diff --git a/scripts/bash_functions.sh b/src/scripts/bash_functions.sh
+similarity index 100%
+rename from scripts/bash_functions.sh
+rename to src/scripts/bash_functions.sh
+diff --git a/scripts/gravityonboot.sh b/src/scripts/gravityonboot.sh
+similarity index 100%
+rename from scripts/gravityonboot.sh
+rename to src/scripts/gravityonboot.sh
+diff --git a/scripts/install.sh b/src/scripts/install.sh
+similarity index 100%
+rename from scripts/install.sh
+rename to src/scripts/install.sh
+diff --git a/scripts/start.sh b/src/scripts/start.sh
+similarity index 100%
+rename from scripts/start.sh
+rename to src/scripts/start.sh
+diff --git a/Dockerfile_build b/test/Dockerfile
+similarity index 85%
+rename from Dockerfile_build
+rename to test/Dockerfile
+index 8574fab..0719291 100644
+--- a/Dockerfile_build
++++ b/test/Dockerfile
+@@ -1,7 +1,7 @@
+-FROM python:3.8-bullseye
++FROM python:3.8-slim-bullseye
+ 
+ # Only works for docker CLIENT (bind mounted socket)
+-COPY --from=docker:18.09.3 /usr/local/bin/docker /usr/local/bin/
++COPY --from=docker:20.10.17 /usr/local/bin/docker /usr/local/bin/
+ 
+ ARG packages
+ RUN apt-get update && \
+@@ -11,7 +11,7 @@ RUN apt-get update && \
+     && pip3 install --no-cache-dir -U pip pipenv
+ 
+ RUN curl -L https://github.com/docker/compose/releases/download/1.25.5/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose && \
+-    chmod +x /usr/local/bin/docker-compose 
++    chmod +x /usr/local/bin/docker-compose
+ 
+ COPY ./Dockerfile.sh /usr/local/bin/
+ COPY Pipfile* /root/
+diff --git a/test/Dockerfile.sh b/test/Dockerfile.sh
+new file mode 100755
+index 0000000..04d264d
+--- /dev/null
++++ b/test/Dockerfile.sh
+@@ -0,0 +1,9 @@
++#!/usr/bin/env bash
++set -eux
++
++docker build ./src --tag pihole:${GIT_TAG} --no-cache
++docker images
++
++# TODO: Add junitxml output and have something consume it
++# 2 parallel max b/c race condition with docker fixture (I think?)
++py.test -vv -n 2 ./test/tests/
+diff --git a/Pipfile b/test/Pipfile
+similarity index 100%
+rename from Pipfile
+rename to test/Pipfile
+diff --git a/Pipfile.lock b/test/Pipfile.lock
+similarity index 100%
+rename from Pipfile.lock
+rename to test/Pipfile.lock
+diff --git a/test/TESTING.md b/test/TESTING.md
+new file mode 100644
+index 0000000..be716f8
+--- /dev/null
++++ b/test/TESTING.md
+@@ -0,0 +1,14 @@
++# Prerequisites
++
++Make sure you have bash & docker installed.
++Python and some test hacks are crammed into the `Dockerfile_build` file for now.
++Revisions in the future may re-enable running python on your host (not just in docker).
++
++# Running tests locally
++
++`./build-and-test.sh`
++
++Should result in:
++
++- An image named `pihole:[branch-name]` being built
++- Tests being ran to confirm the image doesn't have any regressions
+diff --git a/requirements.txt b/test/requirements.txt
+similarity index 100%
+rename from requirements.txt
+rename to test/requirements.txt
+diff --git a/test/test_pihole_scripts.py b/test/test_pihole_scripts.py
+deleted file mode 100644
+index 7c0ae8f..0000000
+--- a/test/test_pihole_scripts.py
++++ /dev/null
+@@ -1,53 +0,0 @@
+-import pytest
+-
+-
+-@pytest.fixture(scope='module')
+-def start_cmd():
+-    ''' broken by default, required override '''
+-    return None
+-
+-
+-@pytest.fixture
+-def running_pihole(docker_persist, slow, persist_webserver, persist_tag, start_cmd):
+-    ''' Override the running_pihole to run and check for success of a
+-        pihole-FTL start based `pihole` script command
+-        
+-        Individual tests all must override start_cmd'''
+-    assert docker_persist.dig.run('ping -c 1 test_pihole').rc == 0
+-    slow(lambda: docker_persist.run('pgrep pihole-FTL').rc == 0)
+-    slow(lambda: docker_persist.run('pgrep {}'.format(persist_webserver)).rc == 0)
+-    oldpid = docker_persist.run('pidof pihole-FTL')
+-    cmd = docker_persist.run('pihole {}'.format(start_cmd))
+-    slow(lambda: docker_persist.run('pgrep pihole-FTL').rc == 0)
+-    newpid = docker_persist.run('pidof pihole-FTL')
+-    for pid in [oldpid, newpid]:
+-        assert pid != ''
+-    # ensure a new pid for pihole-FTL appeared due to service restart
+-    assert oldpid != newpid
+-    assert cmd.rc == 0
+-    # Save out cmd result to check different stdout of start/enable/disable
+-    docker_persist.cmd = cmd
+-    return docker_persist
+-
+-
+-@pytest.mark.parametrize('start_cmd,hostname,expected_ip, expected_messages', [
+-    ('enable',  'pi.hole', '127.0.0.1', ['Blocking already enabled,','nothing to do']),
+-    ('disable', 'pi.hole', '127.0.0.1', ['Disabling blocking','Pi-hole Disabled']),
+-])
+-def test_pihole_enable_disable_command(running_pihole, dig, persist_tag, start_cmd, hostname, expected_ip, expected_messages):
+-    ''' the start_cmd tests are all built into the running_pihole fixture in this file '''
+-    dig_cmd = "dig +time=1 +noall +answer {} @test_pihole".format(hostname)
+-    lookup = running_pihole.dig.run(dig_cmd)
+-    assert lookup.rc == 0
+-    lookup_ip = lookup.stdout.split()[4]
+-    assert lookup_ip == expected_ip
+-
+-    for part_of_output in expected_messages:
+-        assert part_of_output in running_pihole.cmd.stdout
+-
+-@pytest.mark.parametrize('start_cmd,expected_message', [
+-    ('-up', 'Function not supported in Docker images')
+-])
+-def test_pihole_update_command(running_pihole, start_cmd, expected_message):
+-    assert running_pihole.cmd.stdout.strip() == expected_message
+-
+diff --git a/test/test_start.py b/test/test_start.py
+deleted file mode 100644
+index 2439362..0000000
+--- a/test/test_start.py
++++ /dev/null
+@@ -1,61 +0,0 @@
+-
+-import pytest
+-import time
+-''' conftest.py provides the defaults through fixtures '''
+-''' Note, testinfra builtins don't seem fully compatible with
+-        docker containers (esp. musl based OSs) stripped down nature '''
+-
+-
+-# If the test runs /start.sh, do not let s6 run it too!  Kill entrypoint to avoid race condition/duplicated execution
+-@pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
+-@pytest.mark.parametrize('args,error_msg,expect_rc', [
+-    ('-e FTLCONF_REPLY_ADDR4="1.2.3.z"', "FTLCONF_REPLY_ADDR4 Environment variable (1.2.3.z) doesn't appear to be a valid IPv4 address",1),
+-    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="1234:1234:1234:ZZZZ"', "Environment variable (1234:1234:1234:ZZZZ) doesn't appear to be a valid IPv6 address",1),
+-    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="kernel"', "ERROR: You passed in IPv6 with a value of 'kernel'",1),
+-])
+-def test_ftlconf_reply_addr_invalid_ips_triggers_exit_error(docker, error_msg, expect_rc):
+-    start = docker.run('/start.sh')
+-    assert start.rc == expect_rc
+-    assert 'ERROR' in start.stdout
+-    assert error_msg in start.stdout
+-
+-
+-@pytest.mark.parametrize('hostname,expected_ip', [
+-    ('pi.hole',                        '127.0.0.1'),
+-    ('google-public-dns-a.google.com', '8.8.8.8'),
+-    ('b.resolvers.Level3.net',         '4.2.2.2')
+-])
+-def test_dns_responses(running_pihole, hostname, expected_ip):
+-    dig_cmd = "dig +time=1 +noall +answer {} @test_pihole | awk '{{ print $5 }}'".format(hostname)
+-    lookup = running_pihole.dig.run(dig_cmd).stdout.rstrip('\n')
+-    assert lookup == expected_ip
+-
+-def test_indecies_are_present(running_pihole):
+-    file = running_pihole.get_module('File')
+-    file('/var/www/html/pihole/index.html').exists
+-    file('/var/www/html/pihole/index.js').exists
+-
+-def validate_curl(http_rc, expected_http_code, page_contents):
+-    if int(http_rc.rc) != 0 or int(http_rc.stdout) != expected_http_code:
+-        print('CURL return code: {}'.format(http_rc.rc))
+-        print('CURL stdout: {}'.format(http_rc.stdout))
+-        print('CURL stderr:{}'.format(http_rc.stderr))
+-        print('CURL file:\n{}\n'.format(page_contents.encode('utf-8')))
+-
+-
+-@pytest.mark.parametrize('addr', [ 'localhost' ] )
+-@pytest.mark.parametrize('url', [ '/admin/', '/admin/index.php' ] )
+-def test_admin_requests_load_as_expected(running_pihole, version, addr, url):
+-    command = 'curl -L -s -o /tmp/curled_file -w "%{{http_code}}" http://{}{}'.format(addr, url)
+-    http_rc = running_pihole.run(command)
+-    page_contents = running_pihole.run('cat /tmp/curled_file ').stdout
+-    expected_http_code = 200
+-
+-    validate_curl(http_rc, expected_http_code, page_contents)
+-    assert http_rc.rc == 0
+-    assert int(http_rc.stdout) == expected_http_code
+-    for html_text in ['dns_queries_today', 'Content-Security-Policy',
+-                      'scripts/pi-hole/js/footer.js']:
+-        # version removed, not showing up in footer of test env (fix me)
+-        assert html_text in page_contents
+-
+diff --git a/test/test_volume_data.sh b/test/test_volume_data.sh
+deleted file mode 100755
+index 9aafefc..0000000
+--- a/test/test_volume_data.sh
++++ /dev/null
+@@ -1,104 +0,0 @@
+-#!/bin/bash 
+-set -ex
+-# Trying something different from the python test, this is a big integration test in bash
+-# Tests multiple volume settings and how they are impacted by the complete startup scripts + restart/re-creation of container
+-# Maybe a bit easier to read the workflow/debug in bash than python for others? 
+-# This workflow is VERY similar to python's tests, but in bash so not object-oriented/pytest fixture based
+-
+-# Debug can be added anywhere to check current state mid-test
+-RED='\033[0;31m'
+-NC='\033[0m' # No Color
+-if [ $(id -u) != 0 ] ; then
+-    sudo=sudo # do not need if root (in docker)
+-fi
+-debug() {
+-    $sudo grep -r . "$VOL_PH"
+-    $sudo grep -r . "$VOL_DM"
+-}
+-# Cleanup at the end, print debug on fail
+-cleanup() {
+-    retcode=$?
+-    { set +x; } 2>/dev/null
+-    if [ $retcode != 0 ] ; then
+-        printf "${RED}ERROR / FAILURE${NC} - printing all volume info"
+-        debug
+-    fi
+-    docker rm -f $CONTAINER
+-    $sudo rm -rf $VOLUMES
+-    exit $retcode
+-}
+-trap "cleanup" INT TERM EXIT
+-
+-
+-# VOLUME TESTS
+-
+-# Given...
+-DEBIAN_VERSION="$(DEBIAN_VERSION:-bullseye)"
+-IMAGE="${1:-pihole:v5.0-amd64}-${DEBIAN_VERSION}"   # Default is latest build test image (generic, non release/branch tag)
+-VOLUMES="$(mktemp -d)"                              # A fresh volume directory
+-VOL_PH="$VOLUMES/pihole"
+-VOL_DM="$VOLUMES/dnsmasq.d"
+-tty -s && TTY='-t' || TTY=''
+-
+-echo "Testing $IMAGE with volumes base path $VOLUMES"
+-
+-# When
+-# Running stock+empty volumes (no ports to avoid conflicts)
+-CONTAINER="$(
+-    docker run -d \
+-    -v "$VOL_PH:/etc/pihole" \
+-    -v "$VOL_DM:/etc/dnsmasq.d" \
+-    -v "/dev/null:/etc/pihole/adlists.list" \
+-    --entrypoint='' \
+-    $IMAGE \
+-    tail -f /dev/null
+-)"  # container backgrounded for multipiple operations over time
+-
+-EXEC() { 
+-    local container="$1"
+-    # Must quote for complex commands
+-    docker exec $TTY $container bash -c "$2" 
+-}
+-EXEC $CONTAINER /start.sh  # run all the startup scripts
+-    
+-# Then default are present
+-grep "PIHOLE_DNS_1=8.8.8.8" "$VOL_PH/setupVars.conf"
+-grep "PIHOLE_DNS_2=8.8.4.4" "$VOL_PH/setupVars.conf"
+-grep "IPV4_ADDRESS=0.0.0.0" "$VOL_PH/setupVars.conf"
+-grep -E "WEBPASSWORD=.+" "$VOL_PH/setupVars.conf"
+-
+-# Given the settings are manually changed (not good settings, just for testing changes)
+-EXEC $CONTAINER 'pihole -a setdns 127.1.1.1,127.2.2.2,127.3.3.3,127.4.4.4'
+-EXEC $CONTAINER '. /opt/pihole/webpage.sh ; change_setting IPV4_ADDRESS 10.0.0.0'
+-EXEC $CONTAINER 'pihole -a -p login'
+-assert_new_settings() {
+-    grep "PIHOLE_DNS_1=127.1.1.1" "$VOL_PH/setupVars.conf"
+-    grep "PIHOLE_DNS_2=127.2.2.2" "$VOL_PH/setupVars.conf"
+-    grep "PIHOLE_DNS_3=127.3.3.3" "$VOL_PH/setupVars.conf"
+-    grep "PIHOLE_DNS_4=127.4.4.4" "$VOL_PH/setupVars.conf"
+-    grep "IPV4_ADDRESS=10.0.0.0" "$VOL_PH/setupVars.conf"
+-    grep "WEBPASSWORD=6060d59351e8c2f48140f01b2c3f3b61652f396c53a5300ae239ebfbe7d5ff08" "$VOL_PH/setupVars.conf"
+-    grep "server=127.1.1.1" $VOL_DM/01-pihole.conf
+-    grep "server=127.2.2.2" $VOL_DM/01-pihole.conf
+-}
+-assert_new_settings
+-
+-# When Restarting
+-docker restart $CONTAINER
+-# Then settings are still manual changed values
+-assert_new_settings
+-
+-# When removing/re-creating the container
+-docker rm -f $CONTAINER
+-CONTAINER="$(
+-    docker run -d \
+-    -v "$VOL_PH:/etc/pihole" \
+-    -v "$VOL_DM:/etc/dnsmasq.d" \
+-    -v "/dev/null:/etc/pihole/adlists.list" \
+-    --entrypoint='' \
+-    $IMAGE \
+-    tail -f /dev/null
+-)"  # container backgrounded for multipiple operations over time
+-
+-# Then settings are still manual changed values
+-assert_new_settings
+diff --git a/test/test_volumes.py b/test/test_volumes.py
+deleted file mode 100644
+index 0782f02..0000000
+--- a/test/test_volumes.py
++++ /dev/null
+@@ -1,7 +0,0 @@
+-import pytest
+-
+-@pytest.mark.skip('broke, needs further investigation.')
+-def test_volume_shell_script(arch, run_and_stream_command_output):
+-    # only one arch should be necessary
+-    if arch == 'amd64':
+-        run_and_stream_command_output('./test/test_volume_data.sh')
+diff --git a/test/__init__.py b/test/tests/__init__.py
+similarity index 100%
+rename from test/__init__.py
+rename to test/tests/__init__.py
+diff --git a/test/conftest.py b/test/tests/conftest.py
+similarity index 88%
+rename from test/conftest.py
+rename to test/tests/conftest.py
+index 5e92ee6..85aabc3 100644
+--- a/test/conftest.py
++++ b/test/tests/conftest.py
+@@ -1,4 +1,3 @@
+-
+ import os
+ import pytest
+ import subprocess
+@@ -7,7 +6,6 @@ import testinfra
+ local_host = testinfra.get_host('local://')
+ check_output = local_host.check_output
+ 
+-DEBIAN_VERSION = os.environ.get('DEBIAN_VERSION', 'bullseye')
+ TAIL_DEV_NULL='tail -f /dev/null'
+ 
+ @pytest.fixture()
+@@ -85,21 +83,13 @@ def docker_persist(request, persist_test_args, persist_args, persist_image, pers
+ def entrypoint():
+     return ''
+ 
+-@pytest.fixture(params=['amd64', 'armhf', 'arm64', 'armel', 'i386'])
+-def arch(request):
+-    return request.param
+-
+ @pytest.fixture()
+ def version():
+     return os.environ.get('GIT_TAG', None)
+ 
+ @pytest.fixture()
+-def debian_version():
+-    return DEBIAN_VERSION
+-
+-@pytest.fixture()
+-def tag(version, arch, debian_version):
+-    return '{}-{}-{}'.format(version, arch, debian_version)
++def tag(version):
++    return '{}'.format(version)
+ 
+ @pytest.fixture
+ def webserver(tag):
+@@ -115,19 +105,10 @@ def image(tag):
+ def cmd():
+     return TAIL_DEV_NULL
+ 
+-@pytest.fixture(scope='module')
+-def persist_arch():
+-    '''amd64 only, dnsmasq/pihole-FTL(?untested?) will not start under qemu-user-static :('''
+-    return 'amd64'
+-
+ @pytest.fixture(scope='module')
+ def persist_version():
+     return version
+ 
+-@pytest.fixture(scope='module')
+-def persist_debian_version():
+-    return DEBIAN_VERSION
+-
+ @pytest.fixture(scope='module')
+ def persist_args_dns():
+     return '--dns 127.0.0.1 --dns 1.1.1.1'
+@@ -138,7 +119,7 @@ def persist_args_volumes():
+ 
+ @pytest.fixture(scope='module')
+ def persist_args_env():
+-    return '-e FTLCONF_REPLY_ADDR4="127.0.0.1"'
++    return '-e ServerIP="127.0.0.1"'
+ 
+ @pytest.fixture(scope='module')
+ def persist_args(persist_args_volumes, persist_args_env):
+@@ -150,8 +131,8 @@ def persist_test_args():
+     return ''
+ 
+ @pytest.fixture(scope='module')
+-def persist_tag(persist_version, persist_arch, persist_debian_version):
+-    return '{}_{}_{}'.format(persist_version, persist_arch, persist_debian_version)
++def persist_tag(persist_version):
++    return '{}'.format(persist_version)
+ 
+ @pytest.fixture(scope='module')
+ def persist_webserver(persist_tag):
+@@ -211,5 +192,4 @@ def running_pihole(docker_persist, slow, persist_webserver):
+     ''' Persist a fully started docker-pi-hole to help speed up subsequent tests '''
+     slow(lambda: docker_persist.run('pgrep pihole-FTL').rc == 0)
+     slow(lambda: docker_persist.run('pgrep lighttpd').rc == 0)
+-    return docker_persist
+-
++    return docker_persist
+\ No newline at end of file
+diff --git a/test/test_bash_functions.py b/test/tests/test_bash_functions.py
+similarity index 100%
+rename from test/test_bash_functions.py
+rename to test/tests/test_bash_functions.py
+diff --git a/test/tests/test_start.py b/test/tests/test_start.py
+new file mode 100644
+index 0000000..d4e96a1
+--- /dev/null
++++ b/test/tests/test_start.py
+@@ -0,0 +1,19 @@
++import pytest
++import time
++''' conftest.py provides the defaults through fixtures '''
++''' Note, testinfra builtins don't seem fully compatible with
++        docker containers (esp. musl based OSs) stripped down nature '''
++
++
++# If the test runs /start.sh, do not let s6 run it too!  Kill entrypoint to avoid race condition/duplicated execution
++@pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
++@pytest.mark.parametrize('args,error_msg,expect_rc', [
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.z"', "FTLCONF_REPLY_ADDR4 Environment variable (1.2.3.z) doesn't appear to be a valid IPv4 address",1),
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="1234:1234:1234:ZZZZ"', "Environment variable (1234:1234:1234:ZZZZ) doesn't appear to be a valid IPv6 address",1),
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="kernel"', "ERROR: You passed in IPv6 with a value of 'kernel'",1),
++])
++def test_ftlconf_reply_addr_invalid_ips_triggers_exit_error(docker, error_msg, expect_rc):
++    start = docker.run('/start.sh')
++    assert start.rc == expect_rc
++    assert 'ERROR' in start.stdout
++    assert error_msg in start.stdout
+diff --git a/tox.ini b/tox.ini
+deleted file mode 100644
+index 8d226c3..0000000
+--- a/tox.ini
++++ /dev/null
+@@ -1,18 +0,0 @@
+-[tox]
+-envlist = py38
+-
+-[testenv]
+-commands = echo "Use ./gh-actions-test.sh instead for now"
+-
+-# Currently out of commission post-python3 upgrade due to failed monkey patch of testinfra sh -> bash
+-#[testenv]
+-#whitelist_externals = docker
+-#deps = -rrequirements.txt
+-## 2 parallel max b/c race condition with docker fixture (I think?)
+-#commands = docker run --rm --privileged multiarch/qemu-user-static:register --reset
+-#           ./Dockerfile.py -v --arch amd64
+-#           pytest -vv -n auto -k amd64 ./test/
+-#           ./Dockerfile.py -v --arch armhf --arch arm64 --arch armel
+-#           pytest -vv -n auto -k arm64 ./test/
+-#           pytest -vv -n auto -k armhf ./test/
+-#           pytest -vv -n auto -k armel ./test/

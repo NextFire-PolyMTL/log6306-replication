@@ -1,0 +1,1314 @@
+commit 578a8e8f5590328935f49a288c9b12f34cd6dc2a (from 3a9a36d6cfafd49350781d695c127ae2b83fd60d)
+Merge: 3a9a36d6cfa 3479cf4b396
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Wed Jun 20 10:22:06 2018 +0200
+
+    Merge pull request #12322 from bergquist/sqlstore_refactoring
+    
+    expose session and transaction helpers to other services
+
+diff --git a/pkg/services/sqlstore/session.go b/pkg/services/sqlstore/session.go
+index c85346231e4..29d7392678f 100644
+--- a/pkg/services/sqlstore/session.go
++++ b/pkg/services/sqlstore/session.go
+@@ -27,18 +27,18 @@ func startSession(ctx context.Context, engine *xorm.Engine, beginTran bool) (*DB
+ 	var sess *DBSession
+ 	sess, ok := value.(*DBSession)
+ 
+-	if !ok {
+-		newSess := &DBSession{Session: engine.NewSession()}
+-		if beginTran {
+-			err := newSess.Begin()
+-			if err != nil {
+-				return nil, err
+-			}
+-		}
+-		return newSess, nil
++	if ok {
++		return sess, nil
+ 	}
+ 
+-	return sess, nil
++	newSess := &DBSession{Session: engine.NewSession()}
++	if beginTran {
++		err := newSess.Begin()
++		if err != nil {
++			return nil, err
++		}
++	}
++	return newSess, nil
+ }
+ 
+ func withDbSession(ctx context.Context, callback dbTransactionFunc) error {
+diff --git a/pkg/services/sqlstore/sqlstore.go b/pkg/services/sqlstore/sqlstore.go
+index 40101528df5..b0edc1676e0 100644
+--- a/pkg/services/sqlstore/sqlstore.go
++++ b/pkg/services/sqlstore/sqlstore.go
+@@ -26,7 +26,7 @@ import (
+ 
+ 	_ "github.com/grafana/grafana/pkg/tsdb/mssql"
+ 	_ "github.com/lib/pq"
+-	_ "github.com/mattn/go-sqlite3"
++	sqlite3 "github.com/mattn/go-sqlite3"
+ )
+ 
+ var (
+@@ -56,6 +56,64 @@ type SqlStore struct {
+ 	skipEnsureAdmin bool
+ }
+ 
++// NewSession returns a new DBSession
++func (ss *SqlStore) NewSession() *DBSession {
++	return &DBSession{Session: ss.engine.NewSession()}
++}
++
++// WithDbSession calls the callback with an session attached to the context.
++func (ss *SqlStore) WithDbSession(ctx context.Context, callback dbTransactionFunc) error {
++	sess, err := startSession(ctx, ss.engine, false)
++	if err != nil {
++		return err
++	}
++
++	return callback(sess)
++}
++
++// WithTransactionalDbSession calls the callback with an session within a transaction
++func (ss *SqlStore) WithTransactionalDbSession(ctx context.Context, callback dbTransactionFunc) error {
++	return ss.inTransactionWithRetryCtx(ctx, callback, 0)
++}
++
++func (ss *SqlStore) inTransactionWithRetryCtx(ctx context.Context, callback dbTransactionFunc, retry int) error {
++	sess, err := startSession(ctx, ss.engine, true)
++	if err != nil {
++		return err
++	}
++
++	defer sess.Close()
++
++	err = callback(sess)
++
++	// special handling of database locked errors for sqlite, then we can retry 3 times
++	if sqlError, ok := err.(sqlite3.Error); ok && retry < 5 {
++		if sqlError.Code == sqlite3.ErrLocked {
++			sess.Rollback()
++			time.Sleep(time.Millisecond * time.Duration(10))
++			sqlog.Info("Database table locked, sleeping then retrying", "retry", retry)
++			return ss.inTransactionWithRetryCtx(ctx, callback, retry+1)
++		}
++	}
++
++	if err != nil {
++		sess.Rollback()
++		return err
++	} else if err = sess.Commit(); err != nil {
++		return err
++	}
++
++	if len(sess.events) > 0 {
++		for _, e := range sess.events {
++			if err = bus.Publish(e); err != nil {
++				log.Error(3, "Failed to publish event after commit", err)
++			}
++		}
++	}
++
++	return nil
++}
++
+ func (ss *SqlStore) Init() error {
+ 	ss.log = log.New("sqlstore")
+ 	ss.readConfig()
+
+commit 578a8e8f5590328935f49a288c9b12f34cd6dc2a (from 3479cf4b396e84a13cd766a5adde14ba338da515)
+Merge: 3a9a36d6cfa 3479cf4b396
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Wed Jun 20 10:22:06 2018 +0200
+
+    Merge pull request #12322 from bergquist/sqlstore_refactoring
+    
+    expose session and transaction helpers to other services
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f1202688b96..ec67c88c688 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -21,6 +21,7 @@
+ * **Auth Proxy**: Whitelist proxy IP address instead of client IP address [#10707](https://github.com/grafana/grafana/issues/10707)
+ * **User Management**: Make sure that a user always has a current org assigned [#11076](https://github.com/grafana/grafana/issues/11076)
+ * **Snapshots**: Fix: annotations not properly extracted leading to incorrect rendering of annotations [#12278](https://github.com/grafana/grafana/issues/12278)
++* **LDAP**: Allow use of DN in group_search_filter_user_attribute and member_of [#3132](https://github.com/grafana/grafana/issues/3132), thx [@mmolnar](https://github.com/mmolnar)
+ 
+ # 5.2.0-beta1 (2018-06-05)
+ 
+@@ -62,6 +63,10 @@
+ * **Dashboard list panel**: Search dashboards by folder [#11525](https://github.com/grafana/grafana/issues/11525)
+ * **Sidenav**: Always show server admin link in sidenav if grafana admin [#11657](https://github.com/grafana/grafana/issues/11657)
+ 
++# 5.1.4 (2018-06-19)
++
++* **Permissions**: Important security fix for API keys with viewer role [#12343](https://github.com/grafana/grafana/issues/12343)
++
+ # 5.1.3 (2018-05-16)
+ 
+ * **Scroll**: Graph panel / legend texts shifts on the left each time we move scrollbar on firefox [#11830](https://github.com/grafana/grafana/issues/11830)
+diff --git a/docker/blocks/openldap/Dockerfile b/docker/blocks/openldap/Dockerfile
+index 54e383a6a97..c9b928ad56a 100644
+--- a/docker/blocks/openldap/Dockerfile
++++ b/docker/blocks/openldap/Dockerfile
+@@ -1,3 +1,5 @@
++# Fork of https://github.com/dinkel/docker-openldap
++
+ FROM debian:jessie
+ 
+ LABEL maintainer="Christian Luginbühl <dinke@pimprecords.com>"
+diff --git a/docker/blocks/openldap/notes.md b/docker/blocks/openldap/notes.md
+index 71813c2899a..483266f0d88 100644
+--- a/docker/blocks/openldap/notes.md
++++ b/docker/blocks/openldap/notes.md
+@@ -11,3 +11,14 @@ After adding ldif files to `prepopulate`:
+ 1. Remove your current docker image: `docker rm docker_openldap_1`
+ 2. Build: `docker-compose build`
+ 3. `docker-compose up`
++
++## Enabling LDAP in Grafana
++
++The default `ldap.toml` file in `conf` has host set to `127.0.0.1` and port to set to 389 so all you need to do is enable it in the .ini file to get Grafana to use this block:
++
++```ini
++[auth.ldap]
++enabled = true
++config_file = conf/ldap.toml
++; allow_sign_up = true
++```
+diff --git a/docs/sources/installation/debian.md b/docs/sources/installation/debian.md
+index 3025b2384df..2c847b10471 100644
+--- a/docs/sources/installation/debian.md
++++ b/docs/sources/installation/debian.md
+@@ -15,7 +15,7 @@ weight = 1
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for Debian-based Linux | [grafana_5.1.3_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.3_amd64.deb)
++Stable for Debian-based Linux | [grafana_5.1.4_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.4_amd64.deb)
+ <!--
+ Beta for Debian-based Linux | [grafana_5.1.0-beta1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.0-beta1_amd64.deb)
+ -->
+@@ -27,9 +27,9 @@ installation.
+ 
+ 
+ ```bash
+-wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.3_amd64.deb
++wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.4_amd64.deb
+ sudo apt-get install -y adduser libfontconfig
+-sudo dpkg -i grafana_5.1.3_amd64.deb
++sudo dpkg -i grafana_5.1.4_amd64.deb
+ ```
+ 
+ <!-- ## Install Latest Beta
+diff --git a/docs/sources/installation/rpm.md b/docs/sources/installation/rpm.md
+index e0d808e1f87..91a1c239a08 100644
+--- a/docs/sources/installation/rpm.md
++++ b/docs/sources/installation/rpm.md
+@@ -15,7 +15,7 @@ weight = 2
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.3 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.3-1.x86_64.rpm)
++Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.4 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.4-1.x86_64.rpm)
+ <!--
+ Latest Beta for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.0-beta1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-beta1.x86_64.rpm)
+ -->
+@@ -28,7 +28,7 @@ installation.
+ You can install Grafana using Yum directly.
+ 
+ ```bash
+-$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.3-1.x86_64.rpm
++$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.4-1.x86_64.rpm
+ ```
+ 
+ <!-- ## Install Beta
+@@ -42,15 +42,15 @@ Or install manually using `rpm`.
+ #### On CentOS / Fedora / Redhat:
+ 
+ ```bash
+-$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.3-1.x86_64.rpm
++$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.4-1.x86_64.rpm
+ $ sudo yum install initscripts fontconfig
+-$ sudo rpm -Uvh grafana-5.1.3-1.x86_64.rpm
++$ sudo rpm -Uvh grafana-5.1.4-1.x86_64.rpm
+ ```
+ 
+ #### On OpenSuse:
+ 
+ ```bash
+-$ sudo rpm -i --nodeps grafana-5.1.3-1.x86_64.rpm
++$ sudo rpm -i --nodeps grafana-5.1.4-1.x86_64.rpm
+ ```
+ 
+ ## Install via YUM Repository
+diff --git a/docs/sources/installation/windows.md b/docs/sources/installation/windows.md
+index 39cdeab6af6..ccd5641cd11 100644
+--- a/docs/sources/installation/windows.md
++++ b/docs/sources/installation/windows.md
+@@ -12,7 +12,7 @@ weight = 3
+ 
+ Description | Download
+ ------------ | -------------
+-Latest stable package for Windows | [grafana-5.1.3.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.3.windows-x64.zip)
++Latest stable package for Windows | [grafana-5.1.4.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.4.windows-x64.zip)
+ 
+ <!--
+ Latest beta package for Windows | [grafana.5.1.0-beta1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-beta5.windows-x64.zip)
+diff --git a/docs/sources/plugins/developing/auth-for-datasources.md b/docs/sources/plugins/developing/auth-for-datasources.md
+new file mode 100644
+index 00000000000..c03793e745f
+--- /dev/null
++++ b/docs/sources/plugins/developing/auth-for-datasources.md
+@@ -0,0 +1,99 @@
+++++
++title = "Authentication for Datasource Plugins"
++type = "docs"
++[menu.docs]
++name = "Authentication for Datasource Plugins"
++parent = "developing"
++weight = 3
+++++
++
++# Authentication for Datasource Plugins
++
++Grafana has a proxy feature that proxies all data requests through the Grafana backend. This is very useful when your datasource plugin calls an external/thirdy-party API. The Grafana proxy adds CORS headers and can authenticate against the external API. This means that a datasource plugin that proxies all requests via Grafana can enable token authentication and the token will be renewed automatically for the user when it expires.
++
++The plugin config page should save the API key/password to be encrypted (using the `secureJsonData` feature) and then when a request from the datasource is made, the Grafana Proxy will:
++
++ 1. decrypt the API key/password on the backend.
++ 2. carry out authentication and generate an OAuth token that will be added as an `Authorization` HTTP header to all requests (or it will add a HTTP header with the API key).
++ 3. renew the token if it expires.
++
++This means that users that access the datasource config page cannot access the API key or password after is saved the first time and that no secret keys are sent in plain text through the browser where they can be spied on.
++
++For backend authentication to work, the external/third-party API must either have an OAuth endpoint or that the API accepts an API key as a HTTP header for authentication.
++
++## Plugin Routes
++
++You can specify routes in the `plugin.json` file for your datasource plugin. [Here is an example](https://github.com/grafana/azure-monitor-datasource/blob/d74c82145c0a4af07a7e96cc8dde231bfd449bd9/src/plugin.json#L30-L95) with lots of routes (though most plugins will just have one route).
++
++When you build your url to the third-party API in your datasource class, the url should start with the text specified in the path field for a route. The proxy will strip out the path text and replace it with the value in the url field.
++
++For example, if my code makes a call to url `azuremonitor/foo/bar` with this code:
++
++```js
++this.backendSrv.datasourceRequest({
++  url: url,
++  method: 'GET',
++})
++```
++
++and this route:
++
++```json
++"routes": [{
++  "path": "azuremonitor",
++  "method": "GET",
++  "url": "https://management.azure.com",
++  ...
++}]
++```
++
++then the Grafana proxy will transform it into "https://management.azure.com/foo/bar" and add CORS headers.
++
++The `method` parameter is optional. It can be set to any HTTP verb to provide more fine-grained control.
++
++## Encrypting Sensitive Data
++
++When a user saves a password or secret with your datasource plugin's Config page, then you can save data to a column in the datasource table called `secureJsonData` that is an encrypted blob. Any data saved in the blob is encrypted by Grafana and can only be decrypted by the Grafana server on the backend. This means once a password is saved, no sensitive data is sent to the browser. If the password is saved in the `jsonData` blob or the `password` field then it is unencrypted and anyone with Admin access (with the help of Chrome Developer Tools) can read it.
++
++This is an example of using the `secureJsonData` blob to save a property called `password`:
++
++```html
++<input type="password" class="gf-form-input" ng-model='ctrl.current.secureJsonData.password' placeholder="password"></input>
++```
++
++## API Key/HTTP Header Authentication
++
++Some third-party API's accept a HTTP Header for authentication. The [example](https://github.com/grafana/azure-monitor-datasource/blob/d74c82145c0a4af07a7e96cc8dde231bfd449bd9/src/plugin.json#L91-L93) below has a `headers` section that defines the name of the HTTP Header that the API expects and it uses the `SecureJSONData` blob to fetch an encrypted API key. The Grafana server proxy will decrypt the key, add the `X-API-Key` header to the request and forward it to the third-party API.
++
++```json
++{
++  "path": "appinsights",
++  "method": "GET",
++  "url": "https://api.applicationinsights.io",
++  "headers": [
++    {"name": "X-API-Key", "content": "{{.SecureJsonData.appInsightsApiKey}}"}
++  ]
++}
++```
++
++## How Token Authentication Works
++
++The token auth section in the `plugin.json` file looks like this:
++
++```json
++"tokenAuth": {
++  "url": "https://login.microsoftonline.com/{{.JsonData.tenantId}}/oauth2/token",
++  "params": {
++    "grant_type":  "client_credentials",
++    "client_id": "{{.JsonData.clientId}}",
++    "client_secret": "{{.SecureJsonData.clientSecret}}",
++    "resource": "https://management.azure.com/"
++  }
++}
++```
++
++This interpolates in data from both `jsonData`  and `secureJsonData` to generate the token request to the third-party API. It is common for tokens to have a short expiry period (30 minutes). The proxy in Grafana server will automatically renew the token if it has expired.
++
++## Always Restart the Grafana Server After Route Changes
++
++The plugin.json files are only loaded when the Grafana server starts so when a route is added or changed then the Grafana server has to be restarted for the changes to take effect.
+diff --git a/docs/sources/plugins/developing/plugin-review-guidelines.md b/docs/sources/plugins/developing/plugin-review-guidelines.md
+new file mode 100644
+index 00000000000..8efb023cf64
+--- /dev/null
++++ b/docs/sources/plugins/developing/plugin-review-guidelines.md
+@@ -0,0 +1,175 @@
+++++
++title = "Plugin Review Guidelines"
++type = "docs"
++[menu.docs]
++name = "Plugin Review Guidelines"
++parent = "developing"
++weight = 2
+++++
++
++# Plugin Review Guidelines
++
++The Grafana team reviews all plugins that are published on Grafana.com. There are two areas we review, the metadata for the plugin and the plugin functionality.
++
++## Metadata
++
++The plugin metadata consists of a `plugin.json` file and the README.md file. These `plugin.json` file is used by Grafana to load the plugin and the README.md file is shown in the plugins section of Grafana and the plugins section of Grafana.com.
++
++### README.md
++
++The README.md file is shown on the plugins page in Grafana and the plugin page on Grafana.com. There are some differences between the GitHub markdown and the markdown allowed in Grafana/Grafana.com:
++
++- Cannot contain inline HTML.
++- Any image links should be absolute links. For example: https://raw.githubusercontent.com/grafana/azure-monitor-datasource/master/dist/img/grafana_cloud_install.png
++
++The README should:
++
++- describe the purpose of the plugin.
++- contain steps on how to get started.
++
++### Plugin.json
++
++The `plugin.json` file is the same concept as the `package.json` file for an npm package. When the Grafana server starts it will scan the plugin folders (all folders in the data/plugins subfolder) and load every folder that contains a `plugin.json` file unless the folder contains a subfolder named `dist`. In that case, the Grafana server will load the `dist` folder instead.
++
++A minimal `plugin.json` file:
++
++```json
++{
++  "type": "panel",
++  "name": "Clock",
++  "id": "yourorg-clock-panel",
++
++  "info": {
++    "description": "Clock panel for grafana",
++    "author": {
++      "name": "Author Name",
++      "url": "http://yourwebsite.com"
++    },
++    "keywords": ["clock", "panel"],
++    "version": "1.0.0",
++    "updated": "2018-03-24"
++  },
++
++  "dependencies": {
++    "grafanaVersion": "3.x.x",
++    "plugins": [ ]
++  }
++}
++```
++
++- The convention for the plugin id is [github username/org]-[plugin name]-[datasource|app|panel] and it has to be unique. Although if org and plugin name are the same then [plugin name]-[datasource|app|panel] is also valid. The org **cannot** be `grafana` unless it is a plugin created by the Grafana core team.
++
++    Examples:
++
++    - raintank-worldping-app
++    - ryantxu-ajax-panel
++    - alexanderzobnin-zabbix-app
++    - hawkular-datasource
++
++- The `type` field should be either `datasource` `app` or `panel`.
++- The `version` field should be in the form: x.x.x e.g. `1.0.0` or `0.4.1`.
++
++The full file format for the `plugin.json` file is described [here](http://docs.grafana.org/plugins/developing/plugin.json/).
++
++## Plugin Language
++
++JavaScript, TypeScript, ES6 (or any other language) are all fine as long as the contents of the `dist` subdirectory are transpiled to JavaScript (ES5).
++
++## File and Directory Structure Conventions
++
++Here is a typical directory structure for a plugin.
++
++```bash
++johnnyb-awesome-datasource
++|-- dist
++|-- src
++|   |-- img
++|   |   |-- logo.svg
++|   |-- partials
++|   |   |-- annotations.editor.html
++|   |   |-- config.html
++|   |   |-- query.editor.html
++|   |-- datasource.js
++|   |-- module.js
++|   |-- plugin.json
++|   |-- query_ctrl.js
++|-- Gruntfile.js
++|-- LICENSE
++|-- package.json
++|-- README.md
++```
++
++Most JavaScript projects have a build step. The generated JavaScript should be placed in the `dist` directory and the source code in the `src` directory. We recommend that the plugin.json file be placed in the src directory and then copied over to the dist directory when building. The `README.md` can be placed in the root or in the dist directory.
++
++Directories:
++
++- `src/` contains plugin source files.
++- `src/partials` contains html templates.
++- `src/img` contains plugin logos and other images.
++- `dist/` contains built content.
++
++## HTML and CSS
++
++For the HTML on editor tabs, we recommend using the inbuilt Grafana styles rather than defining your own. This makes plugins feel like a more natural part of Grafana. If done correctly, the html will also be responsive and adapt to smaller screens. The `gf-form` css classes should be used for labels and inputs.
++
++Below is a minimal example of an editor row with one form group and two fields, a dropdown and a text input:
++
++```html
++<div class="editor-row">
++  <div class="section gf-form-group">
++    <h5 class="section-heading">My Plugin Options</h5>
++    <div class="gf-form">
++      <label class="gf-form-label width-10">Label1</label>
++      <div class="gf-form-select-wrapper max-width-10">
++        <select class="input-small gf-form-input" ng-model="ctrl.panel.mySelectProperty" ng-options="t for t in ['option1', 'option2', 'option3']" ng-change="ctrl.onSelectChange()"></select>
++      </div>
++      <div class="gf-form">
++        <label class="gf-form-label width-10">Label2</label>
++        <input type="text" class="input-small gf-form-input width-10" ng-model="ctrl.panel.myProperty" ng-change="ctrl.onFieldChange()" placeholder="suggestion for user" ng-model-onblur />
++      </div>
++    </div>
++  </div>
++</div>
++```
++
++Use the `width-x` and `max-width-x` classes to control the width of your labels and input fields. Try to get labels and input fields to line up neatly by having the same width for all the labels in a group and the same width for all inputs in a group if possible.
++
++## Data Sources
++
++A basic guide for data sources can be found [here](http://docs.grafana.org/plugins/developing/datasources/).
++
++### Config Page Guidelines
++
++- It should be as easy as possible for a user to configure a url. If the data source is using the `datasource-http-settings` component, it should use the `suggest-url` attribute to suggest the default url or a url that is similar to what it should be (especially important if the url refers to a REST endpoint that is not common knowledge for most users e.g. `https://yourserver:4000/api/custom-endpoint`).
++
++    ```html
++    <datasource-http-settings
++      current="ctrl.current"
++      suggest-url="http://localhost:8080">
++    </datasource-http-settings>
++    ```
++
++- The `testDatasource` function should make a query to the data source that will also test that the authentication details are correct. This is so the data source is correctly configured when the user tries to write a query in a new dashboard.
++
++#### Password Security
++
++If possible, any passwords or secrets should be be saved in the `secureJsonData` blob. To encrypt sensitive data, the Grafana server's proxy feature must be used. The Grafana server has support for token authentication (OAuth) and HTTP Header authentication. If the calls have to be sent directly from the browser to a third-party API then this will not be possible and sensitive data will not be encrypted.
++
++Read more here about how [Authentication for Datasources]({{< relref "auth-for-datasources.md" >}}) works.
++
++If using the proxy feature then the Config page should use the `secureJsonData` blob like this:
++
++  - good: `<input type="password" class="gf-form-input" ng-model='ctrl.current.secureJsonData.password' placeholder="password"></input>`
++  - bad: `<input type="password" class="gf-form-input" ng-model='ctrl.current.password' placeholder="password"></input>`
++
++### Query Editor
++
++Each query editor is unique and can have a unique style. It should be adapted to what the users of the data source are used to.
++
++- Should use the Grafana CSS `gf-form` classes.
++- Should be neat and tidy. Labels and fields in columns should be aligned and should be the same width if possible.
++- The datasource should be able to handle when a user toggles a query (by clicking on the eye icon) and not execute the query. This is done by checking the `hide` property - an [example](https://github.com/grafana/grafana/blob/master/public/app/plugins/datasource/postgres/datasource.ts#L35-L38).
++- Should not execute queries if fields in the Query Editor are empty and the query will throw an exception (defensive programming).
++- Should handle errors. There are two main ways to do this:
++  - use the notification system in Grafana to show a toaster popup with the error message. Example [here](https://github.com/alexanderzobnin/grafana-zabbix/blob/fdbbba2fb03f5f2a4b3b0715415e09d5a4cf6cde/src/panel-triggers/triggers_panel_ctrl.js#L467-L471).
++  - provide an error notification in the query editor like the MySQL/Postgres data sources do. Example code in the `query_ctrl`  [here](https://github.com/grafana/azure-monitor-datasource/blob/b184d077f082a69f962120ef0d1f8296a0d46f03/src/query_ctrl.ts#L36-L51) and in the [html](https://github.com/grafana/azure-monitor-datasource/blob/b184d077f082a69f962120ef0d1f8296a0d46f03/src/partials/query.editor.html#L190-L193).
+diff --git a/pkg/login/ldap.go b/pkg/login/ldap.go
+index 3c5001df3a4..2f25b453a17 100644
+--- a/pkg/login/ldap.go
++++ b/pkg/login/ldap.go
+@@ -308,6 +308,10 @@ func (a *ldapAuther) searchForUser(username string) (*LdapUserInfo, error) {
+ 			} else {
+ 				filter_replace = getLdapAttr(a.server.GroupSearchFilterUserAttribute, searchResult)
+ 			}
++			if a.server.GroupSearchFilterUserAttribute == "dn" {
++				filter_replace = searchResult.Entries[0].DN
++			}
++
+ 			filter := strings.Replace(a.server.GroupSearchFilter, "%s", ldap.EscapeFilter(filter_replace), -1)
+ 
+ 			a.log.Info("Searching for user's groups", "filter", filter)
+@@ -330,7 +334,11 @@ func (a *ldapAuther) searchForUser(username string) (*LdapUserInfo, error) {
+ 
+ 			if len(groupSearchResult.Entries) > 0 {
+ 				for i := range groupSearchResult.Entries {
+-					memberOf = append(memberOf, getLdapAttrN(a.server.Attr.MemberOf, groupSearchResult, i))
++					if a.server.Attr.MemberOf == "dn" {
++						memberOf = append(memberOf, groupSearchResult.Entries[i].DN)
++					} else {
++						memberOf = append(memberOf, getLdapAttrN(a.server.Attr.MemberOf, groupSearchResult, i))
++					}
+ 				}
+ 				break
+ 			}
+diff --git a/pkg/services/guardian/guardian.go b/pkg/services/guardian/guardian.go
+index bf455adc7ca..cfd8f5c3a6e 100644
+--- a/pkg/services/guardian/guardian.go
++++ b/pkg/services/guardian/guardian.go
+@@ -83,7 +83,7 @@ func (g *dashboardGuardianImpl) checkAcl(permission m.PermissionType, acl []*m.D
+ 
+ 	for _, p := range acl {
+ 		// user match
+-		if !g.user.IsAnonymous {
++		if !g.user.IsAnonymous && p.UserId > 0 {
+ 			if p.UserId == g.user.UserId && p.Permission >= permission {
+ 				return true, nil
+ 			}
+diff --git a/pkg/services/guardian/guardian_test.go b/pkg/services/guardian/guardian_test.go
+index 5e56b1d88c3..4704519b38d 100644
+--- a/pkg/services/guardian/guardian_test.go
++++ b/pkg/services/guardian/guardian_test.go
+@@ -28,7 +28,7 @@ func TestGuardianAdmin(t *testing.T) {
+ 	Convey("Guardian admin org role tests", t, func() {
+ 		orgRoleScenario("Given user has admin org role", t, m.ROLE_ADMIN, func(sc *scenarioContext) {
+ 			// dashboard has default permissions
+-			sc.defaultPermissionScenario(USER, m.PERMISSION_ADMIN, FULL_ACCESS)
++			sc.defaultPermissionScenario(USER, FULL_ACCESS)
+ 
+ 			// dashboard has user with permission
+ 			sc.dashboardPermissionScenario(USER, m.PERMISSION_ADMIN, FULL_ACCESS)
+@@ -76,6 +76,9 @@ func TestGuardianAdmin(t *testing.T) {
+ func TestGuardianEditor(t *testing.T) {
+ 	Convey("Guardian editor org role tests", t, func() {
+ 		orgRoleScenario("Given user has editor org role", t, m.ROLE_EDITOR, func(sc *scenarioContext) {
++			// dashboard has default permissions
++			sc.defaultPermissionScenario(USER, EDITOR_ACCESS)
++
+ 			// dashboard has user with permission
+ 			sc.dashboardPermissionScenario(USER, m.PERMISSION_ADMIN, FULL_ACCESS)
+ 			sc.dashboardPermissionScenario(USER, m.PERMISSION_EDIT, EDITOR_ACCESS)
+@@ -122,6 +125,9 @@ func TestGuardianEditor(t *testing.T) {
+ func TestGuardianViewer(t *testing.T) {
+ 	Convey("Guardian viewer org role tests", t, func() {
+ 		orgRoleScenario("Given user has viewer org role", t, m.ROLE_VIEWER, func(sc *scenarioContext) {
++			// dashboard has default permissions
++			sc.defaultPermissionScenario(USER, VIEWER_ACCESS)
++
+ 			// dashboard has user with permission
+ 			sc.dashboardPermissionScenario(USER, m.PERMISSION_ADMIN, FULL_ACCESS)
+ 			sc.dashboardPermissionScenario(USER, m.PERMISSION_EDIT, EDITOR_ACCESS)
+@@ -162,10 +168,15 @@ func TestGuardianViewer(t *testing.T) {
+ 			sc.parentFolderPermissionScenario(VIEWER, m.PERMISSION_EDIT, EDITOR_ACCESS)
+ 			sc.parentFolderPermissionScenario(VIEWER, m.PERMISSION_VIEW, VIEWER_ACCESS)
+ 		})
++
++		apiKeyScenario("Given api key with viewer role", t, m.ROLE_VIEWER, func(sc *scenarioContext) {
++			// dashboard has default permissions
++			sc.defaultPermissionScenario(VIEWER, VIEWER_ACCESS)
++		})
+ 	})
+ }
+ 
+-func (sc *scenarioContext) defaultPermissionScenario(pt permissionType, permission m.PermissionType, flag permissionFlags) {
++func (sc *scenarioContext) defaultPermissionScenario(pt permissionType, flag permissionFlags) {
+ 	_, callerFile, callerLine, _ := runtime.Caller(1)
+ 	sc.callerFile = callerFile
+ 	sc.callerLine = callerLine
+@@ -267,7 +278,7 @@ func (sc *scenarioContext) verifyExpectedPermissionsFlags() {
+ 			actualFlag = NO_ACCESS
+ 		}
+ 
+-		if sc.expectedFlags&actualFlag != sc.expectedFlags {
++		if actualFlag&sc.expectedFlags != actualFlag {
+ 			sc.reportFailure(tc, sc.expectedFlags.String(), actualFlag.String())
+ 		}
+ 
+diff --git a/pkg/services/guardian/guardian_util_test.go b/pkg/services/guardian/guardian_util_test.go
+index b065c4194ad..3d839e71b74 100644
+--- a/pkg/services/guardian/guardian_util_test.go
++++ b/pkg/services/guardian/guardian_util_test.go
+@@ -48,6 +48,27 @@ func orgRoleScenario(desc string, t *testing.T, role m.RoleType, fn scenarioFunc
+ 	})
+ }
+ 
++func apiKeyScenario(desc string, t *testing.T, role m.RoleType, fn scenarioFunc) {
++	user := &m.SignedInUser{
++		UserId:   0,
++		OrgId:    orgID,
++		OrgRole:  role,
++		ApiKeyId: 10,
++	}
++	guard := New(dashboardID, orgID, user)
++	sc := &scenarioContext{
++		t:                t,
++		orgRoleScenario:  desc,
++		givenUser:        user,
++		givenDashboardID: dashboardID,
++		g:                guard,
++	}
++
++	Convey(desc, func() {
++		fn(sc)
++	})
++}
++
+ func permissionScenario(desc string, dashboardID int64, sc *scenarioContext, permissions []*m.DashboardAclInfoDTO, fn scenarioFunc) {
+ 	bus.ClearBusHandlers()
+ 
+diff --git a/public/app/features/annotations/specs/annotations_srv_specs.ts b/public/app/features/annotations/specs/annotations_srv_specs.ts
+index c18638e3f12..932fcf9415c 100644
+--- a/public/app/features/annotations/specs/annotations_srv_specs.ts
++++ b/public/app/features/annotations/specs/annotations_srv_specs.ts
+@@ -1,15 +1,18 @@
+ import { describe, beforeEach, it, expect, angularMocks } from 'test/lib/common';
+ import '../annotations_srv';
+ import helpers from 'test/specs/helpers';
++import 'app/features/dashboard/time_srv';
+ 
+ describe('AnnotationsSrv', function() {
+   var ctx = new helpers.ServiceTestContext();
+ 
+   beforeEach(angularMocks.module('grafana.core'));
+   beforeEach(angularMocks.module('grafana.services'));
++  beforeEach(ctx.createService('timeSrv'));
+   beforeEach(() => {
+     ctx.createService('annotationsSrv');
+   });
++
+   describe('When translating the query result', () => {
+     const annotationSource = {
+       datasource: '-- Grafana --',
+diff --git a/public/app/features/dashboard/history/history_srv.ts b/public/app/features/dashboard/history/history_srv.ts
+index bd6e7223a23..7f7dc950de3 100644
+--- a/public/app/features/dashboard/history/history_srv.ts
++++ b/public/app/features/dashboard/history/history_srv.ts
+@@ -32,11 +32,11 @@ export interface DiffTarget {
+ 
+ export class HistorySrv {
+   /** @ngInject */
+-  constructor(private backendSrv, private $q) {}
++  constructor(private backendSrv) {}
+ 
+   getHistoryList(dashboard: DashboardModel, options: HistoryListOpts) {
+     const id = dashboard && dashboard.id ? dashboard.id : void 0;
+-    return id ? this.backendSrv.get(`api/dashboards/id/${id}/versions`, options) : this.$q.when([]);
++    return id ? this.backendSrv.get(`api/dashboards/id/${id}/versions`, options) : Promise.resolve([]);
+   }
+ 
+   calculateDiff(options: CalculateDiffOptions) {
+@@ -46,7 +46,8 @@ export class HistorySrv {
+   restoreDashboard(dashboard: DashboardModel, version: number) {
+     const id = dashboard && dashboard.id ? dashboard.id : void 0;
+     const url = `api/dashboards/id/${id}/restore`;
+-    return id && _.isNumber(version) ? this.backendSrv.post(url, { version }) : this.$q.when({});
++
++    return id && _.isNumber(version) ? this.backendSrv.post(url, { version }) : Promise.resolve({});
+   }
+ }
+ 
+diff --git a/public/app/features/dashboard/specs/history_srv.jest.ts b/public/app/features/dashboard/specs/history_srv.jest.ts
+new file mode 100644
+index 00000000000..401b098a0e1
+--- /dev/null
++++ b/public/app/features/dashboard/specs/history_srv.jest.ts
+@@ -0,0 +1,61 @@
++import '../history/history_srv';
++import { versions, restore } from './history_mocks';
++import { HistorySrv } from '../history/history_srv';
++import { DashboardModel } from '../dashboard_model';
++jest.mock('app/core/store');
++
++describe('historySrv', function() {
++  const versionsResponse = versions();
++  const restoreResponse = restore;
++
++  let backendSrv = {
++    get: jest.fn(() => Promise.resolve({})),
++    post: jest.fn(() => Promise.resolve({})),
++  };
++
++  let historySrv = new HistorySrv(backendSrv);
++
++  const dash = new DashboardModel({ id: 1 });
++  const emptyDash = new DashboardModel({});
++  const historyListOpts = { limit: 10, start: 0 };
++
++  describe('getHistoryList', function() {
++    it('should return a versions array for the given dashboard id', function() {
++      backendSrv.get = jest.fn(() => Promise.resolve(versionsResponse));
++      historySrv = new HistorySrv(backendSrv);
++
++      return historySrv.getHistoryList(dash, historyListOpts).then(function(versions) {
++        expect(versions).toEqual(versionsResponse);
++      });
++    });
++
++    it('should return an empty array when not given an id', function() {
++      return historySrv.getHistoryList(emptyDash, historyListOpts).then(function(versions) {
++        expect(versions).toEqual([]);
++      });
++    });
++
++    it('should return an empty array when not given a dashboard', function() {
++      return historySrv.getHistoryList(null, historyListOpts).then(function(versions) {
++        expect(versions).toEqual([]);
++      });
++    });
++  });
++
++  describe('restoreDashboard', () => {
++    it('should return a success response given valid parameters', function() {
++      let version = 6;
++      backendSrv.post = jest.fn(() => Promise.resolve(restoreResponse(version)));
++      historySrv = new HistorySrv(backendSrv);
++      return historySrv.restoreDashboard(dash, version).then(function(response) {
++        expect(response).toEqual(restoreResponse(version));
++      });
++    });
++
++    it('should return an empty object when not given an id', async () => {
++      historySrv = new HistorySrv(backendSrv);
++      let rsp = await historySrv.restoreDashboard(emptyDash, 6);
++      expect(rsp).toEqual({});
++    });
++  });
++});
+diff --git a/public/app/features/dashboard/specs/history_srv_specs.ts b/public/app/features/dashboard/specs/history_srv_specs.ts
+deleted file mode 100644
+index a4a28ab9a34..00000000000
+--- a/public/app/features/dashboard/specs/history_srv_specs.ts
++++ /dev/null
+@@ -1,86 +0,0 @@
+-import { describe, beforeEach, it, expect, angularMocks } from 'test/lib/common';
+-
+-import helpers from 'test/specs/helpers';
+-import '../history/history_srv';
+-import { versions, restore } from './history_mocks';
+-
+-describe('historySrv', function() {
+-  var ctx = new helpers.ServiceTestContext();
+-
+-  var versionsResponse = versions();
+-  var restoreResponse = restore;
+-
+-  beforeEach(angularMocks.module('grafana.core'));
+-  beforeEach(angularMocks.module('grafana.services'));
+-  beforeEach(
+-    angularMocks.inject(function($httpBackend) {
+-      ctx.$httpBackend = $httpBackend;
+-      $httpBackend.whenRoute('GET', 'api/dashboards/id/:id/versions').respond(versionsResponse);
+-      $httpBackend
+-        .whenRoute('POST', 'api/dashboards/id/:id/restore')
+-        .respond(function(method, url, data, headers, params) {
+-          const parsedData = JSON.parse(data);
+-          return [200, restoreResponse(parsedData.version)];
+-        });
+-    })
+-  );
+-
+-  beforeEach(ctx.createService('historySrv'));
+-
+-  function wrapPromise(ctx, angularPromise) {
+-    return new Promise((resolve, reject) => {
+-      angularPromise.then(resolve, reject);
+-      ctx.$httpBackend.flush();
+-    });
+-  }
+-
+-  describe('getHistoryList', function() {
+-    it('should return a versions array for the given dashboard id', function() {
+-      return wrapPromise(
+-        ctx,
+-        ctx.service.getHistoryList({ id: 1 }).then(function(versions) {
+-          expect(versions).to.eql(versionsResponse);
+-        })
+-      );
+-    });
+-
+-    it('should return an empty array when not given an id', function() {
+-      return wrapPromise(
+-        ctx,
+-        ctx.service.getHistoryList({}).then(function(versions) {
+-          expect(versions).to.eql([]);
+-        })
+-      );
+-    });
+-
+-    it('should return an empty array when not given a dashboard', function() {
+-      return wrapPromise(
+-        ctx,
+-        ctx.service.getHistoryList().then(function(versions) {
+-          expect(versions).to.eql([]);
+-        })
+-      );
+-    });
+-  });
+-
+-  describe('restoreDashboard', function() {
+-    it('should return a success response given valid parameters', function() {
+-      let version = 6;
+-      return wrapPromise(
+-        ctx,
+-        ctx.service.restoreDashboard({ id: 1 }, version).then(function(response) {
+-          expect(response).to.eql(restoreResponse(version));
+-        })
+-      );
+-    });
+-
+-    it('should return an empty object when not given an id', function() {
+-      return wrapPromise(
+-        ctx,
+-        ctx.service.restoreDashboard({}, 6).then(function(response) {
+-          expect(response).to.eql({});
+-        })
+-      );
+-    });
+-  });
+-});
+diff --git a/public/app/features/dashboard/specs/time_srv.jest.ts b/public/app/features/dashboard/specs/time_srv.jest.ts
+new file mode 100644
+index 00000000000..f8d9e42cfd4
+--- /dev/null
++++ b/public/app/features/dashboard/specs/time_srv.jest.ts
+@@ -0,0 +1,163 @@
++import { TimeSrv } from '../time_srv';
++import '../time_srv';
++import moment from 'moment';
++
++describe('timeSrv', function() {
++  var rootScope = {
++    $on: jest.fn(),
++    onAppEvent: jest.fn(),
++    appEvent: jest.fn(),
++  };
++
++  var timer = {
++    register: jest.fn(),
++    cancel: jest.fn(),
++    cancelAll: jest.fn(),
++  };
++
++  var location = {
++    search: jest.fn(() => ({})),
++  };
++
++  var timeSrv;
++
++  var _dashboard: any = {
++    time: { from: 'now-6h', to: 'now' },
++    getTimezone: jest.fn(() => 'browser'),
++  };
++
++  beforeEach(function() {
++    timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++    timeSrv.init(_dashboard);
++  });
++
++  describe('timeRange', function() {
++    it('should return unparsed when parse is false', function() {
++      timeSrv.setTime({ from: 'now', to: 'now-1h' });
++      var time = timeSrv.timeRange();
++      expect(time.raw.from).toBe('now');
++      expect(time.raw.to).toBe('now-1h');
++    });
++
++    it('should return parsed when parse is true', function() {
++      timeSrv.setTime({ from: 'now', to: 'now-1h' });
++      var time = timeSrv.timeRange();
++      expect(moment.isMoment(time.from)).toBe(true);
++      expect(moment.isMoment(time.to)).toBe(true);
++    });
++  });
++
++  describe('init time from url', function() {
++    it('should handle relative times', function() {
++      location = {
++        search: jest.fn(() => ({
++          from: 'now-2d',
++          to: 'now',
++        })),
++      };
++
++      timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++      timeSrv.init(_dashboard);
++      var time = timeSrv.timeRange();
++      expect(time.raw.from).toBe('now-2d');
++      expect(time.raw.to).toBe('now');
++    });
++
++    it('should handle formatted dates', function() {
++      location = {
++        search: jest.fn(() => ({
++          from: '20140410T052010',
++          to: '20140520T031022',
++        })),
++      };
++
++      timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++
++      timeSrv.init(_dashboard);
++      var time = timeSrv.timeRange();
++      expect(time.from.valueOf()).toEqual(new Date('2014-04-10T05:20:10Z').getTime());
++      expect(time.to.valueOf()).toEqual(new Date('2014-05-20T03:10:22Z').getTime());
++    });
++
++    it('should handle formatted dates without time', function() {
++      location = {
++        search: jest.fn(() => ({
++          from: '20140410',
++          to: '20140520',
++        })),
++      };
++
++      timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++
++      timeSrv.init(_dashboard);
++      var time = timeSrv.timeRange();
++      expect(time.from.valueOf()).toEqual(new Date('2014-04-10T00:00:00Z').getTime());
++      expect(time.to.valueOf()).toEqual(new Date('2014-05-20T00:00:00Z').getTime());
++    });
++
++    it('should handle epochs', function() {
++      location = {
++        search: jest.fn(() => ({
++          from: '1410337646373',
++          to: '1410337665699',
++        })),
++      };
++
++      timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++
++      timeSrv.init(_dashboard);
++      var time = timeSrv.timeRange();
++      expect(time.from.valueOf()).toEqual(1410337646373);
++      expect(time.to.valueOf()).toEqual(1410337665699);
++    });
++
++    it('should handle bad dates', function() {
++      location = {
++        search: jest.fn(() => ({
++          from: '20151126T00010%3C%2Fp%3E%3Cspan%20class',
++          to: 'now',
++        })),
++      };
++
++      timeSrv = new TimeSrv(rootScope, jest.fn(), location, timer, { isGrafanaVisibile: jest.fn() });
++
++      _dashboard.time.from = 'now-6h';
++      timeSrv.init(_dashboard);
++      expect(timeSrv.time.from).toEqual('now-6h');
++      expect(timeSrv.time.to).toEqual('now');
++    });
++  });
++
++  describe('setTime', function() {
++    it('should return disable refresh if refresh is disabled for any range', function() {
++      _dashboard.refresh = false;
++
++      timeSrv.setTime({ from: '2011-01-01', to: '2015-01-01' });
++      expect(_dashboard.refresh).toBe(false);
++    });
++
++    it('should restore refresh for absolute time range', function() {
++      _dashboard.refresh = '30s';
++
++      timeSrv.setTime({ from: '2011-01-01', to: '2015-01-01' });
++      expect(_dashboard.refresh).toBe('30s');
++    });
++
++    it('should restore refresh after relative time range is set', function() {
++      _dashboard.refresh = '10s';
++      timeSrv.setTime({
++        from: moment([2011, 1, 1]),
++        to: moment([2015, 1, 1]),
++      });
++      expect(_dashboard.refresh).toBe(false);
++      timeSrv.setTime({ from: '2011-01-01', to: 'now' });
++      expect(_dashboard.refresh).toBe('10s');
++    });
++
++    it('should keep refresh after relative time range is changed and now delay exists', function() {
++      _dashboard.refresh = '10s';
++      timeSrv.setTime({ from: 'now-1h', to: 'now-10s' });
++      expect(_dashboard.refresh).toBe('10s');
++    });
++  });
++});
+diff --git a/public/app/features/dashboard/specs/time_srv_specs.ts b/public/app/features/dashboard/specs/time_srv_specs.ts
+deleted file mode 100644
+index 6e180679ff2..00000000000
+--- a/public/app/features/dashboard/specs/time_srv_specs.ts
++++ /dev/null
+@@ -1,115 +0,0 @@
+-import { describe, beforeEach, it, expect, sinon, angularMocks } from 'test/lib/common';
+-
+-import helpers from 'test/specs/helpers';
+-import '../time_srv';
+-import moment from 'moment';
+-
+-describe('timeSrv', function() {
+-  var ctx = new helpers.ServiceTestContext();
+-  var _dashboard: any = {
+-    time: { from: 'now-6h', to: 'now' },
+-    getTimezone: sinon.stub().returns('browser'),
+-  };
+-
+-  beforeEach(angularMocks.module('grafana.core'));
+-  beforeEach(angularMocks.module('grafana.services'));
+-  beforeEach(ctx.createService('timeSrv'));
+-
+-  beforeEach(function() {
+-    ctx.service.init(_dashboard);
+-  });
+-
+-  describe('timeRange', function() {
+-    it('should return unparsed when parse is false', function() {
+-      ctx.service.setTime({ from: 'now', to: 'now-1h' });
+-      var time = ctx.service.timeRange();
+-      expect(time.raw.from).to.be('now');
+-      expect(time.raw.to).to.be('now-1h');
+-    });
+-
+-    it('should return parsed when parse is true', function() {
+-      ctx.service.setTime({ from: 'now', to: 'now-1h' });
+-      var time = ctx.service.timeRange();
+-      expect(moment.isMoment(time.from)).to.be(true);
+-      expect(moment.isMoment(time.to)).to.be(true);
+-    });
+-  });
+-
+-  describe('init time from url', function() {
+-    it('should handle relative times', function() {
+-      ctx.$location.search({ from: 'now-2d', to: 'now' });
+-      ctx.service.init(_dashboard);
+-      var time = ctx.service.timeRange();
+-      expect(time.raw.from).to.be('now-2d');
+-      expect(time.raw.to).to.be('now');
+-    });
+-
+-    it('should handle formatted dates', function() {
+-      ctx.$location.search({ from: '20140410T052010', to: '20140520T031022' });
+-      ctx.service.init(_dashboard);
+-      var time = ctx.service.timeRange(true);
+-      expect(time.from.valueOf()).to.equal(new Date('2014-04-10T05:20:10Z').getTime());
+-      expect(time.to.valueOf()).to.equal(new Date('2014-05-20T03:10:22Z').getTime());
+-    });
+-
+-    it('should handle formatted dates without time', function() {
+-      ctx.$location.search({ from: '20140410', to: '20140520' });
+-      ctx.service.init(_dashboard);
+-      var time = ctx.service.timeRange(true);
+-      expect(time.from.valueOf()).to.equal(new Date('2014-04-10T00:00:00Z').getTime());
+-      expect(time.to.valueOf()).to.equal(new Date('2014-05-20T00:00:00Z').getTime());
+-    });
+-
+-    it('should handle epochs', function() {
+-      ctx.$location.search({ from: '1410337646373', to: '1410337665699' });
+-      ctx.service.init(_dashboard);
+-      var time = ctx.service.timeRange(true);
+-      expect(time.from.valueOf()).to.equal(1410337646373);
+-      expect(time.to.valueOf()).to.equal(1410337665699);
+-    });
+-
+-    it('should handle bad dates', function() {
+-      ctx.$location.search({
+-        from: '20151126T00010%3C%2Fp%3E%3Cspan%20class',
+-        to: 'now',
+-      });
+-      _dashboard.time.from = 'now-6h';
+-      ctx.service.init(_dashboard);
+-      expect(ctx.service.time.from).to.equal('now-6h');
+-      expect(ctx.service.time.to).to.equal('now');
+-    });
+-  });
+-
+-  describe('setTime', function() {
+-    it('should return disable refresh if refresh is disabled for any range', function() {
+-      _dashboard.refresh = false;
+-
+-      ctx.service.setTime({ from: '2011-01-01', to: '2015-01-01' });
+-      expect(_dashboard.refresh).to.be(false);
+-    });
+-
+-    it('should restore refresh for absolute time range', function() {
+-      _dashboard.refresh = '30s';
+-
+-      ctx.service.setTime({ from: '2011-01-01', to: '2015-01-01' });
+-      expect(_dashboard.refresh).to.be('30s');
+-    });
+-
+-    it('should restore refresh after relative time range is set', function() {
+-      _dashboard.refresh = '10s';
+-      ctx.service.setTime({
+-        from: moment([2011, 1, 1]),
+-        to: moment([2015, 1, 1]),
+-      });
+-      expect(_dashboard.refresh).to.be(false);
+-      ctx.service.setTime({ from: '2011-01-01', to: 'now' });
+-      expect(_dashboard.refresh).to.be('10s');
+-    });
+-
+-    it('should keep refresh after relative time range is changed and now delay exists', function() {
+-      _dashboard.refresh = '10s';
+-      ctx.service.setTime({ from: 'now-1h', to: 'now-10s' });
+-      expect(_dashboard.refresh).to.be('10s');
+-    });
+-  });
+-});
+diff --git a/public/app/features/dashboard/time_srv.ts b/public/app/features/dashboard/time_srv.ts
+index 3f7b5836653..7fd5aed7847 100644
+--- a/public/app/features/dashboard/time_srv.ts
++++ b/public/app/features/dashboard/time_srv.ts
+@@ -4,7 +4,7 @@ import coreModule from 'app/core/core_module';
+ import kbn from 'app/core/utils/kbn';
+ import * as dateMath from 'app/core/utils/datemath';
+ 
+-class TimeSrv {
++export class TimeSrv {
+   time: any;
+   refreshTimer: any;
+   refresh: boolean;
+diff --git a/public/app/features/org/specs/team_details_ctrl.jest.ts b/public/app/features/org/specs/team_details_ctrl.jest.ts
+new file mode 100644
+index 00000000000..c636de7ec56
+--- /dev/null
++++ b/public/app/features/org/specs/team_details_ctrl.jest.ts
+@@ -0,0 +1,42 @@
++import '../team_details_ctrl';
++import TeamDetailsCtrl from '../team_details_ctrl';
++
++describe('TeamDetailsCtrl', () => {
++  var backendSrv = {
++    searchUsers: jest.fn(() => Promise.resolve([])),
++    get: jest.fn(() => Promise.resolve([])),
++    post: jest.fn(() => Promise.resolve([])),
++  };
++
++  //Team id
++  var routeParams = {
++    id: 1,
++  };
++
++  var navModelSrv = {
++    getNav: jest.fn(),
++  };
++
++  var teamDetailsCtrl = new TeamDetailsCtrl({ $broadcast: jest.fn() }, backendSrv, routeParams, navModelSrv);
++
++  describe('when user is chosen to be added to team', () => {
++    beforeEach(() => {
++      teamDetailsCtrl = new TeamDetailsCtrl({ $broadcast: jest.fn() }, backendSrv, routeParams, navModelSrv);
++      const userItem = {
++        id: 2,
++        login: 'user2',
++      };
++      teamDetailsCtrl.userPicked(userItem);
++    });
++
++    it('should parse the result and save to db', () => {
++      expect(backendSrv.post.mock.calls[0][0]).toBe('/api/teams/1/members');
++      expect(backendSrv.post.mock.calls[0][1].userId).toBe(2);
++    });
++
++    it('should refresh the list after saving.', () => {
++      expect(backendSrv.get.mock.calls[0][0]).toBe('/api/teams/1');
++      expect(backendSrv.get.mock.calls[1][0]).toBe('/api/teams/1/members');
++    });
++  });
++});
+diff --git a/public/app/features/org/specs/team_details_ctrl_specs.ts b/public/app/features/org/specs/team_details_ctrl_specs.ts
+deleted file mode 100644
+index 347f3796170..00000000000
+--- a/public/app/features/org/specs/team_details_ctrl_specs.ts
++++ /dev/null
+@@ -1,48 +0,0 @@
+-import '../team_details_ctrl';
+-import { describe, beforeEach, it, expect, sinon, angularMocks } from 'test/lib/common';
+-import TeamDetailsCtrl from '../team_details_ctrl';
+-
+-describe('TeamDetailsCtrl', () => {
+-  var ctx: any = {};
+-  var backendSrv = {
+-    searchUsers: sinon.stub().returns(Promise.resolve([])),
+-    get: sinon.stub().returns(Promise.resolve([])),
+-    post: sinon.stub().returns(Promise.resolve([])),
+-  };
+-
+-  beforeEach(angularMocks.module('grafana.core'));
+-  beforeEach(angularMocks.module('grafana.controllers'));
+-
+-  beforeEach(
+-    angularMocks.inject(($rootScope, $controller, $q) => {
+-      ctx.$q = $q;
+-      ctx.scope = $rootScope.$new();
+-      ctx.ctrl = $controller(TeamDetailsCtrl, {
+-        $scope: ctx.scope,
+-        backendSrv: backendSrv,
+-        $routeParams: { id: 1 },
+-        navModelSrv: { getNav: sinon.stub() },
+-      });
+-    })
+-  );
+-
+-  describe('when user is chosen to be added to team', () => {
+-    beforeEach(() => {
+-      const userItem = {
+-        id: 2,
+-        login: 'user2',
+-      };
+-      ctx.ctrl.userPicked(userItem);
+-    });
+-
+-    it('should parse the result and save to db', () => {
+-      expect(backendSrv.post.getCall(0).args[0]).to.eql('/api/teams/1/members');
+-      expect(backendSrv.post.getCall(0).args[1].userId).to.eql(2);
+-    });
+-
+-    it('should refresh the list after saving.', () => {
+-      expect(backendSrv.get.getCall(0).args[0]).to.eql('/api/teams/1');
+-      expect(backendSrv.get.getCall(1).args[0]).to.eql('/api/teams/1/members');
+-    });
+-  });
+-});
+diff --git a/public/app/plugins/datasource/cloudwatch/specs/datasource_specs.ts b/public/app/plugins/datasource/cloudwatch/specs/datasource_specs.ts
+index cca14f84255..7de59fb317d 100644
+--- a/public/app/plugins/datasource/cloudwatch/specs/datasource_specs.ts
++++ b/public/app/plugins/datasource/cloudwatch/specs/datasource_specs.ts
+@@ -2,6 +2,7 @@ import '../datasource';
+ import { describe, beforeEach, it, expect, angularMocks } from 'test/lib/common';
+ import helpers from 'test/specs/helpers';
+ import CloudWatchDatasource from '../datasource';
++import 'app/features/dashboard/time_srv';
+ 
+ describe('CloudWatchDatasource', function() {
+   var ctx = new helpers.ServiceTestContext();
+@@ -13,6 +14,7 @@ describe('CloudWatchDatasource', function() {
+   beforeEach(angularMocks.module('grafana.services'));
+   beforeEach(angularMocks.module('grafana.controllers'));
+   beforeEach(ctx.providePhase(['templateSrv', 'backendSrv']));
++  beforeEach(ctx.createService('timeSrv'));
+ 
+   beforeEach(
+     angularMocks.inject(function($q, $rootScope, $httpBackend, $injector) {

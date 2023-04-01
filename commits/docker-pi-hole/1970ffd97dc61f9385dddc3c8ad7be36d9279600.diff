@@ -1,0 +1,254 @@
+commit 1970ffd97dc61f9385dddc3c8ad7be36d9279600 (from 4fe91be9c97b1d7139ff52fd22ac014ea785b72c)
+Merge: 4fe91be e75e380
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Thu Jul 21 17:27:37 2022 +0100
+
+    Merge pull request #1148 from pi-hole/fix/webpassword-env
+    
+    Fix environment variable regression caused by refactor
+
+diff --git a/src/scripts/bash_functions.sh b/src/scripts/bash_functions.sh
+index 657c473..70cf4db 100644
+--- a/src/scripts/bash_functions.sh
++++ b/src/scripts/bash_functions.sh
+@@ -1,4 +1,13 @@
+ #!/bin/bash
++
++# If user has set QUERY_LOGGING Env Var, copy it out to _OVERRIDE,
++# else it will get overridden itself when we source basic-install.sh
++[ -n "${QUERY_LOGGING}" ] && export QUERY_LOGGING_OVERRIDE="${QUERY_LOGGING}"
++
++# Legacy Env Vars preserved for backwards compatibility - convert them to FTLCONF_ equivalents
++[ -n "${ServerIP}" ] && echo "ServerIP is deprecated. Converting to FTLCONF_REPLY_ADDR4" && export "FTLCONF_REPLY_ADDR4"="$ServerIP"
++[ -n "${ServerIPv6}" ] && echo "ServerIPv6 is deprecated. Converting to FTLCONF_REPLY_ADDR6" && export "FTLCONF_REPLY_ADDR6"="$ServerIPv6"
++
+ # Some of the bash_functions use utilities from Pi-hole's utils.sh
+ # shellcheck disable=SC2154
+ # shellcheck source=/dev/null
+@@ -356,28 +365,26 @@ load_web_password_secret() {
+ 
+ setup_web_password() {
+     if [ -z "${WEBPASSWORD+x}" ] ; then
+-        # ENV WEBPASSWORD is not set
++        # ENV WEBPASSWORD_OVERRIDE is not set
+ 
+         # Exit if setupvars already has a password
+         setup_var_exists "WEBPASSWORD" && return
+-
+         # Generate new random password
+         WEBPASSWORD=$(tr -dc _A-Z-a-z-0-9 < /dev/urandom | head -c 8)
+         echo "Assigning random password: $WEBPASSWORD"
+     else
+-        # ENV WEBPASSWORD is set an will be used
++        # ENV WEBPASSWORD_OVERRIDE is set and will be used
+         echo "::: Assigning password defined by Environment Variable"
++        # WEBPASSWORD="$WEBPASSWORD"
+     fi
+ 
+-    PASS="$WEBPASSWORD"
+-
+     # Explicitly turn off bash printing when working with secrets
+     { set +x; } 2>/dev/null
+ 
+-    if [[ "$PASS" == "" ]] ; then
++    if [[ "$WEBPASSWORD" == "" ]] ; then
+         echo "" | pihole -a -p
+     else
+-        pihole -a -p "$PASS" "$PASS"
++        pihole -a -p "$WEBPASSWORD" "$WEBPASSWORD"
+     fi
+ 
+     # To avoid printing this if conditional in bash debug, turn off  debug above..
+diff --git a/src/scripts/start.sh b/src/scripts/start.sh
+index ccc2659..62c36a2 100755
+--- a/src/scripts/start.sh
++++ b/src/scripts/start.sh
+@@ -1,14 +1,5 @@
+ #!/bin/bash -e
+ 
+-# If user has set QUERY_LOGGING Env Var, copy it out to _OVERRIDE,
+-# else it will get overridden when we source bash_functions.sh
+-# (which then sources basic-install.sh)
+-[ -n "${QUERY_LOGGING}" ] && export QUERY_LOGGING_OVERRIDE="${QUERY_LOGGING}"
+-
+-# Legacy Env Vars preserved for backwards compatibility - convert them to FTLCONF_ equivalents
+-[ -n "${ServerIP}" ] && echo "ServerIP is deprecated. Converting to FTLCONF_REPLY_ADDR4" && export "FTLCONF_REPLY_ADDR4"="$ServerIP"
+-[ -n "${ServerIPv6}" ] && echo "ServerIPv6 is deprecated. Converting to FTLCONF_REPLY_ADDR6" && export "FTLCONF_REPLY_ADDR6"="$ServerIPv6"
+-
+ # The below functions are all contained in bash_functions.sh
+ # shellcheck source=/dev/null
+ . /bash_functions.sh
+@@ -30,21 +21,6 @@ echo " ::: Starting docker specific checks & setup for docker pihole/pihole"
+ validate_env || exit 1
+ ensure_basic_configuration
+ 
+-# FTL setup
+-# ===========================
+-setup_FTL_upstream_DNS
+-[[ -n "${DHCP_ACTIVE}" && ${DHCP_ACTIVE} == "true" ]] && echo "Setting DHCP server" && setup_FTL_dhcp
+-apply_FTL_Configs_From_Env
+-setup_FTL_User
+-setup_FTL_Interface
+-setup_FTL_CacheSize
+-setup_FTL_query_logging
+-setup_FTL_server || true
+-[ -n "${DNS_FQDN_REQUIRED}" ] && change_setting "DNS_FQDN_REQUIRED" "$DNS_FQDN_REQUIRED"
+-[ -n "${DNSSEC}" ] && change_setting "DNSSEC" "$DNSSEC"
+-[ -n "${DNS_BOGUS_PRIV}" ] && change_setting "DNS_BOGUS_PRIV" "$DNS_BOGUS_PRIV"
+-setup_FTL_ProcessDNSSettings
+-
+ # Web interface setup
+ # ===========================
+ setup_web_port
+@@ -65,6 +41,22 @@ setup_lighttpd_bind
+ setup_admin_email
+ setup_blocklists
+ 
++# FTL setup
++# ===========================
++setup_FTL_upstream_DNS
++[[ -n "${DHCP_ACTIVE}" && ${DHCP_ACTIVE} == "true" ]] && echo "Setting DHCP server" && setup_FTL_dhcp
++apply_FTL_Configs_From_Env
++setup_FTL_User
++setup_FTL_Interface
++setup_FTL_CacheSize
++setup_FTL_query_logging
++setup_FTL_server || true
++[ -n "${DNS_FQDN_REQUIRED}" ] && change_setting "DNS_FQDN_REQUIRED" "$DNS_FQDN_REQUIRED"
++[ -n "${DNSSEC}" ] && change_setting "DNSSEC" "$DNSSEC"
++[ -n "${DNS_BOGUS_PRIV}" ] && change_setting "DNS_BOGUS_PRIV" "$DNS_BOGUS_PRIV"
++# The following must be called last! It will source setupVars.conf and override any env vars users pass in before they have been applied
++setup_FTL_ProcessDNSSettings
++
+ test_configs
+ 
+ [ -f /.piholeFirstBoot ] && rm /.piholeFirstBoot
+diff --git a/test/Dockerfile b/test/Dockerfile
+index 0719291..e42b79d 100644
+--- a/test/Dockerfile
++++ b/test/Dockerfile
+@@ -13,14 +13,14 @@ RUN apt-get update && \
+ RUN curl -L https://github.com/docker/compose/releases/download/1.25.5/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose && \
+     chmod +x /usr/local/bin/docker-compose
+ 
+-COPY ./Dockerfile.sh /usr/local/bin/
++COPY ./cmd.sh /usr/local/bin/
+ COPY Pipfile* /root/
+ WORKDIR /root
+ 
+ RUN pipenv install --system \
+     && sed -i 's|/bin/sh|/bin/bash|g' /usr/local/lib/python3.8/site-packages/testinfra/backend/docker.py
+ 
+-RUN echo "set -ex && Dockerfile.sh && \$@" > /usr/local/bin/entrypoint.sh
++RUN echo "set -ex && cmd.sh && \$@" > /usr/local/bin/entrypoint.sh
+ RUN chmod +x /usr/local/bin/entrypoint.sh
+ ENTRYPOINT entrypoint.sh
+-CMD Dockerfile.sh
++CMD cmd.sh
+diff --git a/test/Dockerfile.sh b/test/cmd.sh
+similarity index 100%
+rename from test/Dockerfile.sh
+rename to test/cmd.sh
+diff --git a/test/tests/test_bash_functions.py b/test/tests/test_bash_functions.py
+index 3d53621..73eb0f5 100644
+--- a/test/tests/test_bash_functions.py
++++ b/test/tests/test_bash_functions.py
+@@ -5,9 +5,9 @@ import re
+ 
+ SETUPVARS_LOC='/etc/pihole/setupVars.conf'
+ DNSMASQ_CONFIG_LOC = '/etc/dnsmasq.d/01-pihole.conf'
+-EVAL_SETUP_FTL_CACHESIZE='. ./bash_functions.sh ; eval `grep setup_FTL_CacheSize /start.sh`'
+-EVAL_SETUP_FTL_INTERFACE='. ./bash_functions.sh ; eval `grep setup_FTL_Interface /start.sh`'
+-EVAL_SETUP_WEB_PASSWORD='. ./bash_functions.sh ; eval `grep setup_web_password /start.sh`'
++CMD_SETUP_FTL_CACHESIZE='. bash_functions.sh ; setup_FTL_CacheSize'
++CMD_SETUP_FTL_INTERFACE='. bash_functions.sh ; setup_FTL_Interface'
++CMD_SETUP_WEB_PASSWORD='. bash_functions.sh ; setup_web_password'
+ 
+ def _cat(file):
+     return 'cat {}'.format(file)
+@@ -76,7 +76,7 @@ def test_overrides_default_custom_cache_size(docker, slow, test_args, cache_size
+ def test_bad_input_to_custom_cache_size(docker, slow, test_args):
+     CONFIG_LINE = r'cache-size\s*=\s*10000'
+ 
+-    docker.run(EVAL_SETUP_FTL_CACHESIZE)
++    docker.run(CMD_SETUP_FTL_CACHESIZE)
+     slow(lambda: re.search(CONFIG_LINE, docker.run(_cat(DNSMASQ_CONFIG_LOC)).stdout) != None)
+ 
+ @pytest.mark.parametrize('test_args', [
+@@ -85,7 +85,7 @@ def test_bad_input_to_custom_cache_size(docker, slow, test_args):
+ def test_dnssec_enabled_with_custom_cache_size(docker, slow, test_args):
+     CONFIG_LINE = r'cache-size\s*=\s*10000'
+ 
+-    docker.run(EVAL_SETUP_FTL_CACHESIZE)
++    docker.run(CMD_SETUP_FTL_CACHESIZE)
+     slow(lambda: re.search(CONFIG_LINE, docker.run(_cat(DNSMASQ_CONFIG_LOC)).stdout) != None)
+ 
+ 
+@@ -95,7 +95,7 @@ def test_dnssec_enabled_with_custom_cache_size(docker, slow, test_args):
+ ])
+ def test_dns_interface_override_defaults(docker, slow, args_env, expected_stdout, expected_config_line):
+     ''' When INTERFACE environment var is passed in, overwrite dnsmasq interface '''
+-    function = docker.run(EVAL_SETUP_FTL_INTERFACE)
++    function = docker.run(CMD_SETUP_FTL_INTERFACE)
+     assert expected_stdout in function.stdout
+     slow(lambda: expected_config_line + '\n' == docker.run('grep "^PIHOLE_INTERFACE" {}'.format(SETUPVARS_LOC)).stdout)
+ 
+@@ -125,7 +125,7 @@ def test_debian_setup_php_env(docker, expected_lines, repeat_function):
+ 
+ def test_webpassword_random_generation(docker):
+     ''' When a user sets webPassword env the admin password gets set to that '''
+-    function = docker.run(EVAL_SETUP_WEB_PASSWORD)
++    function = docker.run(CMD_SETUP_WEB_PASSWORD)
+     assert 'assigning random password' in function.stdout.lower()
+ 
+ 
+@@ -136,7 +136,7 @@ def test_webpassword_random_generation(docker):
+ ])
+ def test_webpassword_env_assigns_password_to_file_or_removes_if_empty(docker, args_env, secure, setupvars_hash):
+     ''' When a user sets webPassword env the admin password gets set or removed if empty '''
+-    function = docker.run(EVAL_SETUP_WEB_PASSWORD)
++    function = docker.run(CMD_SETUP_WEB_PASSWORD)
+ 
+     if secure:
+         assert 'new password set' in function.stdout.lower()
+@@ -150,7 +150,7 @@ def test_webpassword_env_assigns_password_to_file_or_removes_if_empty(docker, ar
+ @pytest.mark.parametrize('test_args', ['-e WEBPASSWORD=login', '-e WEBPASSWORD=""'])
+ def test_env_always_updates_password(docker, args_env, test_args):
+     '''When a user sets the WEBPASSWORD environment variable, ensure it always sets the password'''
+-    function = docker.run(EVAL_SETUP_WEB_PASSWORD)
++    function = docker.run(CMD_SETUP_WEB_PASSWORD)
+ 
+     assert '::: Assigning password defined by Environment Variable' in function.stdout
+ 
+@@ -159,7 +159,7 @@ def test_env_always_updates_password(docker, args_env, test_args):
+ def test_setupvars_trumps_random_password_if_set(docker, args_env, test_args):
+     '''If a password is already set in setupvars, and no password is set in the environment variable, do not generate a random password'''
+     docker.run('. /opt/pihole/utils.sh ; addOrEditKeyValPair {} WEBPASSWORD volumepass'.format(SETUPVARS_LOC))
+-    function = docker.run(EVAL_SETUP_WEB_PASSWORD)
++    function = docker.run(CMD_SETUP_WEB_PASSWORD)
+ 
+     assert 'Pre existing WEBPASSWORD found' in function.stdout
+     assert docker.run(_grep('WEBPASSWORD=volumepass', SETUPVARS_LOC)).rc == 0
+
+commit 1970ffd97dc61f9385dddc3c8ad7be36d9279600 (from e75e3800a2cbd8015560627e5a31a4d0cd97eb1c)
+Merge: 4fe91be e75e380
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Thu Jul 21 17:27:37 2022 +0100
+
+    Merge pull request #1148 from pi-hole/fix/webpassword-env
+    
+    Fix environment variable regression caused by refactor
+
+diff --git a/examples/docker_run.sh b/examples/docker_run.sh
+index 687691d..726173a 100755
+--- a/examples/docker_run.sh
++++ b/examples/docker_run.sh
+@@ -25,7 +25,7 @@ printf 'Starting up pihole container '
+ for i in $(seq 1 20); do
+     if [ "$(docker inspect -f "{{.State.Health.Status}}" pihole)" == "healthy" ] ; then
+         printf ' OK'
+-        echo -e "\n$(docker logs pihole 2> /dev/null | grep 'password:') for your pi-hole: https://${IP}/admin/"
++        echo -e "\n$(docker logs pihole 2> /dev/null | grep 'password:') for your pi-hole: http://${IP}/admin/"
+         exit 0
+     else
+         sleep 3

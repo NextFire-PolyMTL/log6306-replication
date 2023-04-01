@@ -1,0 +1,1460 @@
+commit c851f5b6aa59d24b6d52b4d7fd2923bd5f4f64bf
+Author: Brennan Kinney <5098581+polarathene@users.noreply.github.com>
+Date:   Mon Sep 20 00:31:11 2021 +1200
+
+    fix: Remove `mkcert.sh` usage + `_setup_ssl` refactor. (#2196)
+    
+    * chore(refactor): DRY up the `_setup_ssl` method
+    
+    - `/etc/postfix/ssl` was a bit misleading in usage here. As a maintainer (of my own contribution!) I was confused why only `/etc/postfix/ssl` was referenced and not `/etc/dovecot/ssl`.
+    - The postfix specific path is unnecessary, dovecot was referencing it via it's config, the same can be done from postfix to a generic DMS specific config location instead.
+    - This location is defined and created early as `/etc/dms/tls` (with var `DMS_TLS_PATH`). All usage of `/etc/postfix/ssl` has been replaced, making it easier to grok. Several `mkdir` commands related to this have been dropped as a result.
+    
+    - Likewise, a related `TMP_DMS_TLS_PATH` var provides a reference to the config volume path `/tmp/docker-mailserver` which is used for conditions on presently hard-coded paths.
+    
+    - Other values that benefit from being DRY have been lifted up into vars. Definitely easier to follow now and makes some further opportunities clearer to tackle in a future refactor.
+    
+    - `chmod` has been updated where appropriate. Public key/cert is acceptable to have as readable by non-root users (644). The custom type with single fullchain file was not root accessible only, but should as it contains a private key.
+    - That said, the security benefit can be a bit moot due to source files that were copied remain present, the user would be responsible to ensure similar permissions on their source files.
+    
+    - I've not touched LetsEncrypt section as I don't have time to investigate into that yet (not familiar with that portion).
+    
+    ---
+    
+    * chore: Remove mkcert logic and dovecot cert
+    
+    - No longer serving a purpose.
+    - Our own TLS startup script handles a variety of cert scenarios, while the dropped code was always generating a self-signed cert and persisting an unused cert regardless with `ONE_DIR=1`.
+    - To avoid similar issues that DH params had with doveadm validating filepath values in the SSL config, the default dummy values match postfix pointing to "snakeoil" cert. That serves the same purpose as mkcert was covering in the image.
+    - Bonus, no more hassle with differing mkcert target paths for users replacing our supplied Dovecot with the latest community edition.
+    
+    ---
+    
+    * Error handling for SSL_TYPE
+    
+    - Added a panic utility to exit early when SSL_TYPE conditions are misconfigured.
+    - Some info text had order of key/cert occurrence swapped to be consistent with key then cert.
+    - Some existing comments moved and rephrased.
+    - Additional comments added.
+    - `-f` test for cert files instead of `-e` (true also for directories/devices/symlinks).
+    - _notify messages lifted out of conditionals so that they always output when the case is hit.
+    - ~~Empty SSL_TYPE collapsed into catch all panic, while it's contents is now mapped to a new 'disabled' value.~~
+    
+    ---
+    
+    * Use sedfile + improve sed expressions + update case style
+    
+    - Uses sedfile when appropriate (file change intentional, not optional match/check).
+    - sed expressions modified to be DRY and reduce escaping via `-r` flag (acceptable if actual text content contains no `?`,`+`,`()` or `{}` characters, [otherwise they must be escaped](https://www.gnu.org/software/sed/manual/html_node/Extended-regexps.html)).
+    - sed captures anything matched between the parenthesis`()` and inserts it via `\1` as part of the replacement.
+    
+    - case statements adopt the `(` prefix, adopting recent shell style for consistency.
+    
+    ---
+    
+    * Refactor SSL_TYPE=disabled
+    
+    - Postfix is also disabled now.
+    - Included heavy inline documentation reference for maintainers.
+    - Dropped an obsolete postfix config option 'use_tls' on the relayhost function, it was replaced by 'security_level'.
+    
+    ---
+    
+    * I'm a friggin' sed wizard now
+    
+    - The `modern` TLS_LEVEL is the default values for the configs they modify. As such, `sedfile` outputs an "Error" which isn't an actual concern, back to regular `sed`.
+    
+    - I realized that multiple edits for the same file can all be done at once via `-e` (assuming other sed options are the same for each operation), and that `g` suffix is global scope for single line match, not whole file (default as sed iterates through individual lines).
+    
+    - Some postfix replacements have `smtp` and `smtpd` lines, collapsed into a single `smtpd?` instead now that I know sed better.
+    
+    ---
+    
+    * tests(fix): Tests that require SSL/TLS to pass
+    
+    - SSL_TYPE=snakeoil added as temporary workaround.
+    
+    - nmap tests are being dropped. These were added about 4-5 years ago, I have since made these redundant with the `testssl.sh` tests.
+    - Additionally the `--link` option is deprecated and IIRC these grades were a bit misleading when I initially used nmap in my own TLS cipher suite update PRs in the past.
+    - The removed SSL test is already handled in mail_ssl_manual.bats
+    
+    ldap test:
+    - Replace `--link` alias option with `--network` and alias assignment.
+    - Parameterized some values and added the `SSL_TYPE` to resolve the starttls test failure.
+    
+    privacy test:
+    - Also needed `SSL_TYPE` to pass the starttls test.
+    
+    `tests.bats` had another starttls test for imap:
+    - Workaround for now is to give the main test container `SSL_TYPE=snakeoil`.
+    
+    ---
+    
+    * Remove the expired lets-encrypt cert
+    
+    This expired in March 2021. It was originally required when first added back in 2016 as LetsEncrypt was fairly new and not as broadly accepted into OS trust stores.
+    
+    No longer the case today.
+    
+    ---
+    
+    * chore: Housekeeping
+    
+    Not required for this PR branch, little bit of tidying up while working on these two test files.
+    
+    - privacy test copied over content when extracted from `tests.bats` that isn't relevant.
+    - ldap test was not as easy to identify the source of DOVECOT_TLS. Added comment to make the prefix connection to `configomat.sh` and `.ext` files more easier to find.
+    - Additionally converted the two localhost FQDN to vars.
+    
+    ---
+    
+    * Default SSL_TYPE becomes `''` (aka equivalent to desired `disabled` case)
+    
+    - This is to prevent other tests from failing by hitting the panic catchall case.
+    - More ideal would be adjusting tests to default to `disabled`, rather than treating `disabled` as an empty / unset SSL_TYPE value.
+    
+    ---
+    
+    * Add inline documentation for `dms_panic`
+    
+    - This could later be better formatted and placed into contributor docs.
+    
+    Panic with kill (shutdown) not exit (errex):
+    - `kill 1` from `_shutdown` will send SIGTERM signal to PID 1 (init process).
+    - `exit 1` within the `start-mailserver.sh` init scripts context, will just exit the initialization script leaving the container running when it shouldn't.
+    
+    The two previous `_shutdown` methods can benefit from using `dms_panic` wrapper instead to standardize on panic messages.
+
+diff --git a/Dockerfile b/Dockerfile
+index 752fb501..86626cac 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -108,7 +108,7 @@ RUN \
+   rm -rf /var/log/clamav/
+ 
+ # -----------------------------------------------
+-# --- Dovecot & MkCert --------------------------
++# --- Dovecot -----------------------------------
+ # -----------------------------------------------
+ 
+ COPY target/dovecot/auth-passwdfile.inc target/dovecot/??-*.conf /etc/dovecot/conf.d/
+@@ -124,10 +124,6 @@ RUN \
+   sedfile -i -e 's/^.*lda_mailbox_autocreate.*/lda_mailbox_autocreate = yes/g' /etc/dovecot/conf.d/15-lda.conf && \
+   sedfile -i -e 's/^.*lda_mailbox_autosubscribe.*/lda_mailbox_autosubscribe = yes/g' /etc/dovecot/conf.d/15-lda.conf && \
+   sedfile -i -e 's/^.*postmaster_address.*/postmaster_address = '${POSTMASTER_ADDRESS:="postmaster@domain.com"}'/g' /etc/dovecot/conf.d/15-lda.conf && \
+-  sedfile -i 's/RANDFILE.*//g' /usr/share/dovecot/dovecot-openssl.cnf && \
+-  mkdir /etc/dovecot/ssl && \
+-  chmod 755 /etc/dovecot/ssl && \
+-  ./mkcert.sh 2>&1 && \
+   mkdir -p /usr/lib/dovecot/sieve-pipe /usr/lib/dovecot/sieve-filter /usr/lib/dovecot/sieve-global && \
+   chmod 755 -R /usr/lib/dovecot/sieve-pipe /usr/lib/dovecot/sieve-filter /usr/lib/dovecot/sieve-global
+ 
+@@ -241,8 +237,7 @@ COPY \
+ RUN \
+   : >/etc/aliases && \
+   sedfile -i 's/START_DAEMON=no/START_DAEMON=yes/g' /etc/default/fetchmail && \
+-  mkdir /var/run/fetchmail && chown fetchmail /var/run/fetchmail && \
+-  curl -s https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem >/etc/ssl/certs/lets-encrypt-x3-cross-signed.pem
++  mkdir /var/run/fetchmail && chown fetchmail /var/run/fetchmail
+ 
+ # -----------------------------------------------
+ # --- Logs --------------------------------------
+diff --git a/target/dovecot/10-ssl.conf b/target/dovecot/10-ssl.conf
+index 4ae324bb..c52d21f5 100644
+--- a/target/dovecot/10-ssl.conf
++++ b/target/dovecot/10-ssl.conf
+@@ -6,11 +6,12 @@
+ #ssl = yes
+ 
+ # PEM encoded X.509 SSL/TLS certificate and private key. They're opened before
+-# dropping root privileges, so keep the key file unreadable by anyone but
+-# root. Included doc/mkcert.sh can be used to easily generate self-signed
+-# certificate, just make sure to update the domains in dovecot-openssl.cnf
+-ssl_cert = </etc/dovecot/ssl/dovecot.pem
+-ssl_key = </etc/dovecot/ssl/dovecot.key
++# dropping root privileges, so keep the key file unreadable by anyone but root.
++# These [snakeoil files actually exist](https://askubuntu.com/questions/396120/what-is-the-purpose-of-the-ssl-cert-snakeoil-key), but shouldn't ever be used in production!
++# As `SSL_TYPE` env is required by docker-mailserver, these "snakeoil" files will be replaced on container startup.
++ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
++ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
++# Fallback/Hybrid cert support. docker-mailserver will enable these when using ENV vars `SSL_ALT_CERT_PATH` and `SSL_ALT_KEY_PATH`.
+ #ssl_alt_cert = </path/to/alternative/cert.pem
+ #ssl_alt_key = </path/to/alternative/key.pem
+ 
+diff --git a/target/scripts/helper-functions.sh b/target/scripts/helper-functions.sh
+index 9f9df0c1..1abebc42 100755
+--- a/target/scripts/helper-functions.sh
++++ b/target/scripts/helper-functions.sh
+@@ -12,6 +12,57 @@ function errex
+   exit 1
+ }
+ 
++# `dms_panic` methods are appropriate when the type of error is a not recoverable,
++# or needs to be very clear to the user about misconfiguration.
++#
++# Method is called with args:
++# PANIC_TYPE => (Internal value for matching). You should use the convenience methods below based on your panic type.
++# PANIC_INFO => Provide your own message string to insert into the error message for that PANIC_TYPE.
++# PANIC_SCOPE => Optionally provide a string for debugging to better identify/locate the source of the panic.
++function dms_panic
++{
++  local PANIC_TYPE=$1
++  local PANIC_INFO=$2
++  local PANIC_SCOPE=$3 #optional
++
++  local SHUTDOWN_MESSAGE
++
++  case "${PANIC_TYPE}" in
++    ( 'no-env' ) # PANIC_INFO == <ENV VAR name>
++      SHUTDOWN_MESSAGE="Environment Variable: ${PANIC_INFO} is not set!"
++    ;;
++
++    ( 'no-file' ) # PANIC_INFO == <invalid filepath>
++      SHUTDOWN_MESSAGE="File ${PANIC_INFO} does not exist!"
++    ;;
++
++    ( 'misconfigured' ) # PANIC_INFO == <something possibly misconfigured, eg an ENV var>
++      SHUTDOWN_MESSAGE="${PANIC_INFO} appears to be misconfigured, please verify."
++    ;;
++
++    ( 'invalid-value' ) # PANIC_INFO == <an unsupported or invalid value, eg in a case match>
++      SHUTDOWN_MESSAGE="Invalid value for ${PANIC_INFO}!"
++    ;;
++
++    ( * ) # `dms_panic` was called directly without a valid PANIC_TYPE
++      SHUTDOWN_MESSAGE='Something broke :('
++    ;;
++  esac
++
++  if [[ -n ${PANIC_SCOPE} ]]
++  then
++    _shutdown "${PANIC_SCOPE} | ${SHUTDOWN_MESSAGE}"
++  else
++    _shutdown "${SHUTDOWN_MESSAGE}"
++  fi
++}
++
++# Convenience wrappers based on type:
++function dms_panic__no_env { dms_panic 'no-env' "${1}" "${2}"; }
++function dms_panic__no_file { dms_panic 'no-file' "${1}" "${2}"; }
++function dms_panic__misconfigured { dms_panic 'misconfigured' "${1}" "${2}"; }
++function dms_panic__invalid_value { dms_panic 'invalid-value' "${1}" "${2}"; }
++
+ function escape
+ {
+   echo "${1//./\\.}"
+@@ -252,8 +303,13 @@ function _obtain_hostname_and_domainname
+   fi
+ }
+ 
++# Call this method when you want to panic (emit a 'FATAL' log level error, and exit uncleanly).
++# `dms_panic` methods should be preferred if your failure type is supported.
+ function _shutdown
+ {
++  local FATAL_ERROR_MESSAGE=$1
++
++  _notify 'fatal' "${FATAL_ERROR_MESSAGE}"
+   _notify 'err' "Shutting down.."
+   kill 1
+ }
+diff --git a/target/scripts/startup/check-stack.sh b/target/scripts/startup/check-stack.sh
+index f7061d35..6c731eb3 100644
+--- a/target/scripts/startup/check-stack.sh
++++ b/target/scripts/startup/check-stack.sh
+@@ -16,10 +16,10 @@ function _check_hostname
+   _notify 'inf' "Domain has been set to ${DOMAINNAME}"
+   _notify 'inf' "Hostname has been set to ${HOSTNAME}"
+ 
++  # HOSTNAME should be an FQDN (eg: hostname.domain)
+   if ! grep -q -E '^(\S+[.]\S+)$' <<< "${HOSTNAME}"
+   then
+-    _notify 'err' 'Setting hostname/domainname is required'
+-    _shutdown
++    _shutdown 'Setting hostname/domainname is required'
+     return 1
+   fi
+ }
+diff --git a/target/scripts/startup/setup-stack.sh b/target/scripts/startup/setup-stack.sh
+index 8f4f00b6..300ce5fb 100644
+--- a/target/scripts/startup/setup-stack.sh
++++ b/target/scripts/startup/setup-stack.sh
+@@ -168,27 +168,6 @@ function _setup_dovecot
+ {
+   _notify 'task' 'Setting up Dovecot'
+ 
+-  # moved from docker file, copy or generate default self-signed cert
+-  if [[ -f /var/mail-state/lib-dovecot/dovecot.pem ]] && [[ ${ONE_DIR} -eq 1 ]]
+-  then
+-    _notify 'inf' "Copying default dovecot cert"
+-    cp /var/mail-state/lib-dovecot/dovecot.key /etc/dovecot/ssl/
+-    cp /var/mail-state/lib-dovecot/dovecot.pem /etc/dovecot/ssl/
+-  fi
+-
+-  if [[ ! -f /etc/dovecot/ssl/dovecot.pem ]]
+-  then
+-    _notify 'inf' 'Generating default Dovecot cert'
+-    /usr/share/dovecot/mkcert.sh
+-
+-    if [[ ${ONE_DIR} -eq 1 ]]
+-    then
+-      mkdir -p /var/mail-state/lib-dovecot
+-      cp /etc/dovecot/ssl/dovecot.key /var/mail-state/lib-dovecot/
+-      cp /etc/dovecot/ssl/dovecot.pem /var/mail-state/lib-dovecot/
+-    fi
+-  fi
+-
+   cp -a /usr/share/dovecot/protocols.d /etc/dovecot/
+   # disable pop3 (it will be eventually enabled later in the script, if requested)
+   mv /etc/dovecot/protocols.d/pop3d.protocol /etc/dovecot/protocols.d/pop3d.protocol.disab
+@@ -803,8 +782,13 @@ function _setup_ssl
+   _notify 'task' 'Setting up SSL'
+ 
+   local POSTFIX_CONFIG_MAIN='/etc/postfix/main.cf'
++  local POSTFIX_CONFIG_MASTER='/etc/postfix/master.cf'
+   local DOVECOT_CONFIG_SSL='/etc/dovecot/conf.d/10-ssl.conf'
+ 
++  local TMP_DMS_TLS_PATH='/tmp/docker-mailserver/ssl' # config volume
++  local DMS_TLS_PATH='/etc/dms/tls'
++  mkdir -p "${DMS_TLS_PATH}"
++
+   # Primary certificate to serve for TLS
+   function _set_certificate
+   {
+@@ -812,7 +796,7 @@ function _setup_ssl
+     local DOVECOT_KEY=${1}
+     local DOVECOT_CERT=${1}
+ 
+-    # If 2nd param is provided, we've been provided separate key and cert instead of a fullkeychain
++    # If a 2nd param is provided, a separate key and cert was received instead of a fullkeychain
+     if [[ -n ${2} ]]
+     then
+       local PRIVATE_KEY=$1
+@@ -825,12 +809,14 @@ function _setup_ssl
+ 
+     # Postfix configuration
+     # NOTE: `smtpd_tls_chain_files` expects private key defined before public cert chain
+-    # May be a single PEM file or a sequence of files, so long as the order is key->leaf->chain
+-    sed -i "s|^smtpd_tls_chain_files =.*|smtpd_tls_chain_files = ${POSTFIX_KEY_WITH_FULLCHAIN}|" "${POSTFIX_CONFIG_MAIN}"
++    # Value can be a single PEM file, or a sequence of files; so long as the order is key->leaf->chain
++    sedfile -i -r "s|^(smtpd_tls_chain_files =).*|\1 ${POSTFIX_KEY_WITH_FULLCHAIN}|" "${POSTFIX_CONFIG_MAIN}"
+ 
+     # Dovecot configuration
+-    sed -i "s|^ssl_key = <.*|ssl_key = <${DOVECOT_KEY}|" "${DOVECOT_CONFIG_SSL}"
+-    sed -i "s|^ssl_cert = <.*|ssl_cert = <${DOVECOT_CERT}|" "${DOVECOT_CONFIG_SSL}"
++    sedfile -i -r \
++      -e "s|^(ssl_key =).*|\1 <${DOVECOT_KEY}|" \
++      -e "s|^(ssl_cert =).*|\1 <${DOVECOT_CERT}|" \
++      "${DOVECOT_CONFIG_SSL}"
+   }
+ 
+   # Enables supporting two certificate types such as ECDSA with an RSA fallback
+@@ -838,26 +824,28 @@ function _setup_ssl
+   {
+     local COPY_KEY_FROM_PATH=$1
+     local COPY_CERT_FROM_PATH=$2
+-    local PRIVATE_KEY_ALT='/etc/postfix/ssl/fallback_key'
+-    local CERT_CHAIN_ALT='/etc/postfix/ssl/fallback_cert'
++    local PRIVATE_KEY_ALT="${DMS_TLS_PATH}/fallback_key"
++    local CERT_CHAIN_ALT="${DMS_TLS_PATH}/fallback_cert"
+ 
+     cp "${COPY_KEY_FROM_PATH}" "${PRIVATE_KEY_ALT}"
+     cp "${COPY_CERT_FROM_PATH}" "${CERT_CHAIN_ALT}"
+     chmod 600 "${PRIVATE_KEY_ALT}"
+-    chmod 600 "${CERT_CHAIN_ALT}"
++    chmod 644 "${CERT_CHAIN_ALT}"
+ 
+     # Postfix configuration
+     # NOTE: This operation doesn't replace the line, it appends to the end of the line.
+     # Thus this method should only be used when this line has explicitly been replaced earlier in the script.
+     # Otherwise without `docker-compose down` first, a `docker-compose up` may
+     # persist previous container state and cause a failure in postfix configuration.
+-    sed -i "s|^smtpd_tls_chain_files =.*|& ${PRIVATE_KEY_ALT} ${CERT_CHAIN_ALT}|" "${POSTFIX_CONFIG_MAIN}"
++    sedfile -i "s|^smtpd_tls_chain_files =.*|& ${PRIVATE_KEY_ALT} ${CERT_CHAIN_ALT}|" "${POSTFIX_CONFIG_MAIN}"
+ 
+     # Dovecot configuration
+     # Conditionally checks for `#`, in the event that internal container state is accidentally persisted,
+     # can be caused by: `docker-compose up` run again after a `ctrl+c`, without running `docker-compose down`
+-    sed -i "s|^#\?ssl_alt_key = <.*|ssl_alt_key = <${PRIVATE_KEY_ALT}|" "${DOVECOT_CONFIG_SSL}"
+-    sed -i "s|^#\?ssl_alt_cert = <.*|ssl_alt_cert = <${CERT_CHAIN_ALT}|" "${DOVECOT_CONFIG_SSL}"
++    sedfile -i -r \
++      -e "s|^#?(ssl_alt_key =).*|\1 <${PRIVATE_KEY_ALT}|" \
++      -e "s|^#?(ssl_alt_cert =).*|\1 <${CERT_CHAIN_ALT}|" \
++      "${DOVECOT_CONFIG_SSL}"
+   }
+ 
+   function _apply_tls_level
+@@ -867,19 +855,22 @@ function _setup_ssl
+     local TLS_PROTOCOL_MINIMUM=$3
+ 
+     # Postfix configuration
+-    sed -i "s|^smtpd_tls_mandatory_protocols =.*|smtpd_tls_mandatory_protocols = ${TLS_PROTOCOL_IGNORE}|" "${POSTFIX_CONFIG_MAIN}"
+-    sed -i "s|^smtpd_tls_protocols =.*|smtpd_tls_protocols = ${TLS_PROTOCOL_IGNORE}|" "${POSTFIX_CONFIG_MAIN}"
+-    sed -i "s|^smtp_tls_protocols =.*|smtp_tls_protocols = ${TLS_PROTOCOL_IGNORE}|" "${POSTFIX_CONFIG_MAIN}"
+-    sed -i "s|^tls_high_cipherlist =.*|tls_high_cipherlist = ${TLS_CIPHERS_ALLOW}|" "${POSTFIX_CONFIG_MAIN}"
++    sed -i -r \
++      -e "s|^(smtpd?_tls_mandatory_protocols =).*|\1 ${TLS_PROTOCOL_IGNORE}|" \
++      -e "s|^(smtpd?_tls_protocols =).*|\1 ${TLS_PROTOCOL_IGNORE}|" \
++      -e "s|^(tls_high_cipherlist =).*|\1 ${TLS_CIPHERS_ALLOW}|" \
++      "${POSTFIX_CONFIG_MAIN}"
+ 
+     # Dovecot configuration (secure by default though)
+-    sed -i "s|^ssl_min_protocol =.*|ssl_min_protocol = ${TLS_PROTOCOL_MINIMUM}|" "${DOVECOT_CONFIG_SSL}"
+-    sed -i "s|^ssl_cipher_list =.*|ssl_cipher_list = ${TLS_CIPHERS_ALLOW}|" "${DOVECOT_CONFIG_SSL}"
++    sed -i -r \
++      -e "s|^(ssl_min_protocol =).*|\1 ${TLS_PROTOCOL_MINIMUM}|" \
++      -e "s|^(ssl_cipher_list =).*|\1 ${TLS_CIPHERS_ALLOW}|" \
++      "${DOVECOT_CONFIG_SSL}"
+   }
+ 
+   # TLS strength/level configuration
+   case "${TLS_LEVEL}" in
+-    "modern" )
++    ( "modern" )
+       local TLS_MODERN_SUITE='ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384'
+       local TLS_MODERN_IGNORE='!SSLv2,!SSLv3,!TLSv1,!TLSv1.1'
+       local TLS_MODERN_MIN='TLSv1.2'
+@@ -889,36 +880,42 @@ function _setup_ssl
+       _notify 'inf' "TLS configured with 'modern' ciphers"
+       ;;
+ 
+-    "intermediate" )
++    ( "intermediate" )
+       local TLS_INTERMEDIATE_SUITE='ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA'
+       local TLS_INTERMEDIATE_IGNORE='!SSLv2,!SSLv3'
+       local TLS_INTERMEDIATE_MIN='TLSv1'
+ 
+       _apply_tls_level "${TLS_INTERMEDIATE_SUITE}" "${TLS_INTERMEDIATE_IGNORE}" "${TLS_INTERMEDIATE_MIN}"
+ 
+-      # Lowers the minimum acceptable TLS version connection to `TLS 1.0` (from Debian upstream `TLS 1.2`)
+-      # Lowers Security Level to `1` (from Debian upstream `2`)
++      # Lowers the minimum acceptable TLS version connection to `TLSv1` (from Debian upstream `TLSv1.2`)
++      # Lowers Security Level to `1` (from Debian upstream `2`, openssl release defaults to `1`)
++      # https://www.openssl.org/docs/man1.1.1/man3/SSL_CTX_set_security_level.html
+       # https://wiki.debian.org/ContinuousIntegration/TriagingTips/openssl-1.1.1
+       # https://dovecot.org/pipermail/dovecot/2020-October/120225.html
+-      # TODO: This is a fix for Debian Bullseye Dovecot. Deprecate TLS <1.2 to resolve properly.
+-      sedfile -i 's|^MinProtocol = .*|MinProtocol = TLSv1|' /usr/lib/ssl/openssl.cnf
+-      sedfile -i 's|^CipherString = .*|CipherString = DEFAULT@SECLEVEL=1|' /usr/lib/ssl/openssl.cnf
++      # TODO: This is a fix for Debian Bullseye Dovecot. Can remove when we only support TLS >=1.2.
++      # WARNING: This applies to all processes that use openssl and respect these settings.
++      sedfile -i -r \
++        -e 's|^(MinProtocol).*|\1 = TLSv1|' \
++        -e 's|^(CipherString).*|\1 = DEFAULT@SECLEVEL=1|' \
++        /usr/lib/ssl/openssl.cnf
+ 
+       _notify 'inf' "TLS configured with 'intermediate' ciphers"
+       ;;
+ 
+-    * )
++    ( * )
+       _notify 'err' "TLS_LEVEL not found [ in ${FUNCNAME[0]} ]"
+       ;;
+ 
+   esac
+ 
++  local SCOPE_SSL_TYPE="TLS Setup [SSL_TYPE=${SSL_TYPE}]"
+   # SSL certificate Configuration
+   # TODO: Refactor this feature, it's been extended multiple times for specific inputs/providers unnecessarily.
+-  # NOTE: Some `SSL_TYPE` logic uses mounted certs/keys directly, some make an internal copy either retaining filename or renaming, chmod inconsistent.
++  # NOTE: Some `SSL_TYPE` logic uses mounted certs/keys directly, some make an internal copy either retaining filename or renaming.
+   case "${SSL_TYPE}" in
+-    "letsencrypt" )
++    ( "letsencrypt" )
+       _notify 'inf' "Configuring SSL using 'letsencrypt'"
++
+       # letsencrypt folders and files mounted in /etc/letsencrypt
+       local LETSENCRYPT_DOMAIN=""
+       local LETSENCRYPT_KEY=""
+@@ -982,104 +979,179 @@ function _setup_ssl
+       fi
+       return 0
+       ;;
+-    "custom" )
+-      # Adding CA signed SSL certificate if provided in 'postfix/ssl' folder
+-      if [[ -e /tmp/docker-mailserver/ssl/${HOSTNAME}-full.pem ]]
+-      then
+-        _notify 'inf' "Adding ${HOSTNAME} SSL certificate"
+ 
+-        mkdir -p /etc/postfix/ssl
+-        cp "/tmp/docker-mailserver/ssl/${HOSTNAME}-full.pem" /etc/postfix/ssl
++    ( "custom" ) # (hard-coded path) Use a private key with full certificate chain all in a single PEM file.
++      _notify 'inf' "Adding ${HOSTNAME} SSL certificate"
+ 
+-        # Private key with full certificate chain all in a single PEM file
+-        # NOTE: Dovecot works fine still as both values are bundled into the keychain
+-        local KEY_WITH_FULLCHAIN='/etc/postfix/ssl/'"${HOSTNAME}"'-full.pem'
++      # NOTE: Dovecot works fine still as both values are bundled into the keychain
++      local COMBINED_PEM_NAME="${HOSTNAME}-full.pem"
++      local TMP_KEY_WITH_FULLCHAIN="${TMP_DMS_TLS_PATH}/${COMBINED_PEM_NAME}"
++      local KEY_WITH_FULLCHAIN="${DMS_TLS_PATH}/${COMBINED_PEM_NAME}"
++
++      if [[ -f ${TMP_KEY_WITH_FULLCHAIN} ]]
++      then
++        cp "${TMP_KEY_WITH_FULLCHAIN}" "${KEY_WITH_FULLCHAIN}"
++        chmod 600 "${KEY_WITH_FULLCHAIN}"
+ 
+         _set_certificate "${KEY_WITH_FULLCHAIN}"
+ 
+         _notify 'inf' "SSL configured with 'CA signed/custom' certificates"
++      else
++        dms_panic__no_file "${TMP_KEY_WITH_FULLCHAIN}" "${SCOPE_SSL_TYPE}"
+       fi
+       ;;
+-    "manual" )
+-      # Lets you manually specify the location of the SSL Certs to use. This gives you some more control over this whole processes (like using kube-lego to generate certs)
+-      if [[ -n ${SSL_CERT_PATH} ]] && [[ -n ${SSL_KEY_PATH} ]]
++
++    ( "manual" ) # (dynamic path via ENV) Use separate private key and cert/chain files (should be PEM encoded)
++      _notify 'inf' "Configuring certificates using key ${SSL_KEY_PATH} and cert ${SSL_CERT_PATH}"
++
++      # Source files are copied internally to these destinations:
++      local PRIVATE_KEY="${DMS_TLS_PATH}/key"
++      local CERT_CHAIN="${DMS_TLS_PATH}/cert"
++
++      # Fail early:
++      if [[ -z ${SSL_KEY_PATH} ]] && [[ -z ${SSL_CERT_PATH} ]]
+       then
+-        _notify 'inf' "Configuring certificates using cert ${SSL_CERT_PATH} and key ${SSL_KEY_PATH}"
++        dms_panic__no_env 'SSL_KEY_PATH or SSL_CERT_PATH' "${SCOPE_SSL_TYPE}"
++      fi
+ 
+-        mkdir -p /etc/postfix/ssl
+-        cp "${SSL_KEY_PATH}" /etc/postfix/ssl/key
+-        cp "${SSL_CERT_PATH}" /etc/postfix/ssl/cert
+-        chmod 600 /etc/postfix/ssl/key
+-        chmod 600 /etc/postfix/ssl/cert
++      if [[ -n ${SSL_ALT_KEY_PATH} ]] \
++      && [[ -n ${SSL_ALT_CERT_PATH} ]] \
++      && [[ ! -f ${SSL_ALT_KEY_PATH} ]] \
++      && [[ ! -f ${SSL_ALT_CERT_PATH} ]]
++      then
++        dms_panic__no_file "(ALT) ${SSL_ALT_KEY_PATH} or ${SSL_ALT_CERT_PATH}" "${SCOPE_SSL_TYPE}"
++      fi
+ 
+-        local PRIVATE_KEY='/etc/postfix/ssl/key'
+-        local CERT_CHAIN='/etc/postfix/ssl/cert'
++      if [[ -f ${SSL_KEY_PATH} ]] && [[ -f ${SSL_CERT_PATH} ]]
++      then
++        cp "${SSL_KEY_PATH}" "${PRIVATE_KEY}"
++        cp "${SSL_CERT_PATH}" "${CERT_CHAIN}"
++        chmod 600 "${PRIVATE_KEY}"
++        chmod 644 "${CERT_CHAIN}"
+ 
+         _set_certificate "${PRIVATE_KEY}" "${CERT_CHAIN}"
+ 
+         # Support for a fallback certificate, useful for hybrid/dual ECDSA + RSA certs
+         if [[ -n ${SSL_ALT_KEY_PATH} ]] && [[ -n ${SSL_ALT_CERT_PATH} ]]
+         then
+-          _notify 'inf' "Configuring alternative certificates using cert ${SSL_ALT_CERT_PATH} and key ${SSL_ALT_KEY_PATH}"
++          _notify 'inf' "Configuring fallback certificates using key ${SSL_ALT_KEY_PATH} and cert ${SSL_ALT_CERT_PATH}"
+ 
+           _set_alt_certificate "${SSL_ALT_KEY_PATH}" "${SSL_ALT_CERT_PATH}"
+         else
+           # If the Dovecot settings for alt cert has been enabled (doesn't start with `#`),
+           # but required ENV var is missing, reset to disabled state:
+-          sed -i 's|^ssl_alt_key = <.*|#ssl_alt_key = </path/to/alternative/key.pem|' "${DOVECOT_CONFIG_SSL}"
+-          sed -i 's|^ssl_alt_cert = <.*|#ssl_alt_cert = </path/to/alternative/cert.pem|' "${DOVECOT_CONFIG_SSL}"
++          sed -i -r \
++            -e 's|^(ssl_alt_key =).*|#\1 </path/to/alternative/key.pem|' \
++            -e 's|^(ssl_alt_cert =).*|#\1 </path/to/alternative/cert.pem|' \
++            "${DOVECOT_CONFIG_SSL}"
+         fi
+ 
+         _notify 'inf' "SSL configured with 'Manual' certificates"
++      else
++        dms_panic__no_file "${SSL_KEY_PATH} or ${SSL_CERT_PATH}" "${SCOPE_SSL_TYPE}"
+       fi
+       ;;
+-    "self-signed" )
+-      # Adding self-signed SSL certificate if provided in 'postfix/ssl' folder
+-      if [[ -e /tmp/docker-mailserver/ssl/${HOSTNAME}-key.pem ]] \
+-      && [[ -e /tmp/docker-mailserver/ssl/${HOSTNAME}-cert.pem ]] \
+-      && [[ -e /tmp/docker-mailserver/ssl/demoCA/cacert.pem ]]
+-      then
+-        _notify 'inf' "Adding ${HOSTNAME} SSL certificate"
+ 
+-        mkdir -p /etc/postfix/ssl
+-        cp "/tmp/docker-mailserver/ssl/${HOSTNAME}-key.pem" /etc/postfix/ssl
+-        cp "/tmp/docker-mailserver/ssl/${HOSTNAME}-cert.pem" /etc/postfix/ssl
+-        chmod 600 "/etc/postfix/ssl/${HOSTNAME}-key.pem"
++    ( "self-signed" ) # (hard-coded path) Use separate private key and cert/chain files (should be PEM encoded), expects self-signed CA
++      _notify 'inf' "Adding ${HOSTNAME} SSL certificate"
++
++      local KEY_NAME="${HOSTNAME}-key.pem"
++      local CERT_NAME="${HOSTNAME}-cert.pem"
++
++      # Self-Signed source files:
++      local SS_KEY="${TMP_DMS_TLS_PATH}/${KEY_NAME}"
++      local SS_CERT="${TMP_DMS_TLS_PATH}/${CERT_NAME}"
++      local SS_CA_CERT="${TMP_DMS_TLS_PATH}/demoCA/cacert.pem"
++
++      # Source files are copied internally to these destinations:
++      local PRIVATE_KEY="${DMS_TLS_PATH}/${KEY_NAME}"
++      local CERT_CHAIN="${DMS_TLS_PATH}/${CERT_NAME}"
++      local CA_CERT="${DMS_TLS_PATH}/cacert.pem"
+ 
+-        local PRIVATE_KEY="/etc/postfix/ssl/${HOSTNAME}-key.pem"
+-        local CERT_CHAIN="/etc/postfix/ssl/${HOSTNAME}-cert.pem"
++      if [[ -f ${SS_KEY} ]] \
++      && [[ -f ${SS_CERT} ]] \
++      && [[ -f ${SS_CA_CERT} ]]
++      then
++        cp "${SS_KEY}" "${PRIVATE_KEY}"
++        cp "${SS_CERT}" "${CERT_CHAIN}"
++        chmod 600 "${PRIVATE_KEY}"
++        chmod 644 "${CERT_CHAIN}"
+ 
+         _set_certificate "${PRIVATE_KEY}" "${CERT_CHAIN}"
+ 
+-        cp /tmp/docker-mailserver/ssl/demoCA/cacert.pem /etc/postfix/ssl
++        cp "${SS_CA_CERT}" "${CA_CERT}"
++        chmod 644 "${CA_CERT}"
++
+         # Have Postfix trust the self-signed CA (which is not installed within the OS trust store)
+-        sed -i -r 's|^#?smtpd_tls_CAfile =.*|smtpd_tls_CAfile = /etc/postfix/ssl/cacert.pem|' "${POSTFIX_CONFIG_MAIN}"
+-        sed -i -r 's|^#?smtp_tls_CAfile =.*|smtp_tls_CAfile = /etc/postfix/ssl/cacert.pem|' "${POSTFIX_CONFIG_MAIN}"
++        sedfile -i -r "s|^#?(smtpd?_tls_CAfile =).*|\1 ${CA_CERT}|" "${POSTFIX_CONFIG_MAIN}"
+         # Part of the original `self-signed` support, unclear why this symlink was required?
+         # May have been to support the now removed `Courier` (Dovecot replaced it):
+         # https://github.com/docker-mailserver/docker-mailserver/commit/1fb3aeede8ac9707cc9ea11d603e3a7b33b5f8d5
++        # smtp_tls_CApath and smtpd_tls_CApath both point to /etc/ssl/certs
+         local PRIVATE_CA="/etc/ssl/certs/cacert-${HOSTNAME}.pem"
+-        ln -s /etc/postfix/ssl/cacert.pem "${PRIVATE_CA}"
++        ln -s "${CA_CERT}" "${PRIVATE_CA}"
+ 
+         _notify 'inf' "SSL configured with 'self-signed' certificates"
++      else
++        dms_panic__no_file "${SS_KEY} or ${SS_CERT}" "${SCOPE_SSL_TYPE}"
+       fi
+       ;;
+-    '' )
+-      # no SSL certificate, plain text access
+-      # TODO: Postfix configuration still responds to TLS negotiations using snakeoil cert from default config
+-      # TODO: Dovecot `ssl = yes` also allows TLS, both cases this is insecure and should probably instead enforce no TLS?
+-
+-      # Dovecot configuration
+-      # WARNING: This may not be corrected(reset?) if `SSL_TYPE` is changed and internal config state persisted
+-      sed -i -e 's|^#disable_plaintext_auth = yes|disable_plaintext_auth = no|g' /etc/dovecot/conf.d/10-auth.conf
+-      sed -i -e 's|^ssl = required|ssl = yes|g' "${DOVECOT_CONFIG_SSL}"
+ 
++    ( '' ) # No SSL/TLS certificate used/required, plaintext auth permitted over insecure connections
+       _notify 'warn' "(INSECURE!) SSL configured with plain text access. DO NOT USE FOR PRODUCTION DEPLOYMENT."
++      # Untested. Not officially supported.
++
++      # Postfix configuration:
++      # smtp_tls_security_level (default: 'may', amavis 'none' x2) | http://www.postfix.org/postconf.5.html#smtp_tls_security_level
++      # '_setup_postfix_relay_hosts' also adds 'smtp_tls_security_level = encrypt'
++      # smtpd_tls_security_level (default: 'may', port 587 'encrypt') | http://www.postfix.org/postconf.5.html#smtpd_tls_security_level
++      #
++      # smtpd_tls_auth_only (default not applied, 'no', implicitly 'yes' if security_level is 'encrypt')
++      # | http://www.postfix.org/postconf.5.html#smtpd_tls_auth_only | http://www.postfix.org/TLS_README.html#server_tls_auth
++      #
++      # smtp_tls_wrappermode (default: not applied, 'no') | http://www.postfix.org/postconf.5.html#smtp_tls_wrappermode
++      # smtpd_tls_wrappermode (default: 'yes' for service port 'smtps') | http://www.postfix.org/postconf.5.html#smtpd_tls_wrappermode
++      # NOTE: Enabling wrappermode requires a security_level of 'encrypt' or stronger. Port 465 presently does not meet this condition.
++      #
++      # Postfix main.cf (base config):
++      sedfile -i -r \
++        -e "s|^#?(smtpd?_tls_security_level).*|\1 = none|" \
++        -e "s|^#?(smtpd_tls_auth_only).*|\1 = no|" \
++        "${POSTFIX_CONFIG_MAIN}"
++      #
++      # Postfix master.cf (per connection overrides):
++      # Disables implicit TLS on port 465 for inbound (smtpd) and outbound (smtp) traffic. Treats it as equivalent to port 25 SMTP with explicit STARTTLS.
++      # Inbound 465 (aka service port aliases: submissions / smtps) for Postfix to receive over implicit TLS (eg from MUA or functioning as a relay host).
++      # Outbound 465 as alternative to port 587 when sending to another MTA (with authentication), such as a relay service (eg SendGrid).
++      sedfile -i -r \
++        -e "/smtpd?_tls_security_level/s|=.*|=none|" \
++        -e '/smtpd?_tls_wrappermode/s|yes|no|' \
++        -e '/smtpd_tls_auth_only/s|yes|no|' \
++        "${POSTFIX_CONFIG_MASTER}"
++
++      # Dovecot configuration:
++      # https://doc.dovecot.org/configuration_manual/dovecot_ssl_configuration/
++      # > The plaintext authentication is always allowed (and SSL not required) for connections from localhost, as they’re assumed to be secure anyway.
++      # > This applies to all connections where the local and the remote IP addresses are equal.
++      # > Also IP ranges specified by login_trusted_networks setting are assumed to be secure.
++      #
++      # no => insecure auth allowed, yes (default) => plaintext auth only allowed over a secure connection (insecure connection acceptable for non-plaintext auth)
++      local DISABLE_PLAINTEXT_AUTH='no'
++      # no => disabled, yes => optional (secure connections not required), required (default) => mandatory (only secure connections allowed)
++      local DOVECOT_SSL_ENABLED='no'
++      sed -i -r "s|^#?(disable_plaintext_auth =).*|\1 ${DISABLE_PLAINTEXT_AUTH}|" /etc/dovecot/conf.d/10-auth.conf
++      sed -i -r "s|^(ssl =).*|\1 ${DOVECOT_SSL_ENABLED}|" "${DOVECOT_CONFIG_SSL}"
+       ;;
+-    * )
+-      # Unknown option, default behavior, no action is required
+-      _notify 'warn' "(INSECURE!) ENV var 'SSL_TYPE' is invalid. DO NOT USE FOR PRODUCTION DEPLOYMENT."
++
++    ( 'snakeoil' ) # This is a temporary workaround for testing only, using the insecure snakeoil cert.
++      # mail_privacy.bats and mail_with_ldap.bats both attempt to make a starttls connection with openssl,
++      # failing if SSL/TLS is not available.
++      ;;
++
++    ( * ) # Unknown option, panic.
++      dms_panic__invalid_value 'SSL_TYPE' "${SCOPE_TLS_LEVEL}"
+       ;;
++
+   esac
+ }
+ 
+@@ -1118,8 +1190,8 @@ function _setup_docker_permit
+ 
+   if [[ -z ${CONTAINER_IP} ]]
+   then
+-    _notify 'err' "Detecting the container IP address failed. Check if NETWORK_INTERFACE is correctly configured."
+-    _shutdown
++    _notify 'err' 'Detecting the container IP address failed.'
++    dms_panic__misconfigured 'NETWORK_INTERFACE' 'Network Setup [docker_permit]'
+   fi
+ 
+   while read -r IP
+@@ -1163,14 +1235,14 @@ function _setup_docker_permit
+   esac
+ }
+ 
++# Requires ENABLE_POSTFIX_VIRTUAL_TRANSPORT=1
+ function _setup_postfix_virtual_transport
+ {
+   _notify 'task' 'Setting up Postfix virtual transport'
+ 
+   if [[ -z ${POSTFIX_DAGENT} ]]
+   then
+-    _notify 'err' "${POSTFIX_DAGENT} not set."
+-    _shutdown
++    dms_panic__no_env 'POSTFIX_DAGENT' 'Postfix Setup [virtual_transport]'
+     return 1
+   fi
+ 
+@@ -1299,7 +1371,6 @@ function _setup_postfix_relay_hosts
+     "smtp_sasl_auth_enable = yes" \
+     "smtp_sasl_security_options = noanonymous" \
+     "smtp_sasl_password_maps = texthash:/etc/postfix/sasl_passwd" \
+-    "smtp_use_tls = yes" \
+     "smtp_tls_security_level = encrypt" \
+     "smtp_tls_note_starttls_offer = yes" \
+     "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt" \
+diff --git a/test/config/dovecot-lmtp/conf.d/10-ssl.conf b/test/config/dovecot-lmtp/conf.d/10-ssl.conf
+index 001e8646..9cf53830 100644
+--- a/test/config/dovecot-lmtp/conf.d/10-ssl.conf
++++ b/test/config/dovecot-lmtp/conf.d/10-ssl.conf
+@@ -6,11 +6,12 @@
+ ssl = required
+ 
+ # PEM encoded X.509 SSL/TLS certificate and private key. They're opened before
+-# dropping root privileges, so keep the key file unreadable by anyone but
+-# root. Included doc/mkcert.sh can be used to easily generate self-signed
+-# certificate, just make sure to update the domains in dovecot-openssl.cnf
+-ssl_cert = </etc/dovecot/ssl/dovecot.pem
+-ssl_key = </etc/dovecot/ssl/dovecot.key
++# dropping root privileges, so keep the key file unreadable by anyone but root.
++# These [snakeoil files actually exist](https://askubuntu.com/questions/396120/what-is-the-purpose-of-the-ssl-cert-snakeoil-key), but shouldn't ever be used in production!
++# As `SSL_TYPE` env is required by docker-mailserver, these "snakeoil" files will be replaced on container startup.
++ssl_cert = </etc/ssl/certs/ssl-cert-snakeoil.pem
++ssl_key = </etc/ssl/private/ssl-cert-snakeoil.key
++# Fallback/Hybrid cert support. docker-mailserver will enable these when using ENV vars `SSL_ALT_CERT_PATH` and `SSL_ALT_KEY_PATH`.
+ #ssl_alt_cert = </path/to/alternative/cert.pem
+ #ssl_alt_key = </path/to/alternative/key.pem
+ 
+diff --git a/test/config/dovecot-lmtp/ssl/dovecot.key b/test/config/dovecot-lmtp/ssl/dovecot.key
+deleted file mode 100644
+index f58bbb1d..00000000
+--- a/test/config/dovecot-lmtp/ssl/dovecot.key
++++ /dev/null
+@@ -1,28 +0,0 @@
+------BEGIN PRIVATE KEY-----
+-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDqblYh5sZvyTNs
+-bbPk3IWa5pZv57GTo/ZkHFJ8O3KIIOUSL/UBVwe298ornYnNar62ZrtL/CgcJdWn
+-DiEm6t/6lJNjaqdVXKTP6PlnXjVmU0Wgww11HLFlKroaMQ4RhVgutXR57JTBEyIY
+-fDBfoto7ujHaFza8nThE3BsVgrGcBjZgYtVbJeAzRvuM/hufxVlfLN+pSzCxrnyX
+-kuZAYut8Yut/c7arLD+A20Ya5b1yIW+7FshSUDICXa9ll/EufzjaFLqJinJSRWEF
+-F0FNVY2QFkqCjQZv86a3FP7USCmDJtPFDnY1ZUVUJjo4JP6LWi0Pr345814W+ydv
+-dIRGnQA1AgMBAAECggEBAIsnz6z0BdqZPhMg02YImK4oLihjCf+vljQ6s6PWzdeM
+-Xy16lh6jgIrVb4aQTxpGQMqZFJi4Jz7+HmK5emhVh3qA8zRSPN3ozlQz4MfBHkWN
+-LImO/tADpjF9OVcOw2EXHA8t2uP80RgCuXx7S2OZkZ1emvTwTqeLU7lcRh9woukP
+-i/HXJscru5rBGWnU2gmOgHBv/0sqARPh97I1z+YdXbs40OcxTQzV6nqWWLa0W+8d
+-nNXDDyGgsMLdOsVxgU2AZ3atP3jL9+OnAwTL6Z9IhYIbnkgxk0NWNe+TmUPtl1sm
+-E9LOLIGh7t2SMOE6XbEFM4OiZ5Nyhahf2EBlgSk9oYECgYEA/kIu49TRnbnaXIYh
+-jIBMUxI892tFYqN6Lxxz1n+An/uGm+CX92mhSoVzSqn6HsrEKTDot8LSlQyWZ5sP
+-eAT8IcKYHouMbbLLOFDZ4jm3jDx/wHmZU14skzLrEZ9y+rr0QdQ3+7dgtMhqs4DV
+-n61Udhph5frNbs2BOI403hs1M+UCgYEA7AljQRHBn/FHiBf+7I1aSwXFcAGhVIMH
+-s61VuDfhQZbL/X5+U6YF1cy3uyDQVQvTzmvAc6JTXOTXBhKMvuxn/Bqgq5aFoJmJ
+-F7bQLsRRzzDp8IylBmMyXysu9jmXa+yocwGGvSRpuAvMRw8MTs0oJ3tMcRRmU1in
+-jySmLaj1dhECgYEAq7BJNXNZ8GW1e9DfCp7/6wBfxrra6ZZ2RSWzWt5SHrWb2do5
+-A8qCLW4bwgkxamWFPENYge2+gQM09NUSBvtmve1HByk4NEMNUwPVfRt4Q+v+YBw8
+-Wr024Fb7wLSo0YI4udLx0rmrRagn1PpkRiSm6fE6ti87VVzTqzrrnCdHL7kCgYEA
+-qhEJhrS4gflixNglQWOHj06VN2K1TyMpxXg6rwT0NEHmsLsXYkXZJnbeWuIFuYFQ
+-FwbkH2zyC5iGpUVwS5AiTC8TXQ6TMWfusztxPIEPQO3JYRy1Oqj2fkOrDpXoWEao
+-CFUtM9KsqYM2qGxbPdvr9qaMKV29bIgQEr8hTPzT/0ECgYAMXndIG6nHWM8frU38
+-U7j2UxVPnrpi1UhPMLHPy16m3RhzLaZ6e/kR8cipVnm7BcW6XkA8a5D8EH2FRFkJ
+-99nTN1OXHa1reD7jym9CxgCcIcNNOF6rawcob6eICVYsCvu2Yaf+8e4Yl9Ra7O33
+-FhNi6I7WYCMbCh1SYxW9Zcclcw==
+------END PRIVATE KEY-----
+diff --git a/test/config/dovecot-lmtp/ssl/dovecot.pem b/test/config/dovecot-lmtp/ssl/dovecot.pem
+deleted file mode 100644
+index 36879e92..00000000
+--- a/test/config/dovecot-lmtp/ssl/dovecot.pem
++++ /dev/null
+@@ -1,22 +0,0 @@
+------BEGIN CERTIFICATE-----
+-MIIDnTCCAoWgAwIBAgIJAOj/MFaMvgN9MA0GCSqGSIb3DQEBCwUAMGUxHDAaBgNV
+-BAoME0RvdmVjb3QgbWFpbCBzZXJ2ZXIxEjAQBgNVBAsMCWxvY2FsaG9zdDESMBAG
+-A1UEAwwJbG9jYWxob3N0MR0wGwYJKoZIhvcNAQkBFg5yb290QGxvY2FsaG9zdDAe
+-Fw0xNjEyMzAxOTM3MDdaFw0yNjEyMzAxOTM3MDdaMGUxHDAaBgNVBAoME0RvdmVj
+-b3QgbWFpbCBzZXJ2ZXIxEjAQBgNVBAsMCWxvY2FsaG9zdDESMBAGA1UEAwwJbG9j
+-YWxob3N0MR0wGwYJKoZIhvcNAQkBFg5yb290QGxvY2FsaG9zdDCCASIwDQYJKoZI
+-hvcNAQEBBQADggEPADCCAQoCggEBAOpuViHmxm/JM2xts+TchZrmlm/nsZOj9mQc
+-Unw7cogg5RIv9QFXB7b3yiudic1qvrZmu0v8KBwl1acOISbq3/qUk2Nqp1VcpM/o
+-+WdeNWZTRaDDDXUcsWUquhoxDhGFWC61dHnslMETIhh8MF+i2ju6MdoXNrydOETc
+-GxWCsZwGNmBi1Vsl4DNG+4z+G5/FWV8s36lLMLGufJeS5kBi63xi639ztqssP4Db
+-RhrlvXIhb7sWyFJQMgJdr2WX8S5/ONoUuomKclJFYQUXQU1VjZAWSoKNBm/zprcU
+-/tRIKYMm08UOdjVlRVQmOjgk/otaLQ+vfjnzXhb7J290hEadADUCAwEAAaNQME4w
+-HQYDVR0OBBYEFGX+1qq4hMBPkQhIFZH75EI7rvpMMB8GA1UdIwQYMBaAFGX+1qq4
+-hMBPkQhIFZH75EI7rvpMMAwGA1UdEwQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB
+-AEm+lKAOnkj4ub4RwvwFleu5nyYAP4218k0IM6n52/N7WWXIJ1eYFl9qumEBfWu1
+-RQkC3Tr06UgEji3eO3gjyxjIEe+kAoyac320ppfHIhEoIy1v5xt4LLzjb3aXJal2
+-v3gvyyh5oIrtU6xZJ1XGmivdWRSg7if98AtC4YAjWh2Kq4WWsO/VImdG3uNNeNuQ
+-yVh8sffxIRO3/P/5ktF0lRM7NXZMtSzl7BtvV9aHY/iZ73T4uArqvzF8ayxZpbJO
+-c6j8SZBv5A2wByl8FDYdta13ANRybIGRhpPJPEYeEpEC7s9bKm7GTTMc0JX2L7Nx
+-jQM+vzvuCnID+tpo6qGo0Uo=
+------END CERTIFICATE-----
+diff --git a/test/mail_privacy.bats b/test/mail_privacy.bats
+index c824f1e7..9497c878 100644
+--- a/test/mail_privacy.bats
++++ b/test/mail_privacy.bats
+@@ -1,44 +1,42 @@
+ load 'test_helper/common'
+ 
+ function setup() {
+-    run_setup_file_if_necessary
++  run_setup_file_if_necessary
+ }
+ 
+ function teardown() {
+-    run_teardown_file_if_necessary
++  run_teardown_file_if_necessary
+ }
+ 
+ function setup_file() {
+-    local PRIVATE_CONFIG
+-    PRIVATE_CONFIG="$(duplicate_config_for_container .)"
+-    docker run -d --name mail_privacy \
+-              -v "${PRIVATE_CONFIG}":/tmp/docker-mailserver \
+-              -v "$(pwd)/test/test-files":/tmp/docker-mailserver-test:ro \
+-              -e SASL_PASSWD="external-domain.com username:password" \
+-              -e ENABLE_MANAGESIEVE=1 \
+-              --cap-add=SYS_PTRACE \
+-              -e PERMIT_DOCKER=host \
+-              -e DMS_DEBUG=0 \
+-              -h mail.my-domain.com -t "${NAME}"
+-
+-    wait_for_amavis_port_in_container mail_privacy
+-    wait_for_smtp_port_in_container mail_privacy
++  local PRIVATE_CONFIG
++  PRIVATE_CONFIG="$(duplicate_config_for_container .)"
++  docker run -d --name mail_privacy \
++    -v "${PRIVATE_CONFIG}":/tmp/docker-mailserver \
++    -v "$(pwd)/test/test-files":/tmp/docker-mailserver-test:ro \
++    -e SASL_PASSWD="external-domain.com username:password" \
++    -e ENABLE_MANAGESIEVE=1 \
++    --cap-add=SYS_PTRACE \
++    -e PERMIT_DOCKER=host \
++    -e DMS_DEBUG=0 \
++    -h mail.my-domain.com \
++    -e SSL_TYPE='snakeoil' \
++    --tty \
++    "${NAME}" # Image name
++
++  wait_for_amavis_port_in_container mail_privacy
++  wait_for_smtp_port_in_container mail_privacy
+ }
+ 
+ function teardown_file() {
+-    docker rm -f mail_privacy
++  docker rm -f mail_privacy
+ }
+ 
+ @test "first" {
+   skip 'this test must come first to reliably identify when to run setup_file'
+ }
+ 
+-#
+-# LDAP
+-#
+-
+-# postfix
+-
++# What this test should cover: https://github.com/docker-mailserver/docker-mailserver/issues/681
+ @test "checking postfix: remove privacy details of the sender" {
+   docker exec mail_privacy /bin/sh -c "openssl s_client -quiet -starttls smtp -connect 0.0.0.0:587 < /tmp/docker-mailserver-test/email-templates/send-privacy-email.txt"
+   # shellcheck disable=SC2016
+@@ -52,7 +50,6 @@ function teardown_file() {
+   assert_output 0
+ }
+ 
+-
+ @test "last" {
+   skip 'this test is only there to reliably mark the end for the teardown_file'
+ }
+diff --git a/test/mail_ssl_manual.bats b/test/mail_ssl_manual.bats
+index e6fe92f3..d7ba52f7 100644
+--- a/test/mail_ssl_manual.bats
++++ b/test/mail_ssl_manual.bats
+@@ -11,10 +11,10 @@ function teardown() {
+ 
+ function setup_file() {
+     # Internal copies made by `start-mailserver.sh`:
+-    export PRIMARY_KEY='/etc/postfix/ssl/key'
+-    export PRIMARY_CERT='/etc/postfix/ssl/cert'
+-    export FALLBACK_KEY='/etc/postfix/ssl/fallback_key'
+-    export FALLBACK_CERT='/etc/postfix/ssl/fallback_cert'
++    export PRIMARY_KEY='/etc/dms/tls/key'
++    export PRIMARY_CERT='/etc/dms/tls/cert'
++    export FALLBACK_KEY='/etc/dms/tls/fallback_key'
++    export FALLBACK_CERT='/etc/dms/tls/fallback_cert'
+ 
+     # Volume mounted certs:
+     export SSL_KEY_PATH='/config/ssl/key.ecdsa.pem'
+diff --git a/test/mail_with_ldap.bats b/test/mail_with_ldap.bats
+index ab0f91c5..cc2f1375 100644
+--- a/test/mail_with_ldap.bats
++++ b/test/mail_with_ldap.bats
+@@ -1,54 +1,73 @@
+ load 'test_helper/common'
+ 
+ function setup() {
+-    run_setup_file_if_necessary
++  run_setup_file_if_necessary
+ }
+ 
+ function teardown() {
+-    run_teardown_file_if_necessary
++  run_teardown_file_if_necessary
+ }
+ 
+ function setup_file() {
+-    pushd test/docker-openldap/ || return 1
+-    docker build -f Dockerfile -t ldap --no-cache .
+-    popd || return 1
+-
+-    docker run -d --name ldap_for_mail \
+-		-e LDAP_DOMAIN="localhost.localdomain" \
+-		-h ldap.my-domain.com -t ldap
+-
+-    local PRIVATE_CONFIG
+-    PRIVATE_CONFIG="$(duplicate_config_for_container .)"
+-    docker run -d --name mail_with_ldap \
+-		-v "${PRIVATE_CONFIG}":/tmp/docker-mailserver \
+-		-v "$(pwd)/test/test-files":/tmp/docker-mailserver-test:ro \
+-		-e ENABLE_LDAP=1 \
+-		-e LDAP_SERVER_HOST=ldap \
+-		-e LDAP_START_TLS=no \
+-		-e SPOOF_PROTECTION=1 \
+-		-e LDAP_SEARCH_BASE=ou=people,dc=localhost,dc=localdomain \
+-		-e LDAP_BIND_DN=cn=admin,dc=localhost,dc=localdomain \
+-		-e LDAP_BIND_PW=admin \
+-		-e LDAP_QUERY_FILTER_USER="(&(mail=%s)(mailEnabled=TRUE))" \
+-		-e LDAP_QUERY_FILTER_GROUP="(&(mailGroupMember=%s)(mailEnabled=TRUE))" \
+-		-e LDAP_QUERY_FILTER_ALIAS="(|(&(mailAlias=%s)(objectClass=PostfixBookMailForward))(&(mailAlias=%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE)))" \
+-		-e LDAP_QUERY_FILTER_DOMAIN="(|(&(mail=*@%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))(&(mailGroupMember=*@%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))(&(mailalias=*@%s)(objectClass=PostfixBookMailForward)))" \
+-		-e LDAP_QUERY_FILTER_SENDERS="(|(&(mail=%s)(mailEnabled=TRUE))(&(mailGroupMember=%s)(mailEnabled=TRUE))(|(&(mailAlias=%s)(objectClass=PostfixBookMailForward))(&(mailAlias=%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE)))(uniqueIdentifier=some.user.id))" \
+-		-e DOVECOT_TLS=no \
+-		-e DOVECOT_PASS_FILTER="(&(objectClass=PostfixBookMailAccount)(uniqueIdentifier=%n))" \
+-		-e DOVECOT_USER_FILTER="(&(objectClass=PostfixBookMailAccount)(uniqueIdentifier=%n))" \
+-		-e REPORT_RECIPIENT=1 \
+-		-e ENABLE_SASLAUTHD=1 \
+-		-e SASLAUTHD_MECHANISMS=ldap \
+-		-e POSTMASTER_ADDRESS=postmaster@localhost.localdomain \
+-		-e DMS_DEBUG=0 \
+-		--link ldap_for_mail:ldap \
+-		-h mail.my-domain.com -t "${NAME}"
+-    wait_for_smtp_port_in_container mail_with_ldap
++  pushd test/docker-openldap/ || return 1
++  docker build -f Dockerfile -t ldap --no-cache .
++  popd || return 1
++
++  export FQDN_MAIL='mail.my-domain.com'
++  export FQDN_LDAP='ldap.my-domain.com'
++  export FQDN_LOCALHOST_A='localhost.localdomain'
++  export FQDN_LOCALHOST_B='localhost.otherdomain'
++  export DMS_TEST_NETWORK='test-network-ldap'
++
++  # NOTE: If the network already exists, test will fail to start.
++  docker network create "${DMS_TEST_NETWORK}"
++
++  docker run -d --name ldap_for_mail \
++    --env LDAP_DOMAIN="${FQDN_LOCALHOST_A}" \
++    --network "${DMS_TEST_NETWORK}" \
++    --network-alias 'ldap' \
++    --hostname "${FQDN_LDAP}" \
++    --tty \
++    ldap # Image name
++
++  # _setup_ldap uses configomat with .ext files and ENV vars like DOVECOT_TLS with a prefix (eg DOVECOT_ or LDAP_)
++  local PRIVATE_CONFIG
++  PRIVATE_CONFIG="$(duplicate_config_for_container .)"
++  docker run -d --name mail_with_ldap \
++    -v "${PRIVATE_CONFIG}:/tmp/docker-mailserver" \
++    -v "$(pwd)/test/test-files:/tmp/docker-mailserver-test:ro" \
++    -e SPOOF_PROTECTION=1 \
++    -e ENABLE_LDAP=1 \
++    -e LDAP_SERVER_HOST=ldap \
++    -e LDAP_START_TLS=no \
++    -e LDAP_SEARCH_BASE=ou=people,dc=localhost,dc=localdomain \
++    -e LDAP_BIND_DN=cn=admin,dc=localhost,dc=localdomain \
++    -e LDAP_BIND_PW=admin \
++    -e LDAP_QUERY_FILTER_USER="(&(mail=%s)(mailEnabled=TRUE))" \
++    -e LDAP_QUERY_FILTER_GROUP="(&(mailGroupMember=%s)(mailEnabled=TRUE))" \
++    -e LDAP_QUERY_FILTER_ALIAS="(|(&(mailAlias=%s)(objectClass=PostfixBookMailForward))(&(mailAlias=%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE)))" \
++    -e LDAP_QUERY_FILTER_DOMAIN="(|(&(mail=*@%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))(&(mailGroupMember=*@%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE))(&(mailalias=*@%s)(objectClass=PostfixBookMailForward)))" \
++    -e LDAP_QUERY_FILTER_SENDERS="(|(&(mail=%s)(mailEnabled=TRUE))(&(mailGroupMember=%s)(mailEnabled=TRUE))(|(&(mailAlias=%s)(objectClass=PostfixBookMailForward))(&(mailAlias=%s)(objectClass=PostfixBookMailAccount)(mailEnabled=TRUE)))(uniqueIdentifier=some.user.id))" \
++    -e DOVECOT_TLS=no \
++    -e DOVECOT_PASS_FILTER="(&(objectClass=PostfixBookMailAccount)(uniqueIdentifier=%n))" \
++    -e DOVECOT_USER_FILTER="(&(objectClass=PostfixBookMailAccount)(uniqueIdentifier=%n))" \
++    -e REPORT_RECIPIENT=1 \
++    -e ENABLE_SASLAUTHD=1 \
++    -e SASLAUTHD_MECHANISMS=ldap \
++    -e POSTMASTER_ADDRESS="postmaster@${FQDN_LOCALHOST_A}" \
++    -e DMS_DEBUG=0 \
++    -e SSL_TYPE='snakeoil' \
++    --network "${DMS_TEST_NETWORK}" \
++    --hostname "${FQDN_MAIL}" \
++    --tty \
++    "${NAME}" # Image name
++
++  wait_for_smtp_port_in_container mail_with_ldap
+ }
+ 
+ function teardown_file() {
+-    docker rm -f ldap_for_mail mail_with_ldap
++  docker rm -f ldap_for_mail mail_with_ldap
++  docker network rm "${DMS_TEST_NETWORK}"
+ }
+ 
+ @test "first" {
+@@ -64,31 +83,31 @@ function teardown_file() {
+ 
+ # postfix
+ @test "checking postfix: ldap lookup works correctly" {
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.user@localhost.localdomain ldap:/etc/postfix/ldap-users.cf"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.user@${FQDN_LOCALHOST_A} ldap:/etc/postfix/ldap-users.cf"
+   assert_success
+-  assert_output "some.user@localhost.localdomain"
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q postmaster@localhost.localdomain ldap:/etc/postfix/ldap-aliases.cf"
++  assert_output "some.user@${FQDN_LOCALHOST_A}"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q postmaster@${FQDN_LOCALHOST_A} ldap:/etc/postfix/ldap-aliases.cf"
+   assert_success
+-  assert_output "some.user@localhost.localdomain"
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q employees@localhost.localdomain ldap:/etc/postfix/ldap-groups.cf"
++  assert_output "some.user@${FQDN_LOCALHOST_A}"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q employees@${FQDN_LOCALHOST_A} ldap:/etc/postfix/ldap-groups.cf"
+   assert_success
+-  assert_output "some.user@localhost.localdomain"
++  assert_output "some.user@${FQDN_LOCALHOST_A}"
+ 
+   # Test of the user part of the domain is not the same as the uniqueIdentifier part in the ldap
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.user.email@localhost.localdomain ldap:/etc/postfix/ldap-users.cf"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.user.email@${FQDN_LOCALHOST_A} ldap:/etc/postfix/ldap-users.cf"
+   assert_success
+-  assert_output "some.user.email@localhost.localdomain"
++  assert_output "some.user.email@${FQDN_LOCALHOST_A}"
+ 
+   # Test email receiving from a other domain then the primary domain of the mailserver
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.other.user@localhost.otherdomain ldap:/etc/postfix/ldap-users.cf"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q some.other.user@${FQDN_LOCALHOST_B} ldap:/etc/postfix/ldap-users.cf"
+   assert_success
+-  assert_output "some.other.user@localhost.otherdomain"
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q postmaster@localhost.otherdomain ldap:/etc/postfix/ldap-aliases.cf"
++  assert_output "some.other.user@${FQDN_LOCALHOST_B}"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q postmaster@${FQDN_LOCALHOST_B} ldap:/etc/postfix/ldap-aliases.cf"
+   assert_success
+-  assert_output "some.other.user@localhost.otherdomain"
+-  run docker exec mail_with_ldap /bin/sh -c "postmap -q employees@localhost.otherdomain ldap:/etc/postfix/ldap-groups.cf"
++  assert_output "some.other.user@${FQDN_LOCALHOST_B}"
++  run docker exec mail_with_ldap /bin/sh -c "postmap -q employees@${FQDN_LOCALHOST_B} ldap:/etc/postfix/ldap-groups.cf"
+   assert_success
+-  assert_output "some.other.user@localhost.otherdomain"
++  assert_output "some.other.user@${FQDN_LOCALHOST_B}"
+ }
+ 
+ @test "checking postfix: ldap custom config files copied" {
+@@ -136,17 +155,17 @@ function teardown_file() {
+ }
+ 
+ @test "checking dovecot: ldap mail delivery works" {
+-  run docker exec mail_with_ldap /bin/sh -c "sendmail -f user@external.tld some.user@localhost.localdomain < /tmp/docker-mailserver-test/email-templates/test-email.txt"
++  run docker exec mail_with_ldap /bin/sh -c "sendmail -f user@external.tld some.user@${FQDN_LOCALHOST_A} < /tmp/docker-mailserver-test/email-templates/test-email.txt"
+   sleep 10
+-  run docker exec mail_with_ldap /bin/sh -c "ls -A /var/mail/localhost.localdomain/some.user/new | wc -l"
++  run docker exec mail_with_ldap /bin/sh -c "ls -A /var/mail/${FQDN_LOCALHOST_A}/some.user/new | wc -l"
+   assert_success
+   assert_output 1
+ }
+ 
+ @test "checking dovecot: ldap mail delivery works for a different domain then the mailserver" {
+-  run docker exec mail_with_ldap /bin/sh -c "sendmail -f user@external.tld some.other.user@localhost.otherdomain < /tmp/docker-mailserver-test/email-templates/test-email.txt"
++  run docker exec mail_with_ldap /bin/sh -c "sendmail -f user@external.tld some.other.user@${FQDN_LOCALHOST_B} < /tmp/docker-mailserver-test/email-templates/test-email.txt"
+   sleep 10
+-  run docker exec mail_with_ldap /bin/sh -c "ls -A /var/mail/localhost.localdomain/some.other.user/new | wc -l"
++  run docker exec mail_with_ldap /bin/sh -c "ls -A /var/mail/${FQDN_LOCALHOST_A}/some.other.user/new | wc -l"
+   assert_success
+   assert_output 1
+ }
+@@ -163,7 +182,7 @@ function teardown_file() {
+ }
+ 
+ @test "checking dovecot: postmaster address" {
+-  run docker exec mail_with_ldap /bin/sh -c "grep 'postmaster_address = postmaster@localhost.localdomain' /etc/dovecot/conf.d/15-lda.conf"
++  run docker exec mail_with_ldap /bin/sh -c "grep 'postmaster_address = postmaster@${FQDN_LOCALHOST_A}' /etc/dovecot/conf.d/15-lda.conf"
+   assert_success
+ }
+ 
+@@ -220,7 +239,7 @@ function teardown_file() {
+ 
+ @test "checking pflogsum delivery" {
+   # checking default sender is correctly set when env variable not defined
+-  run docker exec mail_with_ldap grep "mailserver-report@mail.my-domain.com" /etc/logrotate.d/maillog
++  run docker exec mail_with_ldap grep "mailserver-report@${FQDN_MAIL}" /etc/logrotate.d/maillog
+   assert_success
+ 
+   # checking default logrotation setup
+diff --git a/test/tests.bats b/test/tests.bats
+index 327693a3..9eaf64c0 100644
+--- a/test/tests.bats
++++ b/test/tests.bats
+@@ -14,27 +14,30 @@ setup_file() {
+   PRIVATE_CONFIG="$(duplicate_config_for_container . mail)"
+   mv "${PRIVATE_CONFIG}/user-patches/user-patches.sh" "${PRIVATE_CONFIG}/user-patches.sh"
+   docker run --rm -d --name mail \
+-		-v "${PRIVATE_CONFIG}":/tmp/docker-mailserver \
+-		-v "$(pwd)/test/test-files":/tmp/docker-mailserver-test:ro \
+-		-v "$(pwd)/test/onedir":/var/mail-state \
+-		-e ENABLE_CLAMAV=1 \
+-		-e SPOOF_PROTECTION=1 \
+-		-e ENABLE_SPAMASSASSIN=1 \
+-		-e REPORT_RECIPIENT=user1@localhost.localdomain \
+-		-e REPORT_SENDER=report1@mail.my-domain.com \
+-		-e SA_TAG=-5.0 \
+-		-e SA_TAG2=2.0 \
+-		-e SA_KILL=3.0 \
+-		-e AMAVIS_LOGLEVEL=2 \
+-		-e SA_SPAM_SUBJECT="SPAM: " \
+-		-e VIRUSMAILS_DELETE_DELAY=7 \
+-		-e ENABLE_SRS=1 \
+-		-e SASL_PASSWD="external-domain.com username:password" \
+-		-e ENABLE_MANAGESIEVE=1 \
+-		--cap-add=SYS_PTRACE \
+-		-e PERMIT_DOCKER=host \
+-		-e DMS_DEBUG=0 \
+-		-h mail.my-domain.com -t "${NAME}"
++    -v "${PRIVATE_CONFIG}":/tmp/docker-mailserver \
++    -v "$(pwd)/test/test-files":/tmp/docker-mailserver-test:ro \
++    -v "$(pwd)/test/onedir":/var/mail-state \
++    -e ENABLE_CLAMAV=1 \
++    -e SPOOF_PROTECTION=1 \
++    -e ENABLE_SPAMASSASSIN=1 \
++    -e REPORT_RECIPIENT=user1@localhost.localdomain \
++    -e REPORT_SENDER=report1@mail.my-domain.com \
++    -e SA_TAG=-5.0 \
++    -e SA_TAG2=2.0 \
++    -e SA_KILL=3.0 \
++    -e AMAVIS_LOGLEVEL=2 \
++    -e SA_SPAM_SUBJECT="SPAM: " \
++    -e VIRUSMAILS_DELETE_DELAY=7 \
++    -e ENABLE_SRS=1 \
++    -e SASL_PASSWD="external-domain.com username:password" \
++    -e ENABLE_MANAGESIEVE=1 \
++    -e PERMIT_DOCKER=host \
++    -e DMS_DEBUG=0 \
++    -e SSL_TYPE='snakeoil' \
++    -h mail.my-domain.com \
++    --cap-add=SYS_PTRACE \
++    --tty \
++    "${NAME}"
+ 
+   wait_for_finished_setup_in_container mail
+ 
+@@ -43,34 +46,34 @@ setup_file() {
+   docker exec mail addmailuser pass@localhost.localdomain 'may be \a `p^a.*ssword'
+ 
+   # setup sieve
+-	docker cp "${PRIVATE_CONFIG}/sieve/dovecot.sieve" mail:/var/mail/localhost.localdomain/user1/.dovecot.sieve
++  docker cp "${PRIVATE_CONFIG}/sieve/dovecot.sieve" mail:/var/mail/localhost.localdomain/user1/.dovecot.sieve
+ 
+   # this relies on the checksum file beeing updated after all changes have been applied
+   wait_for_changes_to_be_detected_in_container mail
+ 
+-	wait_for_smtp_port_in_container mail
++  wait_for_smtp_port_in_container mail
+ 
+   # wait for clamav to be fully setup or we will get errors on the log
+   repeat_in_container_until_success_or_timeout 60 mail test -e /var/run/clamav/clamd.ctl
+ 
+   # sending test mails
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/amavis-spam.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/amavis-virus.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-external.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-local.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-recipient-delimiter.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user1.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user2.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user3.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-added.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user-and-cc-local-alias.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-regexp-alias-external.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-regexp-alias-local.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-catchall-local.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/sieve-spam-folder.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/sieve-pipe.txt"
+-	docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/non-existing-user.txt"
+-	docker exec mail /bin/sh -c "sendmail root < /tmp/docker-mailserver-test/email-templates/root-email.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/amavis-spam.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/amavis-virus.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-external.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-local.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-alias-recipient-delimiter.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user1.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user2.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user3.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-added.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-user-and-cc-local-alias.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-regexp-alias-external.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-regexp-alias-local.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/existing-catchall-local.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/sieve-spam-folder.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/sieve-pipe.txt"
++  docker exec mail /bin/sh -c "nc 0.0.0.0 25 < /tmp/docker-mailserver-test/email-templates/non-existing-user.txt"
++  docker exec mail /bin/sh -c "sendmail root < /tmp/docker-mailserver-test/email-templates/root-email.txt"
+ 
+   wait_for_empty_mail_queue_in_container mail
+ }
+@@ -432,20 +435,6 @@ EOF
+   assert_success
+ }
+ 
+-#
+-# ssl
+-#
+-
+-@test "checking ssl: generated default cert works correctly" {
+-  run docker exec mail /bin/sh -c "timeout 1 openssl s_client -connect 0.0.0.0:587 -starttls smtp -CApath /etc/ssl/certs/ | grep 'Verify return code: 0 (ok)'"
+-  assert_success
+-}
+-
+-@test "checking ssl: lets-encrypt-x3-cross-signed.pem is installed" {
+-  run docker exec mail grep 'BEGIN CERTIFICATE' /etc/ssl/certs/lets-encrypt-x3-cross-signed.pem
+-  assert_success
+-}
+-
+ #
+ # postsrsd
+ #
+@@ -701,86 +690,86 @@ EOF
+ 
+ 
+ @test "checking quota: setquota user must be existing" {
+-    run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
+-    assert_success
++  run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
++  assert_success
+ 
+-    run docker exec mail /bin/sh -c "setquota quota_user 50M"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 50M"
+-    assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user 50M"
++  assert_failure
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 50M"
++  assert_success
+ 
+-    run docker exec mail /bin/sh -c "setquota username@fulldomain 50M"
+-    assert_failure
++  run docker exec mail /bin/sh -c "setquota username@fulldomain 50M"
++  assert_failure
+ 
+-    run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
+-    assert_success
++  run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
++  assert_success
+ }
+ @test "checking quota: setquota <quota> must be well formatted" {
+-    run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
+-    assert_success
++  run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
++  assert_success
+ 
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 26GIGOTS"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 123"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld M"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld -60M"
+-    assert_failure
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 26GIGOTS"
++  assert_failure
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 123"
++  assert_failure
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld M"
++  assert_failure
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld -60M"
++  assert_failure
+ 
+ 
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10B"
+-    assert_success
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10k"
+-    assert_success
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10M"
+-    assert_success
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10G"
+-    assert_success
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10T"
+-    assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10B"
++  assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10k"
++  assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10M"
++  assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10G"
++  assert_success
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10T"
++  assert_success
+ 
+ 
+-    run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
+-    assert_success
++  run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
++  assert_success
+ }
+ 
+ 
+ @test "checking quota: delquota user must be existing" {
+-    run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
+-    assert_success
+-
+-    run docker exec mail /bin/sh -c "delquota uota_user@domain.tld"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "delquota quota_user"
+-    assert_failure
+-    run docker exec mail /bin/sh -c "delquota dontknowyou@domain.tld"
+-    assert_failure
+-
+-    run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10T"
+-    assert_success
+-    run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
+-    assert_success
+-    run docker exec mail /bin/sh -c "grep -i 'quota_user@domain.tld' /tmp/docker-mailserver/dovecot-quotas.cf"
+-    assert_failure
+-
+-    run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
+-    assert_success
++  run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
++  assert_success
++
++  run docker exec mail /bin/sh -c "delquota uota_user@domain.tld"
++  assert_failure
++  run docker exec mail /bin/sh -c "delquota quota_user"
++  assert_failure
++  run docker exec mail /bin/sh -c "delquota dontknowyou@domain.tld"
++  assert_failure
++
++  run docker exec mail /bin/sh -c "setquota quota_user@domain.tld 10T"
++  assert_success
++  run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
++  assert_success
++  run docker exec mail /bin/sh -c "grep -i 'quota_user@domain.tld' /tmp/docker-mailserver/dovecot-quotas.cf"
++  assert_failure
++
++  run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
++  assert_success
+ }
+ @test "checking quota: delquota allow when no quota for existing user" {
+-    run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
+-    assert_success
++  run docker exec mail /bin/sh -c "addmailuser quota_user@domain.tld mypassword"
++  assert_success
+ 
+-    run docker exec mail /bin/sh -c "grep -i 'quota_user@domain.tld' /tmp/docker-mailserver/dovecot-quotas.cf"
+-    assert_failure
++  run docker exec mail /bin/sh -c "grep -i 'quota_user@domain.tld' /tmp/docker-mailserver/dovecot-quotas.cf"
++  assert_failure
+ 
+-    run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
+-    assert_success
+-    run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
+-    assert_success
++  run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
++  assert_success
++  run docker exec mail /bin/sh -c "delquota quota_user@domain.tld"
++  assert_success
+ 
+-    run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
+-    assert_success
++  run docker exec mail /bin/sh -c "delmailuser -y quota_user@domain.tld"
++  assert_success
+ }
+ 
+ @test "checking quota: dovecot quota present in postconf" {
+@@ -1216,60 +1205,6 @@ EOF
+   assert_failure
+ }
+ 
+-
+-#
+-# PCI compliance
+-#
+-
+-# dovecot
+-@test "checking dovecot: only A grade TLS ciphers are used" {
+-  run docker run --rm -i --link mail:dovecot \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 993 dovecot | grep "least strength: A"'
+-  assert_success
+-}
+-
+-@test "checking dovecot: nmap produces no warnings on TLS ciphers verifying" {
+-  run docker run --rm -i --link mail:dovecot \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 993 dovecot | grep "warnings" | wc -l'
+-  assert_success
+-  assert_output 0
+-}
+-
+-# postfix submission TLS
+-@test "checking postfix submission: only A grade TLS ciphers are used" {
+-  run docker run --rm -i --link mail:postfix \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 587 postfix | grep "least strength: A"'
+-  assert_success
+-}
+-
+-@test "checking postfix submission: nmap produces no warnings on TLS ciphers verifying" {
+-  run docker run --rm -i --link mail:postfix \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 587 postfix | grep "warnings" | wc -l'
+-  assert_success
+-  assert_output 0
+-}
+-
+-# postfix smtps SSL
+-@test "checking postfix smtps: only A grade TLS ciphers are used" {
+-  run docker run --rm -i --link mail:postfix \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 465 postfix | grep "least strength: A"'
+-  assert_success
+-}
+-
+-@test "checking postfix smtps: nmap produces no warnings on TLS ciphers verifying" {
+-  run docker run --rm -i --link mail:postfix \
+-    --entrypoint sh instrumentisto/nmap -c \
+-      'nmap --script ssl-enum-ciphers -p 465 postfix | grep "warnings" | wc -l'
+-  assert_success
+-  assert_output 0
+-}
+-
+-
+ #
+ # supervisor
+ #

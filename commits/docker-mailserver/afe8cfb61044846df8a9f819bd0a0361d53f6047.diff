@@ -1,0 +1,332 @@
+commit afe8cfb61044846df8a9f819bd0a0361d53f6047 (from 2b4b829067da4178b63a091ea0fba930777cf06d)
+Merge: 2b4b8290 9e1c4783
+Author: Thomas VIAL <github@ifusio.com>
+Date:   Sun Apr 24 17:51:51 2016 +0200
+
+    Merge pull request #157 from tomav/refactored-documentation-in-readme-and-wiki
+    
+    Refactored documentation and Wiki
+    Moved docker-compose.yml.dist to version 2 with data volume container
+    Renamed DMS_SSL to SSL_TYPE
+    Refactored start-mailserver to avoid DKIM errors
+
+diff --git a/.gitignore b/.gitignore
+index f2ba07d9..357344b5 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,6 +1,4 @@
+ .DS_Store
+ docker-compose.yml
+-postfix/ssl/*
+-letsencrypt/
+ .idea
+ test/config/empty/
+diff --git a/README.md b/README.md
+index 8aaa7b5f..ba670b15 100644
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,12 @@
+-# docker-mailserver
++# docker-mailserver [![Build Status](https://travis-ci.org/tomav/docker-mailserver.svg?branch=v2)](https://travis-ci.org/tomav/docker-mailserver)
++
+ 
+ ```
+ #
+-# CURRENTLY IN BETA
++# CURRENTLY IN RELEASE CANDIDATE
+ #
+ ```
+ 
+-[![Build Status](https://travis-ci.org/tomav/docker-mailserver.svg?branch=v2)](https://travis-ci.org/tomav/docker-mailserver)
+ 
+ A fullstack but simple mail server (smtp, imap, antispam, antivirus...).
+ Only configuration files, no SQL database. Keep it simple and versioned.
+@@ -28,101 +28,72 @@ Includes:
+ 
+ Why I created this image: [Simple mail server with Docker](http://tvi.al/simple-mail-server-with-docker/)
+ 
+-Before you open an issue, please have a look this `README`, the [FAQ](https://github.com/tomav/docker-mailserver/wiki/FAQ) and Postfix/Dovecot documentation.
+-
+-## Project architecture
++Before you open an issue, please have a look this `README`, the [Wiki](https://github.com/tomav/docker-mailserver/wiki/) and Postfix/Dovecot documentation.
+ 
+-    ├── config                    # User: personal configurations
+-    ├── docker-compose.yml.dist   # User: 'docker-compose.yml' example
+-    ├── target                    # Developer: default server configurations
+-    └── test                      # Developer: integration tests
++## Usage
+ 
+-## Basic usage
+-
+-    # get v2 image
++#### Get v2 image
++ 
+     docker pull tvial/docker-mailserver:v2
+ 
+-    # create a "docker-compose.yml" file containing:
+-    mail:
+-      image: tvial/docker-mailserver:v2
+-      hostname: mail
+-      domainname: domain.com
+-      # your FQDN will be 'mail.domain.com'
+-      ports:
+-      - "25:v25"
+-      - "143:143"
+-      - "587:587"
+-      - "993:993"
+-      volumes:
+-      - ./config/:/tmp/docker-mailserver/
+-
+-    # Create your first mail account
+-    # Don't forget to adapt MAIL_USER and MAIL_PASS to your needs
+-    mkdir -p config
+-    docker run --rm \
+-      -e MAIL_USER=user1@domain.tld \
+-      -e MAIL_PASS=mypassword \
+-      -ti tvial/docker-mailserver:v2 \
+-      /bin/sh -c 'echo "$MAIL_USER|$(doveadm pw -s CRAM-MD5 -u $MAIL_USER -p $MAIL_PASS)"' >> config/postfix-accounts.cf
+-
+-    # start the container
+-    docker-compose up -d mail
+-
+-You're done!
++#### Create a `docker-compose.yml`
+ 
+-## Managing users and aliases
++Adapt this file with your FQDN.
+ 
+-### Users
++    version: '2'
+ 
+-As you've seen above, users are managed in `config/postfix-accounts.cf`.
+-Just add the full email address and its encrypted password separated by a pipe.
++    services:
++      mail:
++        image: tvial/docker-mailserver:v2
++        # build: .
++        hostname: mail
++        domainname: domain.com
++        container_name: mail
++        volumes:
++        - maildata:/var/mail
++        ports:
++        - "25:25"
++        - "143:143"
++        - "587:587"
++        - "993:993"
++        volumes:
++        - ./config/:/tmp/docker-mailserver/
++        - ./opendkim/:/tmp/docker-mailserver/opendkim/
+ 
+-Example:
++    volumes:
++      maildata:
++        driver: local
+ 
+-    user1@domain.tld|{CRAM-MD5}mypassword-cram-md5-encrypted
+-    user2@otherdomain.tld|{CRAM-MD5}myotherpassword-cram-md5-encrypted
++#### Create your mail accounts
+ 
+-To generate the password you could run for example the following:
++Don't forget to adapt MAIL_USER and MAIL_PASS to your needs
+ 
++    mkdir -p config
+     docker run --rm \
+       -e MAIL_USER=user1@domain.tld \
++      -e MAIL_PASS=mypassword \
+       -ti tvial/docker-mailserver:v2 \
+-      /bin/sh -c 'echo "$MAIL_USER|$(doveadm pw -s CRAM-MD5 -u $MAIL_USER )"'
+-
+-You will be asked for a password. Just copy all the output string in the file `config/postfix-accounts.cf`.
+-
+-    The `doveadm pw` command let you choose between several encryption schemes for the password.
+-    Use doveadm pw -l to get a list of the currently supported encryption schemes.
+-
+-### Aliases
++      /bin/sh -c 'echo "$MAIL_USER|$(doveadm pw -s CRAM-MD5 -u $MAIL_USER -p $MAIL_PASS)"' >> config/postfix-accounts.cf
+ 
+-Please first read [Postfix documentation on virtual aliases](http://www.postfix.org/VIRTUAL_README.html#virtual_alias).
++#### Generate DKIM keys 
+ 
+-Aliases are managed in `config/postfix-virtual.cf`.
+-An alias is a full email address that will be:
+-* delivered to an existing account in `config/postfix-accounts.cf`
+-* redirected to one or more other email addresses
++    docker run --rm \
++      -v "$(pwd)/config":/tmp/docker-mailserver \
++      -ti tvial/docker-mailserver:v2 generate-dkim-config
+ 
+-Alias and target are space separated.
++Now the keys are generated, you can configure your DNS server by just pasting the content of `config/opedkim/keys/domain.tld/mail.txt` in your `domain.tld.hosts` zone.
+ 
+-Example:
++#### Start the container
+ 
+-    # Alias to existing account
+-    alias1@domain.tld user1@domain.tld
++    docker-compose up -d mail
+ 
+-    # Forward to external email address
+-    alias2@domain.tld external@gmail.com
++You're done!
+ 
+ ## Environment variables
+ 
+-Value in **bold** is the default value.
+-
+-##### DMS_SSL
++Please check [how the container starts](https://github.com/tomav/docker-mailserver/blob/v2/start-mailserver.sh) to understand what's expected.
+ 
+-  - **empty** => SSL disabled
+-  - letsencrypt => Enables Let's Encrypt certificates
+-  - custom => Enables custom certificates
+-  - self-signed => Enables self-signed certificates
++Value in **bold** is the default value.
+ 
+ ##### ENABLE_POP3
+ 
+@@ -163,34 +134,13 @@ Otherwise, `iptables` won't be able to ban IPs.
+   - **empty** => all daemons start
+   - 1 => only launch postfix smtp
+ 
+-Please check [how the container starts](https://github.com/tomav/docker-mailserver/blob/v2/start-mailserver.sh) to understand what's expected.
+-
+-## OpenDKIM
+-
+-You have prepared your mail accounts? Now you can generate DKIM keys using the following command:
+-
+-    docker run --rm \
+-      -v "$(pwd)/config":/tmp/docker-mailserver \
+-      -ti tvial/docker-mailserver:v2 generate-dkim-config
+-
+-Don't forget to mount `config/opendkim/` to `/tmp/docker-mailserver/opendkim/` in order to use it.
+-
+-Now the keys are generated, you can configure your DNS server by just pasting the content of `config/opedkim/keys/domain.tld/mail.txt` in your `domain.tld.hosts` zone.
++##### SSL_TYPE
+ 
+-## SSL
+-
+-Please read [the SSL page in the wiki](https://github.com/tomav/docker-mailserver/wiki/SSL) for more information.
+-
+-## Todo
++  - **empty** => SSL disabled
++  - letsencrypt => Enables Let's Encrypt certificates
++  - custom => Enables custom certificates
++  - self-signed => Enables self-signed certificates
+ 
+-Things to do or to improve are stored on [Github](https://github.com/tomav/docker-mailserver/issues).
+-Feel free to improve this docker image.
++Please read [the SSL page in the wiki](https://github.com/tomav/docker-mailserver/wiki/Configure-SSL) for more information.
+ 
+-## Contribute
+ 
+-- Fork
+-- Improve
+-- Add integration tests in `test/tests.bats`
+-- Build image and run tests using `make`
+-- Document your improvements
+-- Commit, push and make a pull-request
+diff --git a/config/spamassassin-rules.cf b/config/spamassassin-rules.cf
+index 891e84ff..e69de29b 100644
+--- a/config/spamassassin-rules.cf
++++ b/config/spamassassin-rules.cf
+@@ -1 +0,0 @@
+-# Place you custom Spamassasin rules here
+\ No newline at end of file
+diff --git a/docker-compose.yml.dist b/docker-compose.yml.dist
+index 61e3088e..ccb4927d 100644
+--- a/docker-compose.yml.dist
++++ b/docker-compose.yml.dist
+@@ -1,14 +1,26 @@
+-mail:
+-  image: tvial/docker-mailserver:v2
+-  # build: .
+-  hostname: mail
+-  domainname: domain.com
+-  volumes_from:
+-   - maildata
+-  ports:
+-  - "25:25"
+-  - "143:143"
+-  - "587:587"
+-  - "993:993"
+-  volumes:
+-  - ./config/:/tmp/docker-mailserver/
++version: '2'
++
++services:
++  mail:
++    image: tvial/docker-mailserver:v2
++    hostname: mail
++    domainname: domain.com
++    container_name: mail
++    volumes:
++    - maildata:/var/mail
++    ports:
++    - "25:25"
++    - "143:143"
++    - "587:587"
++    - "993:993"
++    volumes:
++    - ./config/:/tmp/docker-mailserver/
++    - ./opendkim/:/tmp/docker-mailserver/opendkim/
++    environment:
++    - ENABLE_FAIL2BAN=1
++    cap_add:
++    - NET_ADMIN
++
++volumes:
++  maildata:
++    driver: local
+diff --git a/target/start-mailserver.sh b/target/start-mailserver.sh
+index f8503633..46a80c76 100644
+--- a/target/start-mailserver.sh
++++ b/target/start-mailserver.sh
+@@ -49,7 +49,6 @@ if [ -f /tmp/docker-mailserver/postfix-accounts.cf ]; then
+       maildirmake.dovecot "/var/mail/${domain}/${user}/.Drafts"
+       echo -e "INBOX\nSent\nTrash\nDrafts" >> "/var/mail/${domain}/${user}/subscriptions"
+       touch "/var/mail/${domain}/${user}/.Sent/maildirfolder"
+-
+     fi
+     echo ${domain} >> /tmp/vhost.tmp
+   done < /tmp/docker-mailserver/postfix-accounts.cf
+@@ -89,16 +88,15 @@ if [ -e "/tmp/docker-mailserver/opendkim/KeyTable" ]; then
+   mkdir -p /etc/opendkim
+   cp -a /tmp/docker-mailserver/opendkim/* /etc/opendkim/
+   echo "DKIM keys added for: `ls -C /etc/opendkim/keys/`"
++  echo "Changing permissions on /etc/opendkim"
++  # chown entire directory
++  chown -R opendkim:opendkim /etc/opendkim/
++  # And make sure permissions are right
++  chmod -R 0700 /etc/opendkim/keys/
+ else
+   echo "No DKIM key provided. Check the documentation to find how to get your keys."
+ fi
+ 
+-echo "Changing permissions on /etc/opendkim"
+-# chown entire directory
+-chown -R opendkim:opendkim /etc/opendkim/
+-# And make sure permissions are right
+-chmod -R 0700 /etc/opendkim/keys/
+-
+ # DMARC
+ # if there is no AuthservID create it
+ if [ `cat /etc/opendmarc.conf | grep -w AuthservID | wc -l` -eq 0 ]; then
+@@ -113,7 +111,7 @@ if [ ! -f "/etc/opendmarc/ignore.hosts" ]; then
+ fi
+ 
+ # SSL Configuration
+-case $DMS_SSL in
++case $SSL_TYPE in
+   "letsencrypt" )
+     # letsencrypt folders and files mounted in /etc/letsencrypt
+     if [ -e "/etc/letsencrypt/live/$(hostname)/cert.pem" ] \
+@@ -225,7 +223,7 @@ SA_KILL=${SA_KILL:="6.31"} && sed -i -r 's/^\$sa_kill_level_deflt (.*);/\$sa_kil
+ test -e /tmp/docker-mailserver/spamassassin-rules.cf && cp /tmp/docker-mailserver/spamassassin-rules.cf /etc/spamassassin/
+ 
+ # Disable logrotate config for fail2ban if not enabled
+-test -z "$ENABLE_FAIL2BAN"&& rm -f /etc/logrotate.d/fail2ban
++test -z "$ENABLE_FAIL2BAN" && rm -f /etc/logrotate.d/fail2ban
+ # Fix cron.daily for spamassassin
+ sed -i -e 's/invoke-rc.d spamassassin reload/\/etc\/init\.d\/spamassassin reload/g' /etc/cron.daily/spamassassin
+ 

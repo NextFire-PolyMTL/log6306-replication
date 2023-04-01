@@ -1,0 +1,6010 @@
+commit cc427b1307025d89cb53a73c7aeb0292a18f3c90 (from 8accb8865afd600a2116af8287b59e45c689ef1f)
+Merge: 8accb8865af 00cdb5e36a3
+Author: Torkel Ödegaard <torkel.odegaard@gmail.com>
+Date:   Fri Apr 10 17:45:01 2015 +0200
+
+    Merge branch 'master' into packaging_refactoring
+
+diff --git a/public/app/panels/graph/graph.tooltip.js b/public/app/panels/graph/graph.tooltip.js
+index 724588c4fd5..33c29e4e14a 100644
+--- a/public/app/panels/graph/graph.tooltip.js
++++ b/public/app/panels/graph/graph.tooltip.js
+@@ -82,14 +82,17 @@ function ($) {
+     };
+ 
+     elem.mouseleave(function () {
+-      if (scope.panel.tooltip.shared || dashboard.sharedCrosshair) {
++      if (scope.panel.tooltip.shared) {
+         var plot = elem.data().plot;
+         if (plot) {
+           $tooltip.detach();
+           plot.unhighlight();
+-          scope.appEvent('clearCrosshair');
+         }
+       }
++
++      if (dashboard.sharedCrosshair) {
++        scope.appEvent('clearCrosshair');
++      }
+     });
+ 
+     elem.bind("plothover", function (event, pos, item) {
+diff --git a/public/app/partials/help_modal.html b/public/app/partials/help_modal.html
+index e8c63fbc2ea..5b9452a94f3 100644
+--- a/public/app/partials/help_modal.html
++++ b/public/app/partials/help_modal.html
+@@ -2,7 +2,7 @@
+ 	<div class="gf-box-header">
+ 		<div class="gf-box-title">
+ 			<i class="fa fa-keyboard-o"></i>
+-			Keyboard shutcuts
++			Keyboard shortcuts
+ 		</div>
+ 
+ 		<button class="gf-box-header-close-btn" ng-click="dismiss();">
+diff --git a/public/app/plugins/datasource/influxdb/datasource.js b/public/app/plugins/datasource/influxdb/datasource.js
+index 3ce22f8743b..35fb495c740 100644
+--- a/public/app/plugins/datasource/influxdb/datasource.js
++++ b/public/app/plugins/datasource/influxdb/datasource.js
+@@ -105,6 +105,9 @@ function (angular, _, kbn, InfluxSeries, InfluxQueryBuilder) {
+         case 'TAG_VALUES':
+           var tagValues = _.flatten(series.values);
+           return _.map(tagValues, function(tagValue) { return { text: tagValue, expandable: true }; });
++        default: // template values service does not pass in a a query type
++          var flattenedValues = _.flatten(series.values);
++          return _.map(flattenedValues, function(value) { return { text: value, expandable: true }; });
+         }
+       });
+     };
+
+commit cc427b1307025d89cb53a73c7aeb0292a18f3c90 (from 00cdb5e36a3ee4fd6dad8af0fc6fe8b6bf075d39)
+Merge: 8accb8865af 00cdb5e36a3
+Author: Torkel Ödegaard <torkel.odegaard@gmail.com>
+Date:   Fri Apr 10 17:45:01 2015 +0200
+
+    Merge branch 'master' into packaging_refactoring
+
+diff --git a/.bra.toml b/.bra.toml
+index 4b5566c51a7..e832e9beee5 100644
+--- a/.bra.toml
++++ b/.bra.toml
+@@ -1,7 +1,7 @@
+ [run]
+ init_cmds = [
+-  ["go", "build", "-o", "./bin/grafana"],
+-	["./bin/grafana", "web"]
++  ["go", "build", "-o", "./bin/grafana-server"],
++	["./bin/grafana-server"]
+ ]
+ watch_all = true
+ watch_dirs = [
+@@ -12,6 +12,6 @@ watch_dirs = [
+ watch_exts = [".go", ".ini"]
+ build_delay = 1500
+ cmds = [
+-  ["go", "build", "-o", "./bin/grafana"],
+-	["./bin/grafana", "web"]
++  ["go", "build", "-o", "./bin/grafana-server"],
++	["./bin/grafana-server"]
+ ]
+diff --git a/Godeps/Godeps.json b/Godeps/Godeps.json
+index a0fd9b0c442..3d7abc0c349 100644
+--- a/Godeps/Godeps.json
++++ b/Godeps/Godeps.json
+@@ -13,11 +13,6 @@
+ 			"ImportPath": "github.com/Unknwon/macaron",
+ 			"Rev": "93de4f3fad97bf246b838f828e2348f46f21f20a"
+ 		},
+-		{
+-			"ImportPath": "github.com/codegangsta/cli",
+-			"Comment": "1.2.0-38-g9908e96",
+-			"Rev": "9908e96513e5a94de37004098a3974a567f18111"
+-		},
+ 		{
+ 			"ImportPath": "github.com/go-sql-driver/mysql",
+ 			"Comment": "v1.2-26-g9543750",
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/.travis.yml b/Godeps/_workspace/src/github.com/codegangsta/cli/.travis.yml
+deleted file mode 100644
+index baf46abc6f0..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/.travis.yml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-language: go
+-go: 1.1
+-
+-script:
+-- go vet ./...
+-- go test -v ./...
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/LICENSE b/Godeps/_workspace/src/github.com/codegangsta/cli/LICENSE
+deleted file mode 100644
+index 5515ccfb716..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/LICENSE
++++ /dev/null
+@@ -1,21 +0,0 @@
+-Copyright (C) 2013 Jeremy Saenz
+-All Rights Reserved.
+-
+-MIT LICENSE
+-
+-Permission is hereby granted, free of charge, to any person obtaining a copy of
+-this software and associated documentation files (the "Software"), to deal in
+-the Software without restriction, including without limitation the rights to
+-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+-the Software, and to permit persons to whom the Software is furnished to do so,
+-subject to the following conditions:
+-
+-The above copyright notice and this permission notice shall be included in all
+-copies or substantial portions of the Software.
+-
+-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/README.md b/Godeps/_workspace/src/github.com/codegangsta/cli/README.md
+deleted file mode 100644
+index e0fdace3198..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/README.md
++++ /dev/null
+@@ -1,285 +0,0 @@
+-[![Build Status](https://travis-ci.org/codegangsta/cli.png?branch=master)](https://travis-ci.org/codegangsta/cli)
+-
+-# cli.go
+-cli.go is simple, fast, and fun package for building command line apps in Go. The goal is to enable developers to write fast and distributable command line applications in an expressive way.
+-
+-You can view the API docs here:
+-http://godoc.org/github.com/codegangsta/cli
+-
+-## Overview
+-Command line apps are usually so tiny that there is absolutely no reason why your code should *not* be self-documenting. Things like generating help text and parsing command flags/options should not hinder productivity when writing a command line app.
+-
+-**This is where cli.go comes into play.** cli.go makes command line programming fun, organized, and expressive!
+-
+-## Installation
+-Make sure you have a working Go environment (go 1.1 is *required*). [See the install instructions](http://golang.org/doc/install.html).
+-
+-To install `cli.go`, simply run:
+-```
+-$ go get github.com/codegangsta/cli
+-```
+-
+-Make sure your `PATH` includes to the `$GOPATH/bin` directory so your commands can be easily used:
+-```
+-export PATH=$PATH:$GOPATH/bin
+-```
+-
+-## Getting Started
+-One of the philosophies behind cli.go is that an API should be playful and full of discovery. So a cli.go app can be as little as one line of code in `main()`. 
+-
+-``` go
+-package main
+-
+-import (
+-  "os"
+-  "github.com/codegangsta/cli"
+-)
+-
+-func main() {
+-  cli.NewApp().Run(os.Args)
+-}
+-```
+-
+-This app will run and show help text, but is not very useful. Let's give an action to execute and some help documentation:
+-
+-``` go
+-package main
+-
+-import (
+-  "os"
+-  "github.com/codegangsta/cli"
+-)
+-
+-func main() {
+-  app := cli.NewApp()
+-  app.Name = "boom"
+-  app.Usage = "make an explosive entrance"
+-  app.Action = func(c *cli.Context) {
+-    println("boom! I say!")
+-  }
+-  
+-  app.Run(os.Args)
+-}
+-```
+-
+-Running this already gives you a ton of functionality, plus support for things like subcommands and flags, which are covered below.
+-
+-## Example
+-
+-Being a programmer can be a lonely job. Thankfully by the power of automation that is not the case! Let's create a greeter app to fend off our demons of loneliness!
+-
+-Start by creating a directory named `greet`, and within it, add a file, `greet.go` with the following code in it:
+-
+-``` go
+-package main
+-
+-import (
+-  "os"
+-  "github.com/codegangsta/cli"
+-)
+-
+-func main() {
+-  app := cli.NewApp()
+-  app.Name = "greet"
+-  app.Usage = "fight the loneliness!"
+-  app.Action = func(c *cli.Context) {
+-    println("Hello friend!")
+-  }
+-
+-  app.Run(os.Args)
+-}
+-```
+-
+-Install our command to the `$GOPATH/bin` directory:
+-
+-```
+-$ go install
+-```
+-
+-Finally run our new command:
+-
+-```
+-$ greet
+-Hello friend!
+-```
+-
+-cli.go also generates some bitchass help text:
+-```
+-$ greet help
+-NAME:
+-    greet - fight the loneliness!
+-
+-USAGE:
+-    greet [global options] command [command options] [arguments...]
+-
+-VERSION:
+-    0.0.0
+-
+-COMMANDS:
+-    help, h  Shows a list of commands or help for one command
+-
+-GLOBAL OPTIONS
+-    --version	Shows version information
+-```
+-
+-### Arguments
+-You can lookup arguments by calling the `Args` function on `cli.Context`.
+-
+-``` go
+-...
+-app.Action = func(c *cli.Context) {
+-  println("Hello", c.Args()[0])
+-}
+-...
+-```
+-
+-### Flags
+-Setting and querying flags is simple.
+-``` go
+-...
+-app.Flags = []cli.Flag {
+-  cli.StringFlag{
+-    Name: "lang",
+-    Value: "english",
+-    Usage: "language for the greeting",
+-  },
+-}
+-app.Action = func(c *cli.Context) {
+-  name := "someone"
+-  if len(c.Args()) > 0 {
+-    name = c.Args()[0]
+-  }
+-  if c.String("lang") == "spanish" {
+-    println("Hola", name)
+-  } else {
+-    println("Hello", name)
+-  }
+-}
+-...
+-```
+-
+-#### Alternate Names
+-
+-You can set alternate (or short) names for flags by providing a comma-delimited list for the `Name`. e.g.
+-
+-``` go
+-app.Flags = []cli.Flag {
+-  cli.StringFlag{
+-    Name: "lang, l",
+-    Value: "english",
+-    Usage: "language for the greeting",
+-  },
+-}
+-```
+-
+-#### Values from the Environment
+-
+-You can also have the default value set from the environment via `EnvVar`.  e.g.
+-
+-``` go
+-app.Flags = []cli.Flag {
+-  cli.StringFlag{
+-    Name: "lang, l",
+-    Value: "english",
+-    Usage: "language for the greeting",
+-    EnvVar: "APP_LANG",
+-  },
+-}
+-```
+-
+-That flag can then be set with `--lang spanish` or `-l spanish`. Note that giving two different forms of the same flag in the same command invocation is an error.
+-
+-### Subcommands
+-
+-Subcommands can be defined for a more git-like command line app.
+-```go
+-...
+-app.Commands = []cli.Command{
+-  {
+-    Name:      "add",
+-    ShortName: "a",
+-    Usage:     "add a task to the list",
+-    Action: func(c *cli.Context) {
+-      println("added task: ", c.Args().First())
+-    },
+-  },
+-  {
+-    Name:      "complete",
+-    ShortName: "c",
+-    Usage:     "complete a task on the list",
+-    Action: func(c *cli.Context) {
+-      println("completed task: ", c.Args().First())
+-    },
+-  },
+-  {
+-    Name:      "template",
+-    ShortName: "r",
+-    Usage:     "options for task templates",
+-    Subcommands: []cli.Command{
+-      {
+-        Name:  "add",
+-        Usage: "add a new template",
+-        Action: func(c *cli.Context) {
+-            println("new task template: ", c.Args().First())
+-        },
+-      },
+-      {
+-        Name:  "remove",
+-        Usage: "remove an existing template",
+-        Action: func(c *cli.Context) {
+-          println("removed task template: ", c.Args().First())
+-        },
+-      },
+-    },
+-  },     
+-}
+-...
+-```
+-
+-### Bash Completion
+-
+-You can enable completion commands by setting the `EnableBashCompletion`
+-flag on the `App` object.  By default, this setting will only auto-complete to
+-show an app's subcommands, but you can write your own completion methods for
+-the App or its subcommands.
+-```go
+-...
+-var tasks = []string{"cook", "clean", "laundry", "eat", "sleep", "code"}
+-app := cli.NewApp()
+-app.EnableBashCompletion = true
+-app.Commands = []cli.Command{
+-  {
+-    Name: "complete",
+-    ShortName: "c",
+-    Usage: "complete a task on the list",
+-    Action: func(c *cli.Context) {
+-       println("completed task: ", c.Args().First())
+-    },
+-    BashComplete: func(c *cli.Context) {
+-      // This will complete if no args are passed
+-      if len(c.Args()) > 0 {
+-        return
+-      }
+-      for _, t := range tasks {
+-        fmt.Println(t)
+-      }
+-    },
+-  }
+-}
+-...
+-```
+-
+-#### To Enable
+-
+-Source the `autocomplete/bash_autocomplete` file in your `.bashrc` file while
+-setting the `PROG` variable to the name of your program:
+-
+-`PROG=myprogram source /.../cli/autocomplete/bash_autocomplete`
+-
+-
+-## Contribution Guidelines
+-Feel free to put up a pull request to fix a bug or maybe add a feature. I will give it a code review and make sure that it does not break backwards compatibility. If I or any other collaborators agree that it is in line with the vision of the project, we will work with you to get the code into a mergeable state and merge it into the master branch.
+-
+-If you are have contributed something significant to the project, I will most likely add you as a collaborator. As a collaborator you are given the ability to merge others pull requests. It is very important that new code does not break existing code, so be careful about what code you do choose to merge. If you have any questions feel free to link @codegangsta to the issue in question and we can review it together.
+-
+-If you feel like you have contributed to the project but have not yet been added as a collaborator, I probably forgot to add you. Hit @codegangsta up over email and we will get it figured out.
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/app.go b/Godeps/_workspace/src/github.com/codegangsta/cli/app.go
+deleted file mode 100644
+index f4c4af84c20..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/app.go
++++ /dev/null
+@@ -1,251 +0,0 @@
+-package cli
+-
+-import (
+-	"fmt"
+-	"io/ioutil"
+-	"os"
+-	"time"
+-)
+-
+-// App is the main structure of a cli application. It is recomended that
+-// and app be created with the cli.NewApp() function
+-type App struct {
+-	// The name of the program. Defaults to os.Args[0]
+-	Name string
+-	// Description of the program.
+-	Usage string
+-	// Version of the program
+-	Version string
+-	// List of commands to execute
+-	Commands []Command
+-	// List of flags to parse
+-	Flags []Flag
+-	// Boolean to enable bash completion commands
+-	EnableBashCompletion bool
+-	// Boolean to hide built-in help command
+-	HideHelp bool
+-	// Boolean to hide built-in version flag
+-	HideVersion bool
+-	// An action to execute when the bash-completion flag is set
+-	BashComplete func(context *Context)
+-	// An action to execute before any subcommands are run, but after the context is ready
+-	// If a non-nil error is returned, no subcommands are run
+-	Before func(context *Context) error
+-	// The action to execute when no subcommands are specified
+-	Action func(context *Context)
+-	// Execute this function if the proper command cannot be found
+-	CommandNotFound func(context *Context, command string)
+-	// Compilation date
+-	Compiled time.Time
+-	// Author
+-	Author string
+-	// Author e-mail
+-	Email string
+-}
+-
+-// Tries to find out when this binary was compiled.
+-// Returns the current time if it fails to find it.
+-func compileTime() time.Time {
+-	info, err := os.Stat(os.Args[0])
+-	if err != nil {
+-		return time.Now()
+-	}
+-	return info.ModTime()
+-}
+-
+-// Creates a new cli Application with some reasonable defaults for Name, Usage, Version and Action.
+-func NewApp() *App {
+-	return &App{
+-		Name:         os.Args[0],
+-		Usage:        "A new cli application",
+-		Version:      "0.0.0",
+-		BashComplete: DefaultAppComplete,
+-		Action:       helpCommand.Action,
+-		Compiled:     compileTime(),
+-	}
+-}
+-
+-// Entry point to the cli app. Parses the arguments slice and routes to the proper flag/args combination
+-func (a *App) Run(arguments []string) error {
+-	// append help to commands
+-	if a.Command(helpCommand.Name) == nil && !a.HideHelp {
+-		a.Commands = append(a.Commands, helpCommand)
+-		a.appendFlag(HelpFlag)
+-	}
+-
+-	//append version/help flags
+-	if a.EnableBashCompletion {
+-		a.appendFlag(BashCompletionFlag)
+-	}
+-
+-	if !a.HideVersion {
+-		a.appendFlag(VersionFlag)
+-	}
+-
+-	// parse flags
+-	set := flagSet(a.Name, a.Flags)
+-	set.SetOutput(ioutil.Discard)
+-	err := set.Parse(arguments[1:])
+-	nerr := normalizeFlags(a.Flags, set)
+-	if nerr != nil {
+-		fmt.Println(nerr)
+-		context := NewContext(a, set, set)
+-		ShowAppHelp(context)
+-		fmt.Println("")
+-		return nerr
+-	}
+-	context := NewContext(a, set, set)
+-
+-	if err != nil {
+-		fmt.Printf("Incorrect Usage.\n\n")
+-		ShowAppHelp(context)
+-		fmt.Println("")
+-		return err
+-	}
+-
+-	if checkCompletions(context) {
+-		return nil
+-	}
+-
+-	if checkHelp(context) {
+-		return nil
+-	}
+-
+-	if checkVersion(context) {
+-		return nil
+-	}
+-
+-	if a.Before != nil {
+-		err := a.Before(context)
+-		if err != nil {
+-			return err
+-		}
+-	}
+-
+-	args := context.Args()
+-	if args.Present() {
+-		name := args.First()
+-		c := a.Command(name)
+-		if c != nil {
+-			return c.Run(context)
+-		}
+-	}
+-
+-	// Run default Action
+-	a.Action(context)
+-	return nil
+-}
+-
+-// Another entry point to the cli app, takes care of passing arguments and error handling
+-func (a *App) RunAndExitOnError() {
+-	if err := a.Run(os.Args); err != nil {
+-		os.Stderr.WriteString(fmt.Sprintln(err))
+-		os.Exit(1)
+-	}
+-}
+-
+-// Invokes the subcommand given the context, parses ctx.Args() to generate command-specific flags
+-func (a *App) RunAsSubcommand(ctx *Context) error {
+-	// append help to commands
+-	if len(a.Commands) > 0 {
+-		if a.Command(helpCommand.Name) == nil && !a.HideHelp {
+-			a.Commands = append(a.Commands, helpCommand)
+-			a.appendFlag(HelpFlag)
+-		}
+-	}
+-
+-	// append flags
+-	if a.EnableBashCompletion {
+-		a.appendFlag(BashCompletionFlag)
+-	}
+-
+-	// parse flags
+-	set := flagSet(a.Name, a.Flags)
+-	set.SetOutput(ioutil.Discard)
+-	err := set.Parse(ctx.Args().Tail())
+-	nerr := normalizeFlags(a.Flags, set)
+-	context := NewContext(a, set, ctx.globalSet)
+-
+-	if nerr != nil {
+-		fmt.Println(nerr)
+-		if len(a.Commands) > 0 {
+-			ShowSubcommandHelp(context)
+-		} else {
+-			ShowCommandHelp(ctx, context.Args().First())
+-		}
+-		fmt.Println("")
+-		return nerr
+-	}
+-
+-	if err != nil {
+-		fmt.Printf("Incorrect Usage.\n\n")
+-		ShowSubcommandHelp(context)
+-		return err
+-	}
+-
+-	if checkCompletions(context) {
+-		return nil
+-	}
+-
+-	if len(a.Commands) > 0 {
+-		if checkSubcommandHelp(context) {
+-			return nil
+-		}
+-	} else {
+-		if checkCommandHelp(ctx, context.Args().First()) {
+-			return nil
+-		}
+-	}
+-
+-	if a.Before != nil {
+-		err := a.Before(context)
+-		if err != nil {
+-			return err
+-		}
+-	}
+-
+-	args := context.Args()
+-	if args.Present() {
+-		name := args.First()
+-		c := a.Command(name)
+-		if c != nil {
+-			return c.Run(context)
+-		}
+-	}
+-
+-	// Run default Action
+-	if len(a.Commands) > 0 {
+-		a.Action(context)
+-	} else {
+-		a.Action(ctx)
+-	}
+-
+-	return nil
+-}
+-
+-// Returns the named command on App. Returns nil if the command does not exist
+-func (a *App) Command(name string) *Command {
+-	for _, c := range a.Commands {
+-		if c.HasName(name) {
+-			return &c
+-		}
+-	}
+-
+-	return nil
+-}
+-
+-func (a *App) hasFlag(flag Flag) bool {
+-	for _, f := range a.Flags {
+-		if flag == f {
+-			return true
+-		}
+-	}
+-
+-	return false
+-}
+-
+-func (a *App) appendFlag(flag Flag) {
+-	if !a.hasFlag(flag) {
+-		a.Flags = append(a.Flags, flag)
+-	}
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/app_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/app_test.go
+deleted file mode 100644
+index 81d11743e31..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/app_test.go
++++ /dev/null
+@@ -1,423 +0,0 @@
+-package cli_test
+-
+-import (
+-	"fmt"
+-	"os"
+-	"testing"
+-
+-	"github.com/codegangsta/cli"
+-)
+-
+-func ExampleApp() {
+-	// set args for examples sake
+-	os.Args = []string{"greet", "--name", "Jeremy"}
+-
+-	app := cli.NewApp()
+-	app.Name = "greet"
+-	app.Flags = []cli.Flag{
+-		cli.StringFlag{Name: "name", Value: "bob", Usage: "a name to say"},
+-	}
+-	app.Action = func(c *cli.Context) {
+-		fmt.Printf("Hello %v\n", c.String("name"))
+-	}
+-	app.Run(os.Args)
+-	// Output:
+-	// Hello Jeremy
+-}
+-
+-func ExampleAppSubcommand() {
+-	// set args for examples sake
+-	os.Args = []string{"say", "hi", "english", "--name", "Jeremy"}
+-	app := cli.NewApp()
+-	app.Name = "say"
+-	app.Commands = []cli.Command{
+-		{
+-			Name:        "hello",
+-			ShortName:   "hi",
+-			Usage:       "use it to see a description",
+-			Description: "This is how we describe hello the function",
+-			Subcommands: []cli.Command{
+-				{
+-					Name:        "english",
+-					ShortName:   "en",
+-					Usage:       "sends a greeting in english",
+-					Description: "greets someone in english",
+-					Flags: []cli.Flag{
+-						cli.StringFlag{
+-							Name:  "name",
+-							Value: "Bob",
+-							Usage: "Name of the person to greet",
+-						},
+-					},
+-					Action: func(c *cli.Context) {
+-						fmt.Println("Hello,", c.String("name"))
+-					},
+-				},
+-			},
+-		},
+-	}
+-
+-	app.Run(os.Args)
+-	// Output:
+-	// Hello, Jeremy
+-}
+-
+-func ExampleAppHelp() {
+-	// set args for examples sake
+-	os.Args = []string{"greet", "h", "describeit"}
+-
+-	app := cli.NewApp()
+-	app.Name = "greet"
+-	app.Flags = []cli.Flag{
+-		cli.StringFlag{Name: "name", Value: "bob", Usage: "a name to say"},
+-	}
+-	app.Commands = []cli.Command{
+-		{
+-			Name:        "describeit",
+-			ShortName:   "d",
+-			Usage:       "use it to see a description",
+-			Description: "This is how we describe describeit the function",
+-			Action: func(c *cli.Context) {
+-				fmt.Printf("i like to describe things")
+-			},
+-		},
+-	}
+-	app.Run(os.Args)
+-	// Output:
+-	// NAME:
+-	//    describeit - use it to see a description
+-	//
+-	// USAGE:
+-	//    command describeit [arguments...]
+-	//
+-	// DESCRIPTION:
+-	//    This is how we describe describeit the function
+-}
+-
+-func ExampleAppBashComplete() {
+-	// set args for examples sake
+-	os.Args = []string{"greet", "--generate-bash-completion"}
+-
+-	app := cli.NewApp()
+-	app.Name = "greet"
+-	app.EnableBashCompletion = true
+-	app.Commands = []cli.Command{
+-		{
+-			Name:        "describeit",
+-			ShortName:   "d",
+-			Usage:       "use it to see a description",
+-			Description: "This is how we describe describeit the function",
+-			Action: func(c *cli.Context) {
+-				fmt.Printf("i like to describe things")
+-			},
+-		}, {
+-			Name:        "next",
+-			Usage:       "next example",
+-			Description: "more stuff to see when generating bash completion",
+-			Action: func(c *cli.Context) {
+-				fmt.Printf("the next example")
+-			},
+-		},
+-	}
+-
+-	app.Run(os.Args)
+-	// Output:
+-	// describeit
+-	// d
+-	// next
+-	// help
+-	// h
+-}
+-
+-func TestApp_Run(t *testing.T) {
+-	s := ""
+-
+-	app := cli.NewApp()
+-	app.Action = func(c *cli.Context) {
+-		s = s + c.Args().First()
+-	}
+-
+-	err := app.Run([]string{"command", "foo"})
+-	expect(t, err, nil)
+-	err = app.Run([]string{"command", "bar"})
+-	expect(t, err, nil)
+-	expect(t, s, "foobar")
+-}
+-
+-var commandAppTests = []struct {
+-	name     string
+-	expected bool
+-}{
+-	{"foobar", true},
+-	{"batbaz", true},
+-	{"b", true},
+-	{"f", true},
+-	{"bat", false},
+-	{"nothing", false},
+-}
+-
+-func TestApp_Command(t *testing.T) {
+-	app := cli.NewApp()
+-	fooCommand := cli.Command{Name: "foobar", ShortName: "f"}
+-	batCommand := cli.Command{Name: "batbaz", ShortName: "b"}
+-	app.Commands = []cli.Command{
+-		fooCommand,
+-		batCommand,
+-	}
+-
+-	for _, test := range commandAppTests {
+-		expect(t, app.Command(test.name) != nil, test.expected)
+-	}
+-}
+-
+-func TestApp_CommandWithArgBeforeFlags(t *testing.T) {
+-	var parsedOption, firstArg string
+-
+-	app := cli.NewApp()
+-	command := cli.Command{
+-		Name: "cmd",
+-		Flags: []cli.Flag{
+-			cli.StringFlag{Name: "option", Value: "", Usage: "some option"},
+-		},
+-		Action: func(c *cli.Context) {
+-			parsedOption = c.String("option")
+-			firstArg = c.Args().First()
+-		},
+-	}
+-	app.Commands = []cli.Command{command}
+-
+-	app.Run([]string{"", "cmd", "my-arg", "--option", "my-option"})
+-
+-	expect(t, parsedOption, "my-option")
+-	expect(t, firstArg, "my-arg")
+-}
+-
+-func TestApp_Float64Flag(t *testing.T) {
+-	var meters float64
+-
+-	app := cli.NewApp()
+-	app.Flags = []cli.Flag{
+-		cli.Float64Flag{Name: "height", Value: 1.5, Usage: "Set the height, in meters"},
+-	}
+-	app.Action = func(c *cli.Context) {
+-		meters = c.Float64("height")
+-	}
+-
+-	app.Run([]string{"", "--height", "1.93"})
+-	expect(t, meters, 1.93)
+-}
+-
+-func TestApp_ParseSliceFlags(t *testing.T) {
+-	var parsedOption, firstArg string
+-	var parsedIntSlice []int
+-	var parsedStringSlice []string
+-
+-	app := cli.NewApp()
+-	command := cli.Command{
+-		Name: "cmd",
+-		Flags: []cli.Flag{
+-			cli.IntSliceFlag{Name: "p", Value: &cli.IntSlice{}, Usage: "set one or more ip addr"},
+-			cli.StringSliceFlag{Name: "ip", Value: &cli.StringSlice{}, Usage: "set one or more ports to open"},
+-		},
+-		Action: func(c *cli.Context) {
+-			parsedIntSlice = c.IntSlice("p")
+-			parsedStringSlice = c.StringSlice("ip")
+-			parsedOption = c.String("option")
+-			firstArg = c.Args().First()
+-		},
+-	}
+-	app.Commands = []cli.Command{command}
+-
+-	app.Run([]string{"", "cmd", "my-arg", "-p", "22", "-p", "80", "-ip", "8.8.8.8", "-ip", "8.8.4.4"})
+-
+-	IntsEquals := func(a, b []int) bool {
+-		if len(a) != len(b) {
+-			return false
+-		}
+-		for i, v := range a {
+-			if v != b[i] {
+-				return false
+-			}
+-		}
+-		return true
+-	}
+-
+-	StrsEquals := func(a, b []string) bool {
+-		if len(a) != len(b) {
+-			return false
+-		}
+-		for i, v := range a {
+-			if v != b[i] {
+-				return false
+-			}
+-		}
+-		return true
+-	}
+-	var expectedIntSlice = []int{22, 80}
+-	var expectedStringSlice = []string{"8.8.8.8", "8.8.4.4"}
+-
+-	if !IntsEquals(parsedIntSlice, expectedIntSlice) {
+-		t.Errorf("%v does not match %v", parsedIntSlice, expectedIntSlice)
+-	}
+-
+-	if !StrsEquals(parsedStringSlice, expectedStringSlice) {
+-		t.Errorf("%v does not match %v", parsedStringSlice, expectedStringSlice)
+-	}
+-}
+-
+-func TestApp_BeforeFunc(t *testing.T) {
+-	beforeRun, subcommandRun := false, false
+-	beforeError := fmt.Errorf("fail")
+-	var err error
+-
+-	app := cli.NewApp()
+-
+-	app.Before = func(c *cli.Context) error {
+-		beforeRun = true
+-		s := c.String("opt")
+-		if s == "fail" {
+-			return beforeError
+-		}
+-
+-		return nil
+-	}
+-
+-	app.Commands = []cli.Command{
+-		cli.Command{
+-			Name: "sub",
+-			Action: func(c *cli.Context) {
+-				subcommandRun = true
+-			},
+-		},
+-	}
+-
+-	app.Flags = []cli.Flag{
+-		cli.StringFlag{Name: "opt"},
+-	}
+-
+-	// run with the Before() func succeeding
+-	err = app.Run([]string{"command", "--opt", "succeed", "sub"})
+-
+-	if err != nil {
+-		t.Fatalf("Run error: %s", err)
+-	}
+-
+-	if beforeRun == false {
+-		t.Errorf("Before() not executed when expected")
+-	}
+-
+-	if subcommandRun == false {
+-		t.Errorf("Subcommand not executed when expected")
+-	}
+-
+-	// reset
+-	beforeRun, subcommandRun = false, false
+-
+-	// run with the Before() func failing
+-	err = app.Run([]string{"command", "--opt", "fail", "sub"})
+-
+-	// should be the same error produced by the Before func
+-	if err != beforeError {
+-		t.Errorf("Run error expected, but not received")
+-	}
+-
+-	if beforeRun == false {
+-		t.Errorf("Before() not executed when expected")
+-	}
+-
+-	if subcommandRun == true {
+-		t.Errorf("Subcommand executed when NOT expected")
+-	}
+-
+-}
+-
+-func TestAppHelpPrinter(t *testing.T) {
+-	oldPrinter := cli.HelpPrinter
+-	defer func() {
+-		cli.HelpPrinter = oldPrinter
+-	}()
+-
+-	var wasCalled = false
+-	cli.HelpPrinter = func(template string, data interface{}) {
+-		wasCalled = true
+-	}
+-
+-	app := cli.NewApp()
+-	app.Run([]string{"-h"})
+-
+-	if wasCalled == false {
+-		t.Errorf("Help printer expected to be called, but was not")
+-	}
+-}
+-
+-func TestAppVersionPrinter(t *testing.T) {
+-	oldPrinter := cli.VersionPrinter
+-	defer func() {
+-		cli.VersionPrinter = oldPrinter
+-	}()
+-
+-	var wasCalled = false
+-	cli.VersionPrinter = func(c *cli.Context) {
+-		wasCalled = true
+-	}
+-
+-	app := cli.NewApp()
+-	ctx := cli.NewContext(app, nil, nil)
+-	cli.ShowVersion(ctx)
+-
+-	if wasCalled == false {
+-		t.Errorf("Version printer expected to be called, but was not")
+-	}
+-}
+-
+-func TestAppCommandNotFound(t *testing.T) {
+-	beforeRun, subcommandRun := false, false
+-	app := cli.NewApp()
+-
+-	app.CommandNotFound = func(c *cli.Context, command string) {
+-		beforeRun = true
+-	}
+-
+-	app.Commands = []cli.Command{
+-		cli.Command{
+-			Name: "bar",
+-			Action: func(c *cli.Context) {
+-				subcommandRun = true
+-			},
+-		},
+-	}
+-
+-	app.Run([]string{"command", "foo"})
+-
+-	expect(t, beforeRun, true)
+-	expect(t, subcommandRun, false)
+-}
+-
+-func TestGlobalFlagsInSubcommands(t *testing.T) {
+-	subcommandRun := false
+-	app := cli.NewApp()
+-
+-	app.Flags = []cli.Flag{
+-		cli.BoolFlag{Name: "debug, d", Usage: "Enable debugging"},
+-	}
+-
+-	app.Commands = []cli.Command{
+-		cli.Command{
+-			Name: "foo",
+-			Subcommands: []cli.Command{
+-				{
+-					Name: "bar",
+-					Action: func(c *cli.Context) {
+-						if c.GlobalBool("debug") {
+-							subcommandRun = true
+-						}
+-					},
+-				},
+-			},
+-		},
+-	}
+-
+-	app.Run([]string{"command", "-d", "foo", "bar"})
+-
+-	expect(t, subcommandRun, true)
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/bash_autocomplete b/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/bash_autocomplete
+deleted file mode 100644
+index 9b55dd990cb..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/bash_autocomplete
++++ /dev/null
+@@ -1,13 +0,0 @@
+-#! /bin/bash
+-
+-_cli_bash_autocomplete() {
+-     local cur prev opts base
+-     COMPREPLY=()
+-     cur="${COMP_WORDS[COMP_CWORD]}"
+-     prev="${COMP_WORDS[COMP_CWORD-1]}"
+-     opts=$( ${COMP_WORDS[@]:0:$COMP_CWORD} --generate-bash-completion )
+-     COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+-     return 0
+- }
+-  
+- complete -F _cli_bash_autocomplete $PROG
+\ No newline at end of file
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/zsh_autocomplete b/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/zsh_autocomplete
+deleted file mode 100644
+index 5430a18f957..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/autocomplete/zsh_autocomplete
++++ /dev/null
+@@ -1,5 +0,0 @@
+-autoload -U compinit && compinit
+-autoload -U bashcompinit && bashcompinit
+-
+-script_dir=$(dirname $0)
+-source ${script_dir}/bash_autocomplete
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/cli.go b/Godeps/_workspace/src/github.com/codegangsta/cli/cli.go
+deleted file mode 100644
+index b7425458123..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/cli.go
++++ /dev/null
+@@ -1,19 +0,0 @@
+-// Package cli provides a minimal framework for creating and organizing command line
+-// Go applications. cli is designed to be easy to understand and write, the most simple
+-// cli application can be written as follows:
+-//   func main() {
+-//     cli.NewApp().Run(os.Args)
+-//   }
+-//
+-// Of course this application does not do much, so let's make this an actual application:
+-//   func main() {
+-//     app := cli.NewApp()
+-//     app.Name = "greet"
+-//     app.Usage = "say a greeting"
+-//     app.Action = func(c *cli.Context) {
+-//       println("Greetings")
+-//     }
+-//
+-//     app.Run(os.Args)
+-//   }
+-package cli
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/cli_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/cli_test.go
+deleted file mode 100644
+index 879a793dc22..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/cli_test.go
++++ /dev/null
+@@ -1,100 +0,0 @@
+-package cli_test
+-
+-import (
+-	"os"
+-
+-	"github.com/codegangsta/cli"
+-)
+-
+-func Example() {
+-	app := cli.NewApp()
+-	app.Name = "todo"
+-	app.Usage = "task list on the command line"
+-	app.Commands = []cli.Command{
+-		{
+-			Name:      "add",
+-			ShortName: "a",
+-			Usage:     "add a task to the list",
+-			Action: func(c *cli.Context) {
+-				println("added task: ", c.Args().First())
+-			},
+-		},
+-		{
+-			Name:      "complete",
+-			ShortName: "c",
+-			Usage:     "complete a task on the list",
+-			Action: func(c *cli.Context) {
+-				println("completed task: ", c.Args().First())
+-			},
+-		},
+-	}
+-
+-	app.Run(os.Args)
+-}
+-
+-func ExampleSubcommand() {
+-	app := cli.NewApp()
+-	app.Name = "say"
+-	app.Commands = []cli.Command{
+-		{
+-			Name:        "hello",
+-			ShortName:   "hi",
+-			Usage:       "use it to see a description",
+-			Description: "This is how we describe hello the function",
+-			Subcommands: []cli.Command{
+-				{
+-					Name:        "english",
+-					ShortName:   "en",
+-					Usage:       "sends a greeting in english",
+-					Description: "greets someone in english",
+-					Flags: []cli.Flag{
+-						cli.StringFlag{
+-							Name:  "name",
+-							Value: "Bob",
+-							Usage: "Name of the person to greet",
+-						},
+-					},
+-					Action: func(c *cli.Context) {
+-						println("Hello, ", c.String("name"))
+-					},
+-				}, {
+-					Name:      "spanish",
+-					ShortName: "sp",
+-					Usage:     "sends a greeting in spanish",
+-					Flags: []cli.Flag{
+-						cli.StringFlag{
+-							Name:  "surname",
+-							Value: "Jones",
+-							Usage: "Surname of the person to greet",
+-						},
+-					},
+-					Action: func(c *cli.Context) {
+-						println("Hola, ", c.String("surname"))
+-					},
+-				}, {
+-					Name:      "french",
+-					ShortName: "fr",
+-					Usage:     "sends a greeting in french",
+-					Flags: []cli.Flag{
+-						cli.StringFlag{
+-							Name:  "nickname",
+-							Value: "Stevie",
+-							Usage: "Nickname of the person to greet",
+-						},
+-					},
+-					Action: func(c *cli.Context) {
+-						println("Bonjour, ", c.String("nickname"))
+-					},
+-				},
+-			},
+-		}, {
+-			Name:  "bye",
+-			Usage: "says goodbye",
+-			Action: func(c *cli.Context) {
+-				println("bye")
+-			},
+-		},
+-	}
+-
+-	app.Run(os.Args)
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/command.go b/Godeps/_workspace/src/github.com/codegangsta/cli/command.go
+deleted file mode 100644
+index 5622b38f75c..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/command.go
++++ /dev/null
+@@ -1,144 +0,0 @@
+-package cli
+-
+-import (
+-	"fmt"
+-	"io/ioutil"
+-	"strings"
+-)
+-
+-// Command is a subcommand for a cli.App.
+-type Command struct {
+-	// The name of the command
+-	Name string
+-	// short name of the command. Typically one character
+-	ShortName string
+-	// A short description of the usage of this command
+-	Usage string
+-	// A longer explanation of how the command works
+-	Description string
+-	// The function to call when checking for bash command completions
+-	BashComplete func(context *Context)
+-	// An action to execute before any sub-subcommands are run, but after the context is ready
+-	// If a non-nil error is returned, no sub-subcommands are run
+-	Before func(context *Context) error
+-	// The function to call when this command is invoked
+-	Action func(context *Context)
+-	// List of child commands
+-	Subcommands []Command
+-	// List of flags to parse
+-	Flags []Flag
+-	// Treat all flags as normal arguments if true
+-	SkipFlagParsing bool
+-	// Boolean to hide built-in help command
+-	HideHelp bool
+-}
+-
+-// Invokes the command given the context, parses ctx.Args() to generate command-specific flags
+-func (c Command) Run(ctx *Context) error {
+-
+-	if len(c.Subcommands) > 0 || c.Before != nil {
+-		return c.startApp(ctx)
+-	}
+-
+-	if !c.HideHelp {
+-		// append help to flags
+-		c.Flags = append(
+-			c.Flags,
+-			HelpFlag,
+-		)
+-	}
+-
+-	if ctx.App.EnableBashCompletion {
+-		c.Flags = append(c.Flags, BashCompletionFlag)
+-	}
+-
+-	set := flagSet(c.Name, c.Flags)
+-	set.SetOutput(ioutil.Discard)
+-
+-	firstFlagIndex := -1
+-	for index, arg := range ctx.Args() {
+-		if strings.HasPrefix(arg, "-") {
+-			firstFlagIndex = index
+-			break
+-		}
+-	}
+-
+-	var err error
+-	if firstFlagIndex > -1 && !c.SkipFlagParsing {
+-		args := ctx.Args()
+-		regularArgs := args[1:firstFlagIndex]
+-		flagArgs := args[firstFlagIndex:]
+-		err = set.Parse(append(flagArgs, regularArgs...))
+-	} else {
+-		err = set.Parse(ctx.Args().Tail())
+-	}
+-
+-	if err != nil {
+-		fmt.Printf("Incorrect Usage.\n\n")
+-		ShowCommandHelp(ctx, c.Name)
+-		fmt.Println("")
+-		return err
+-	}
+-
+-	nerr := normalizeFlags(c.Flags, set)
+-	if nerr != nil {
+-		fmt.Println(nerr)
+-		fmt.Println("")
+-		ShowCommandHelp(ctx, c.Name)
+-		fmt.Println("")
+-		return nerr
+-	}
+-	context := NewContext(ctx.App, set, ctx.globalSet)
+-
+-	if checkCommandCompletions(context, c.Name) {
+-		return nil
+-	}
+-
+-	if checkCommandHelp(context, c.Name) {
+-		return nil
+-	}
+-	context.Command = c
+-	c.Action(context)
+-	return nil
+-}
+-
+-// Returns true if Command.Name or Command.ShortName matches given name
+-func (c Command) HasName(name string) bool {
+-	return c.Name == name || c.ShortName == name
+-}
+-
+-func (c Command) startApp(ctx *Context) error {
+-	app := NewApp()
+-
+-	// set the name and usage
+-	app.Name = fmt.Sprintf("%s %s", ctx.App.Name, c.Name)
+-	if c.Description != "" {
+-		app.Usage = c.Description
+-	} else {
+-		app.Usage = c.Usage
+-	}
+-
+-	// set CommandNotFound
+-	app.CommandNotFound = ctx.App.CommandNotFound
+-
+-	// set the flags and commands
+-	app.Commands = c.Subcommands
+-	app.Flags = c.Flags
+-	app.HideHelp = c.HideHelp
+-
+-	// bash completion
+-	app.EnableBashCompletion = ctx.App.EnableBashCompletion
+-	if c.BashComplete != nil {
+-		app.BashComplete = c.BashComplete
+-	}
+-
+-	// set the actions
+-	app.Before = c.Before
+-	if c.Action != nil {
+-		app.Action = c.Action
+-	} else {
+-		app.Action = helpSubcommand.Action
+-	}
+-
+-	return app.RunAsSubcommand(ctx)
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/command_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/command_test.go
+deleted file mode 100644
+index c0f556ad242..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/command_test.go
++++ /dev/null
+@@ -1,49 +0,0 @@
+-package cli_test
+-
+-import (
+-	"flag"
+-	"testing"
+-
+-	"github.com/codegangsta/cli"
+-)
+-
+-func TestCommandDoNotIgnoreFlags(t *testing.T) {
+-	app := cli.NewApp()
+-	set := flag.NewFlagSet("test", 0)
+-	test := []string{"blah", "blah", "-break"}
+-	set.Parse(test)
+-
+-	c := cli.NewContext(app, set, set)
+-
+-	command := cli.Command{
+-		Name:        "test-cmd",
+-		ShortName:   "tc",
+-		Usage:       "this is for testing",
+-		Description: "testing",
+-		Action:      func(_ *cli.Context) {},
+-	}
+-	err := command.Run(c)
+-
+-	expect(t, err.Error(), "flag provided but not defined: -break")
+-}
+-
+-func TestCommandIgnoreFlags(t *testing.T) {
+-	app := cli.NewApp()
+-	set := flag.NewFlagSet("test", 0)
+-	test := []string{"blah", "blah"}
+-	set.Parse(test)
+-
+-	c := cli.NewContext(app, set, set)
+-
+-	command := cli.Command{
+-		Name:            "test-cmd",
+-		ShortName:       "tc",
+-		Usage:           "this is for testing",
+-		Description:     "testing",
+-		Action:          func(_ *cli.Context) {},
+-		SkipFlagParsing: true,
+-	}
+-	err := command.Run(c)
+-
+-	expect(t, err, nil)
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/context.go b/Godeps/_workspace/src/github.com/codegangsta/cli/context.go
+deleted file mode 100644
+index c9f645b1890..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/context.go
++++ /dev/null
+@@ -1,339 +0,0 @@
+-package cli
+-
+-import (
+-	"errors"
+-	"flag"
+-	"strconv"
+-	"strings"
+-	"time"
+-)
+-
+-// Context is a type that is passed through to
+-// each Handler action in a cli application. Context
+-// can be used to retrieve context-specific Args and
+-// parsed command-line options.
+-type Context struct {
+-	App            *App
+-	Command        Command
+-	flagSet        *flag.FlagSet
+-	globalSet      *flag.FlagSet
+-	setFlags       map[string]bool
+-	globalSetFlags map[string]bool
+-}
+-
+-// Creates a new context. For use in when invoking an App or Command action.
+-func NewContext(app *App, set *flag.FlagSet, globalSet *flag.FlagSet) *Context {
+-	return &Context{App: app, flagSet: set, globalSet: globalSet}
+-}
+-
+-// Looks up the value of a local int flag, returns 0 if no int flag exists
+-func (c *Context) Int(name string) int {
+-	return lookupInt(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local time.Duration flag, returns 0 if no time.Duration flag exists
+-func (c *Context) Duration(name string) time.Duration {
+-	return lookupDuration(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local float64 flag, returns 0 if no float64 flag exists
+-func (c *Context) Float64(name string) float64 {
+-	return lookupFloat64(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local bool flag, returns false if no bool flag exists
+-func (c *Context) Bool(name string) bool {
+-	return lookupBool(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local boolT flag, returns false if no bool flag exists
+-func (c *Context) BoolT(name string) bool {
+-	return lookupBoolT(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local string flag, returns "" if no string flag exists
+-func (c *Context) String(name string) string {
+-	return lookupString(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local string slice flag, returns nil if no string slice flag exists
+-func (c *Context) StringSlice(name string) []string {
+-	return lookupStringSlice(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local int slice flag, returns nil if no int slice flag exists
+-func (c *Context) IntSlice(name string) []int {
+-	return lookupIntSlice(name, c.flagSet)
+-}
+-
+-// Looks up the value of a local generic flag, returns nil if no generic flag exists
+-func (c *Context) Generic(name string) interface{} {
+-	return lookupGeneric(name, c.flagSet)
+-}
+-
+-// Looks up the value of a global int flag, returns 0 if no int flag exists
+-func (c *Context) GlobalInt(name string) int {
+-	return lookupInt(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global time.Duration flag, returns 0 if no time.Duration flag exists
+-func (c *Context) GlobalDuration(name string) time.Duration {
+-	return lookupDuration(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global bool flag, returns false if no bool flag exists
+-func (c *Context) GlobalBool(name string) bool {
+-	return lookupBool(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global string flag, returns "" if no string flag exists
+-func (c *Context) GlobalString(name string) string {
+-	return lookupString(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global string slice flag, returns nil if no string slice flag exists
+-func (c *Context) GlobalStringSlice(name string) []string {
+-	return lookupStringSlice(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global int slice flag, returns nil if no int slice flag exists
+-func (c *Context) GlobalIntSlice(name string) []int {
+-	return lookupIntSlice(name, c.globalSet)
+-}
+-
+-// Looks up the value of a global generic flag, returns nil if no generic flag exists
+-func (c *Context) GlobalGeneric(name string) interface{} {
+-	return lookupGeneric(name, c.globalSet)
+-}
+-
+-// Determines if the flag was actually set
+-func (c *Context) IsSet(name string) bool {
+-	if c.setFlags == nil {
+-		c.setFlags = make(map[string]bool)
+-		c.flagSet.Visit(func(f *flag.Flag) {
+-			c.setFlags[f.Name] = true
+-		})
+-	}
+-	return c.setFlags[name] == true
+-}
+-
+-// Determines if the global flag was actually set
+-func (c *Context) GlobalIsSet(name string) bool {
+-	if c.globalSetFlags == nil {
+-		c.globalSetFlags = make(map[string]bool)
+-		c.globalSet.Visit(func(f *flag.Flag) {
+-			c.globalSetFlags[f.Name] = true
+-		})
+-	}
+-	return c.globalSetFlags[name] == true
+-}
+-
+-// Returns a slice of flag names used in this context.
+-func (c *Context) FlagNames() (names []string) {
+-	for _, flag := range c.Command.Flags {
+-		name := strings.Split(flag.getName(), ",")[0]
+-		if name == "help" {
+-			continue
+-		}
+-		names = append(names, name)
+-	}
+-	return
+-}
+-
+-// Returns a slice of global flag names used by the app.
+-func (c *Context) GlobalFlagNames() (names []string) {
+-	for _, flag := range c.App.Flags {
+-		name := strings.Split(flag.getName(), ",")[0]
+-		if name == "help" || name == "version" {
+-			continue
+-		}
+-		names = append(names, name)
+-	}
+-	return
+-}
+-
+-type Args []string
+-
+-// Returns the command line arguments associated with the context.
+-func (c *Context) Args() Args {
+-	args := Args(c.flagSet.Args())
+-	return args
+-}
+-
+-// Returns the nth argument, or else a blank string
+-func (a Args) Get(n int) string {
+-	if len(a) > n {
+-		return a[n]
+-	}
+-	return ""
+-}
+-
+-// Returns the first argument, or else a blank string
+-func (a Args) First() string {
+-	return a.Get(0)
+-}
+-
+-// Return the rest of the arguments (not the first one)
+-// or else an empty string slice
+-func (a Args) Tail() []string {
+-	if len(a) >= 2 {
+-		return []string(a)[1:]
+-	}
+-	return []string{}
+-}
+-
+-// Checks if there are any arguments present
+-func (a Args) Present() bool {
+-	return len(a) != 0
+-}
+-
+-// Swaps arguments at the given indexes
+-func (a Args) Swap(from, to int) error {
+-	if from >= len(a) || to >= len(a) {
+-		return errors.New("index out of range")
+-	}
+-	a[from], a[to] = a[to], a[from]
+-	return nil
+-}
+-
+-func lookupInt(name string, set *flag.FlagSet) int {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		val, err := strconv.Atoi(f.Value.String())
+-		if err != nil {
+-			return 0
+-		}
+-		return val
+-	}
+-
+-	return 0
+-}
+-
+-func lookupDuration(name string, set *flag.FlagSet) time.Duration {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		val, err := time.ParseDuration(f.Value.String())
+-		if err == nil {
+-			return val
+-		}
+-	}
+-
+-	return 0
+-}
+-
+-func lookupFloat64(name string, set *flag.FlagSet) float64 {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		val, err := strconv.ParseFloat(f.Value.String(), 64)
+-		if err != nil {
+-			return 0
+-		}
+-		return val
+-	}
+-
+-	return 0
+-}
+-
+-func lookupString(name string, set *flag.FlagSet) string {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		return f.Value.String()
+-	}
+-
+-	return ""
+-}
+-
+-func lookupStringSlice(name string, set *flag.FlagSet) []string {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		return (f.Value.(*StringSlice)).Value()
+-
+-	}
+-
+-	return nil
+-}
+-
+-func lookupIntSlice(name string, set *flag.FlagSet) []int {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		return (f.Value.(*IntSlice)).Value()
+-
+-	}
+-
+-	return nil
+-}
+-
+-func lookupGeneric(name string, set *flag.FlagSet) interface{} {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		return f.Value
+-	}
+-	return nil
+-}
+-
+-func lookupBool(name string, set *flag.FlagSet) bool {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		val, err := strconv.ParseBool(f.Value.String())
+-		if err != nil {
+-			return false
+-		}
+-		return val
+-	}
+-
+-	return false
+-}
+-
+-func lookupBoolT(name string, set *flag.FlagSet) bool {
+-	f := set.Lookup(name)
+-	if f != nil {
+-		val, err := strconv.ParseBool(f.Value.String())
+-		if err != nil {
+-			return true
+-		}
+-		return val
+-	}
+-
+-	return false
+-}
+-
+-func copyFlag(name string, ff *flag.Flag, set *flag.FlagSet) {
+-	switch ff.Value.(type) {
+-	case *StringSlice:
+-	default:
+-		set.Set(name, ff.Value.String())
+-	}
+-}
+-
+-func normalizeFlags(flags []Flag, set *flag.FlagSet) error {
+-	visited := make(map[string]bool)
+-	set.Visit(func(f *flag.Flag) {
+-		visited[f.Name] = true
+-	})
+-	for _, f := range flags {
+-		parts := strings.Split(f.getName(), ",")
+-		if len(parts) == 1 {
+-			continue
+-		}
+-		var ff *flag.Flag
+-		for _, name := range parts {
+-			name = strings.Trim(name, " ")
+-			if visited[name] {
+-				if ff != nil {
+-					return errors.New("Cannot use two forms of the same flag: " + name + " " + ff.Name)
+-				}
+-				ff = set.Lookup(name)
+-			}
+-		}
+-		if ff == nil {
+-			continue
+-		}
+-		for _, name := range parts {
+-			name = strings.Trim(name, " ")
+-			if !visited[name] {
+-				copyFlag(name, ff, set)
+-			}
+-		}
+-	}
+-	return nil
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/context_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/context_test.go
+deleted file mode 100644
+index 7c9a4436fc8..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/context_test.go
++++ /dev/null
+@@ -1,99 +0,0 @@
+-package cli_test
+-
+-import (
+-	"flag"
+-	"testing"
+-	"time"
+-
+-	"github.com/codegangsta/cli"
+-)
+-
+-func TestNewContext(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Int("myflag", 12, "doc")
+-	globalSet := flag.NewFlagSet("test", 0)
+-	globalSet.Int("myflag", 42, "doc")
+-	command := cli.Command{Name: "mycommand"}
+-	c := cli.NewContext(nil, set, globalSet)
+-	c.Command = command
+-	expect(t, c.Int("myflag"), 12)
+-	expect(t, c.GlobalInt("myflag"), 42)
+-	expect(t, c.Command.Name, "mycommand")
+-}
+-
+-func TestContext_Int(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Int("myflag", 12, "doc")
+-	c := cli.NewContext(nil, set, set)
+-	expect(t, c.Int("myflag"), 12)
+-}
+-
+-func TestContext_Duration(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Duration("myflag", time.Duration(12*time.Second), "doc")
+-	c := cli.NewContext(nil, set, set)
+-	expect(t, c.Duration("myflag"), time.Duration(12*time.Second))
+-}
+-
+-func TestContext_String(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.String("myflag", "hello world", "doc")
+-	c := cli.NewContext(nil, set, set)
+-	expect(t, c.String("myflag"), "hello world")
+-}
+-
+-func TestContext_Bool(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Bool("myflag", false, "doc")
+-	c := cli.NewContext(nil, set, set)
+-	expect(t, c.Bool("myflag"), false)
+-}
+-
+-func TestContext_BoolT(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Bool("myflag", true, "doc")
+-	c := cli.NewContext(nil, set, set)
+-	expect(t, c.BoolT("myflag"), true)
+-}
+-
+-func TestContext_Args(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Bool("myflag", false, "doc")
+-	c := cli.NewContext(nil, set, set)
+-	set.Parse([]string{"--myflag", "bat", "baz"})
+-	expect(t, len(c.Args()), 2)
+-	expect(t, c.Bool("myflag"), true)
+-}
+-
+-func TestContext_IsSet(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Bool("myflag", false, "doc")
+-	set.String("otherflag", "hello world", "doc")
+-	globalSet := flag.NewFlagSet("test", 0)
+-	globalSet.Bool("myflagGlobal", true, "doc")
+-	c := cli.NewContext(nil, set, globalSet)
+-	set.Parse([]string{"--myflag", "bat", "baz"})
+-	globalSet.Parse([]string{"--myflagGlobal", "bat", "baz"})
+-	expect(t, c.IsSet("myflag"), true)
+-	expect(t, c.IsSet("otherflag"), false)
+-	expect(t, c.IsSet("bogusflag"), false)
+-	expect(t, c.IsSet("myflagGlobal"), false)
+-}
+-
+-func TestContext_GlobalIsSet(t *testing.T) {
+-	set := flag.NewFlagSet("test", 0)
+-	set.Bool("myflag", false, "doc")
+-	set.String("otherflag", "hello world", "doc")
+-	globalSet := flag.NewFlagSet("test", 0)
+-	globalSet.Bool("myflagGlobal", true, "doc")
+-	globalSet.Bool("myflagGlobalUnset", true, "doc")
+-	c := cli.NewContext(nil, set, globalSet)
+-	set.Parse([]string{"--myflag", "bat", "baz"})
+-	globalSet.Parse([]string{"--myflagGlobal", "bat", "baz"})
+-	expect(t, c.GlobalIsSet("myflag"), false)
+-	expect(t, c.GlobalIsSet("otherflag"), false)
+-	expect(t, c.GlobalIsSet("bogusflag"), false)
+-	expect(t, c.GlobalIsSet("myflagGlobal"), true)
+-	expect(t, c.GlobalIsSet("myflagGlobalUnset"), false)
+-	expect(t, c.GlobalIsSet("bogusGlobal"), false)
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/flag.go b/Godeps/_workspace/src/github.com/codegangsta/cli/flag.go
+deleted file mode 100644
+index b30bca3019b..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/flag.go
++++ /dev/null
+@@ -1,410 +0,0 @@
+-package cli
+-
+-import (
+-	"flag"
+-	"fmt"
+-	"os"
+-	"strconv"
+-	"strings"
+-	"time"
+-)
+-
+-// This flag enables bash-completion for all commands and subcommands
+-var BashCompletionFlag = BoolFlag{
+-	Name: "generate-bash-completion",
+-}
+-
+-// This flag prints the version for the application
+-var VersionFlag = BoolFlag{
+-	Name:  "version, v",
+-	Usage: "print the version",
+-}
+-
+-// This flag prints the help for all commands and subcommands
+-var HelpFlag = BoolFlag{
+-	Name:  "help, h",
+-	Usage: "show help",
+-}
+-
+-// Flag is a common interface related to parsing flags in cli.
+-// For more advanced flag parsing techniques, it is recomended that
+-// this interface be implemented.
+-type Flag interface {
+-	fmt.Stringer
+-	// Apply Flag settings to the given flag set
+-	Apply(*flag.FlagSet)
+-	getName() string
+-}
+-
+-func flagSet(name string, flags []Flag) *flag.FlagSet {
+-	set := flag.NewFlagSet(name, flag.ContinueOnError)
+-
+-	for _, f := range flags {
+-		f.Apply(set)
+-	}
+-	return set
+-}
+-
+-func eachName(longName string, fn func(string)) {
+-	parts := strings.Split(longName, ",")
+-	for _, name := range parts {
+-		name = strings.Trim(name, " ")
+-		fn(name)
+-	}
+-}
+-
+-// Generic is a generic parseable type identified by a specific flag
+-type Generic interface {
+-	Set(value string) error
+-	String() string
+-}
+-
+-// GenericFlag is the flag type for types implementing Generic
+-type GenericFlag struct {
+-	Name   string
+-	Value  Generic
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f GenericFlag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s%s %v\t`%v` %s", prefixFor(f.Name), f.Name, f.Value, "-"+f.Name+" option -"+f.Name+" option", f.Usage))
+-}
+-
+-func (f GenericFlag) Apply(set *flag.FlagSet) {
+-	val := f.Value
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			val.Set(envVal)
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Var(f.Value, name, f.Usage)
+-	})
+-}
+-
+-func (f GenericFlag) getName() string {
+-	return f.Name
+-}
+-
+-type StringSlice []string
+-
+-func (f *StringSlice) Set(value string) error {
+-	*f = append(*f, value)
+-	return nil
+-}
+-
+-func (f *StringSlice) String() string {
+-	return fmt.Sprintf("%s", *f)
+-}
+-
+-func (f *StringSlice) Value() []string {
+-	return *f
+-}
+-
+-type StringSliceFlag struct {
+-	Name   string
+-	Value  *StringSlice
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f StringSliceFlag) String() string {
+-	firstName := strings.Trim(strings.Split(f.Name, ",")[0], " ")
+-	pref := prefixFor(firstName)
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s '%v'\t%v", prefixedNames(f.Name), pref+firstName+" option "+pref+firstName+" option", f.Usage))
+-}
+-
+-func (f StringSliceFlag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			newVal := &StringSlice{}
+-			for _, s := range strings.Split(envVal, ",") {
+-				newVal.Set(s)
+-			}
+-			f.Value = newVal
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Var(f.Value, name, f.Usage)
+-	})
+-}
+-
+-func (f StringSliceFlag) getName() string {
+-	return f.Name
+-}
+-
+-type IntSlice []int
+-
+-func (f *IntSlice) Set(value string) error {
+-
+-	tmp, err := strconv.Atoi(value)
+-	if err != nil {
+-		return err
+-	} else {
+-		*f = append(*f, tmp)
+-	}
+-	return nil
+-}
+-
+-func (f *IntSlice) String() string {
+-	return fmt.Sprintf("%d", *f)
+-}
+-
+-func (f *IntSlice) Value() []int {
+-	return *f
+-}
+-
+-type IntSliceFlag struct {
+-	Name   string
+-	Value  *IntSlice
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f IntSliceFlag) String() string {
+-	firstName := strings.Trim(strings.Split(f.Name, ",")[0], " ")
+-	pref := prefixFor(firstName)
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s '%v'\t%v", prefixedNames(f.Name), pref+firstName+" option "+pref+firstName+" option", f.Usage))
+-}
+-
+-func (f IntSliceFlag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			newVal := &IntSlice{}
+-			for _, s := range strings.Split(envVal, ",") {
+-				err := newVal.Set(s)
+-				if err != nil {
+-					fmt.Fprintf(os.Stderr, err.Error())
+-				}
+-			}
+-			f.Value = newVal
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Var(f.Value, name, f.Usage)
+-	})
+-}
+-
+-func (f IntSliceFlag) getName() string {
+-	return f.Name
+-}
+-
+-type BoolFlag struct {
+-	Name   string
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f BoolFlag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s\t%v", prefixedNames(f.Name), f.Usage))
+-}
+-
+-func (f BoolFlag) Apply(set *flag.FlagSet) {
+-	val := false
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			envValBool, err := strconv.ParseBool(envVal)
+-			if err == nil {
+-				val = envValBool
+-			}
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Bool(name, val, f.Usage)
+-	})
+-}
+-
+-func (f BoolFlag) getName() string {
+-	return f.Name
+-}
+-
+-type BoolTFlag struct {
+-	Name   string
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f BoolTFlag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s\t%v", prefixedNames(f.Name), f.Usage))
+-}
+-
+-func (f BoolTFlag) Apply(set *flag.FlagSet) {
+-	val := true
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			envValBool, err := strconv.ParseBool(envVal)
+-			if err == nil {
+-				val = envValBool
+-			}
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Bool(name, val, f.Usage)
+-	})
+-}
+-
+-func (f BoolTFlag) getName() string {
+-	return f.Name
+-}
+-
+-type StringFlag struct {
+-	Name   string
+-	Value  string
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f StringFlag) String() string {
+-	var fmtString string
+-	fmtString = "%s %v\t%v"
+-
+-	if len(f.Value) > 0 {
+-		fmtString = "%s '%v'\t%v"
+-	} else {
+-		fmtString = "%s %v\t%v"
+-	}
+-
+-	return withEnvHint(f.EnvVar, fmt.Sprintf(fmtString, prefixedNames(f.Name), f.Value, f.Usage))
+-}
+-
+-func (f StringFlag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			f.Value = envVal
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.String(name, f.Value, f.Usage)
+-	})
+-}
+-
+-func (f StringFlag) getName() string {
+-	return f.Name
+-}
+-
+-type IntFlag struct {
+-	Name   string
+-	Value  int
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f IntFlag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s '%v'\t%v", prefixedNames(f.Name), f.Value, f.Usage))
+-}
+-
+-func (f IntFlag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			envValInt, err := strconv.ParseUint(envVal, 10, 64)
+-			if err == nil {
+-				f.Value = int(envValInt)
+-			}
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Int(name, f.Value, f.Usage)
+-	})
+-}
+-
+-func (f IntFlag) getName() string {
+-	return f.Name
+-}
+-
+-type DurationFlag struct {
+-	Name   string
+-	Value  time.Duration
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f DurationFlag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s '%v'\t%v", prefixedNames(f.Name), f.Value, f.Usage))
+-}
+-
+-func (f DurationFlag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			envValDuration, err := time.ParseDuration(envVal)
+-			if err == nil {
+-				f.Value = envValDuration
+-			}
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Duration(name, f.Value, f.Usage)
+-	})
+-}
+-
+-func (f DurationFlag) getName() string {
+-	return f.Name
+-}
+-
+-type Float64Flag struct {
+-	Name   string
+-	Value  float64
+-	Usage  string
+-	EnvVar string
+-}
+-
+-func (f Float64Flag) String() string {
+-	return withEnvHint(f.EnvVar, fmt.Sprintf("%s '%v'\t%v", prefixedNames(f.Name), f.Value, f.Usage))
+-}
+-
+-func (f Float64Flag) Apply(set *flag.FlagSet) {
+-	if f.EnvVar != "" {
+-		if envVal := os.Getenv(f.EnvVar); envVal != "" {
+-			envValFloat, err := strconv.ParseFloat(envVal, 10)
+-			if err == nil {
+-				f.Value = float64(envValFloat)
+-			}
+-		}
+-	}
+-
+-	eachName(f.Name, func(name string) {
+-		set.Float64(name, f.Value, f.Usage)
+-	})
+-}
+-
+-func (f Float64Flag) getName() string {
+-	return f.Name
+-}
+-
+-func prefixFor(name string) (prefix string) {
+-	if len(name) == 1 {
+-		prefix = "-"
+-	} else {
+-		prefix = "--"
+-	}
+-
+-	return
+-}
+-
+-func prefixedNames(fullName string) (prefixed string) {
+-	parts := strings.Split(fullName, ",")
+-	for i, name := range parts {
+-		name = strings.Trim(name, " ")
+-		prefixed += prefixFor(name) + name
+-		if i < len(parts)-1 {
+-			prefixed += ", "
+-		}
+-	}
+-	return
+-}
+-
+-func withEnvHint(envVar, str string) string {
+-	envText := ""
+-	if envVar != "" {
+-		envText = fmt.Sprintf(" [$%s]", envVar)
+-	}
+-	return str + envText
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/flag_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/flag_test.go
+deleted file mode 100644
+index bc5059ca17e..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/flag_test.go
++++ /dev/null
+@@ -1,587 +0,0 @@
+-package cli_test
+-
+-import (
+-	"fmt"
+-	"os"
+-	"reflect"
+-	"strings"
+-	"testing"
+-
+-	"github.com/codegangsta/cli"
+-)
+-
+-var boolFlagTests = []struct {
+-	name     string
+-	expected string
+-}{
+-	{"help", "--help\t"},
+-	{"h", "-h\t"},
+-}
+-
+-func TestBoolFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range boolFlagTests {
+-		flag := cli.BoolFlag{Name: test.name}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%s does not match %s", output, test.expected)
+-		}
+-	}
+-}
+-
+-var stringFlagTests = []struct {
+-	name     string
+-	value    string
+-	expected string
+-}{
+-	{"help", "", "--help \t"},
+-	{"h", "", "-h \t"},
+-	{"h", "", "-h \t"},
+-	{"test", "Something", "--test 'Something'\t"},
+-}
+-
+-func TestStringFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range stringFlagTests {
+-		flag := cli.StringFlag{Name: test.name, Value: test.value}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%s does not match %s", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestStringFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_FOO", "derp")
+-	for _, test := range stringFlagTests {
+-		flag := cli.StringFlag{Name: test.name, Value: test.value, EnvVar: "APP_FOO"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_FOO]") {
+-			t.Errorf("%s does not end with [$APP_FOO]", output)
+-		}
+-	}
+-}
+-
+-var stringSliceFlagTests = []struct {
+-	name     string
+-	value    *cli.StringSlice
+-	expected string
+-}{
+-	{"help", func() *cli.StringSlice {
+-		s := &cli.StringSlice{}
+-		s.Set("")
+-		return s
+-	}(), "--help '--help option --help option'\t"},
+-	{"h", func() *cli.StringSlice {
+-		s := &cli.StringSlice{}
+-		s.Set("")
+-		return s
+-	}(), "-h '-h option -h option'\t"},
+-	{"h", func() *cli.StringSlice {
+-		s := &cli.StringSlice{}
+-		s.Set("")
+-		return s
+-	}(), "-h '-h option -h option'\t"},
+-	{"test", func() *cli.StringSlice {
+-		s := &cli.StringSlice{}
+-		s.Set("Something")
+-		return s
+-	}(), "--test '--test option --test option'\t"},
+-}
+-
+-func TestStringSliceFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range stringSliceFlagTests {
+-		flag := cli.StringSliceFlag{Name: test.name, Value: test.value}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%q does not match %q", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestStringSliceFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_QWWX", "11,4")
+-	for _, test := range stringSliceFlagTests {
+-		flag := cli.StringSliceFlag{Name: test.name, Value: test.value, EnvVar: "APP_QWWX"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_QWWX]") {
+-			t.Errorf("%q does not end with [$APP_QWWX]", output)
+-		}
+-	}
+-}
+-
+-var intFlagTests = []struct {
+-	name     string
+-	expected string
+-}{
+-	{"help", "--help '0'\t"},
+-	{"h", "-h '0'\t"},
+-}
+-
+-func TestIntFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range intFlagTests {
+-		flag := cli.IntFlag{Name: test.name}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%s does not match %s", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestIntFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_BAR", "2")
+-	for _, test := range intFlagTests {
+-		flag := cli.IntFlag{Name: test.name, EnvVar: "APP_BAR"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_BAR]") {
+-			t.Errorf("%s does not end with [$APP_BAR]", output)
+-		}
+-	}
+-}
+-
+-var durationFlagTests = []struct {
+-	name     string
+-	expected string
+-}{
+-	{"help", "--help '0'\t"},
+-	{"h", "-h '0'\t"},
+-}
+-
+-func TestDurationFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range durationFlagTests {
+-		flag := cli.DurationFlag{Name: test.name}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%s does not match %s", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestDurationFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_BAR", "2h3m6s")
+-	for _, test := range durationFlagTests {
+-		flag := cli.DurationFlag{Name: test.name, EnvVar: "APP_BAR"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_BAR]") {
+-			t.Errorf("%s does not end with [$APP_BAR]", output)
+-		}
+-	}
+-}
+-
+-var intSliceFlagTests = []struct {
+-	name     string
+-	value    *cli.IntSlice
+-	expected string
+-}{
+-	{"help", &cli.IntSlice{}, "--help '--help option --help option'\t"},
+-	{"h", &cli.IntSlice{}, "-h '-h option -h option'\t"},
+-	{"h", &cli.IntSlice{}, "-h '-h option -h option'\t"},
+-	{"test", func() *cli.IntSlice {
+-		i := &cli.IntSlice{}
+-		i.Set("9")
+-		return i
+-	}(), "--test '--test option --test option'\t"},
+-}
+-
+-func TestIntSliceFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range intSliceFlagTests {
+-		flag := cli.IntSliceFlag{Name: test.name, Value: test.value}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%q does not match %q", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestIntSliceFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_SMURF", "42,3")
+-	for _, test := range intSliceFlagTests {
+-		flag := cli.IntSliceFlag{Name: test.name, Value: test.value, EnvVar: "APP_SMURF"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_SMURF]") {
+-			t.Errorf("%q does not end with [$APP_SMURF]", output)
+-		}
+-	}
+-}
+-
+-var float64FlagTests = []struct {
+-	name     string
+-	expected string
+-}{
+-	{"help", "--help '0'\t"},
+-	{"h", "-h '0'\t"},
+-}
+-
+-func TestFloat64FlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range float64FlagTests {
+-		flag := cli.Float64Flag{Name: test.name}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%s does not match %s", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestFloat64FlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_BAZ", "99.4")
+-	for _, test := range float64FlagTests {
+-		flag := cli.Float64Flag{Name: test.name, EnvVar: "APP_BAZ"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_BAZ]") {
+-			t.Errorf("%s does not end with [$APP_BAZ]", output)
+-		}
+-	}
+-}
+-
+-var genericFlagTests = []struct {
+-	name     string
+-	value    cli.Generic
+-	expected string
+-}{
+-	{"help", &Parser{}, "--help <nil>\t`-help option -help option` "},
+-	{"h", &Parser{}, "-h <nil>\t`-h option -h option` "},
+-	{"test", &Parser{}, "--test <nil>\t`-test option -test option` "},
+-}
+-
+-func TestGenericFlagHelpOutput(t *testing.T) {
+-
+-	for _, test := range genericFlagTests {
+-		flag := cli.GenericFlag{Name: test.name}
+-		output := flag.String()
+-
+-		if output != test.expected {
+-			t.Errorf("%q does not match %q", output, test.expected)
+-		}
+-	}
+-}
+-
+-func TestGenericFlagWithEnvVarHelpOutput(t *testing.T) {
+-
+-	os.Setenv("APP_ZAP", "3")
+-	for _, test := range genericFlagTests {
+-		flag := cli.GenericFlag{Name: test.name, EnvVar: "APP_ZAP"}
+-		output := flag.String()
+-
+-		if !strings.HasSuffix(output, " [$APP_ZAP]") {
+-			t.Errorf("%s does not end with [$APP_ZAP]", output)
+-		}
+-	}
+-}
+-
+-func TestParseMultiString(t *testing.T) {
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.StringFlag{Name: "serve, s"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.String("serve") != "10" {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.String("s") != "10" {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}).Run([]string{"run", "-s", "10"})
+-}
+-
+-func TestParseMultiStringFromEnv(t *testing.T) {
+-	os.Setenv("APP_COUNT", "20")
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.StringFlag{Name: "count, c", EnvVar: "APP_COUNT"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.String("count") != "20" {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.String("c") != "20" {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}).Run([]string{"run"})
+-}
+-
+-func TestParseMultiStringSlice(t *testing.T) {
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.StringSliceFlag{Name: "serve, s", Value: &cli.StringSlice{}},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.StringSlice("serve"), []string{"10", "20"}) {
+-				t.Errorf("main name not set")
+-			}
+-			if !reflect.DeepEqual(ctx.StringSlice("s"), []string{"10", "20"}) {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}).Run([]string{"run", "-s", "10", "-s", "20"})
+-}
+-
+-func TestParseMultiStringSliceFromEnv(t *testing.T) {
+-	os.Setenv("APP_INTERVALS", "20,30,40")
+-
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.StringSliceFlag{Name: "intervals, i", Value: &cli.StringSlice{}, EnvVar: "APP_INTERVALS"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.StringSlice("intervals"), []string{"20", "30", "40"}) {
+-				t.Errorf("main name not set from env")
+-			}
+-			if !reflect.DeepEqual(ctx.StringSlice("i"), []string{"20", "30", "40"}) {
+-				t.Errorf("short name not set from env")
+-			}
+-		},
+-	}).Run([]string{"run"})
+-}
+-
+-func TestParseMultiInt(t *testing.T) {
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.IntFlag{Name: "serve, s"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Int("serve") != 10 {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.Int("s") != 10 {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run", "-s", "10"})
+-}
+-
+-func TestParseMultiIntFromEnv(t *testing.T) {
+-	os.Setenv("APP_TIMEOUT_SECONDS", "10")
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.IntFlag{Name: "timeout, t", EnvVar: "APP_TIMEOUT_SECONDS"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Int("timeout") != 10 {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.Int("t") != 10 {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run"})
+-}
+-
+-func TestParseMultiIntSlice(t *testing.T) {
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.IntSliceFlag{Name: "serve, s", Value: &cli.IntSlice{}},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.IntSlice("serve"), []int{10, 20}) {
+-				t.Errorf("main name not set")
+-			}
+-			if !reflect.DeepEqual(ctx.IntSlice("s"), []int{10, 20}) {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}).Run([]string{"run", "-s", "10", "-s", "20"})
+-}
+-
+-func TestParseMultiIntSliceFromEnv(t *testing.T) {
+-	os.Setenv("APP_INTERVALS", "20,30,40")
+-
+-	(&cli.App{
+-		Flags: []cli.Flag{
+-			cli.IntSliceFlag{Name: "intervals, i", Value: &cli.IntSlice{}, EnvVar: "APP_INTERVALS"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.IntSlice("intervals"), []int{20, 30, 40}) {
+-				t.Errorf("main name not set from env")
+-			}
+-			if !reflect.DeepEqual(ctx.IntSlice("i"), []int{20, 30, 40}) {
+-				t.Errorf("short name not set from env")
+-			}
+-		},
+-	}).Run([]string{"run"})
+-}
+-
+-func TestParseMultiFloat64(t *testing.T) {
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.Float64Flag{Name: "serve, s"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Float64("serve") != 10.2 {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.Float64("s") != 10.2 {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run", "-s", "10.2"})
+-}
+-
+-func TestParseMultiFloat64FromEnv(t *testing.T) {
+-	os.Setenv("APP_TIMEOUT_SECONDS", "15.5")
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.Float64Flag{Name: "timeout, t", EnvVar: "APP_TIMEOUT_SECONDS"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Float64("timeout") != 15.5 {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.Float64("t") != 15.5 {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run"})
+-}
+-
+-func TestParseMultiBool(t *testing.T) {
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.BoolFlag{Name: "serve, s"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Bool("serve") != true {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.Bool("s") != true {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run", "--serve"})
+-}
+-
+-func TestParseMultiBoolFromEnv(t *testing.T) {
+-	os.Setenv("APP_DEBUG", "1")
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.BoolFlag{Name: "debug, d", EnvVar: "APP_DEBUG"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.Bool("debug") != true {
+-				t.Errorf("main name not set from env")
+-			}
+-			if ctx.Bool("d") != true {
+-				t.Errorf("short name not set from env")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run"})
+-}
+-
+-func TestParseMultiBoolT(t *testing.T) {
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.BoolTFlag{Name: "serve, s"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.BoolT("serve") != true {
+-				t.Errorf("main name not set")
+-			}
+-			if ctx.BoolT("s") != true {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run", "--serve"})
+-}
+-
+-func TestParseMultiBoolTFromEnv(t *testing.T) {
+-	os.Setenv("APP_DEBUG", "0")
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.BoolTFlag{Name: "debug, d", EnvVar: "APP_DEBUG"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if ctx.BoolT("debug") != false {
+-				t.Errorf("main name not set from env")
+-			}
+-			if ctx.BoolT("d") != false {
+-				t.Errorf("short name not set from env")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run"})
+-}
+-
+-type Parser [2]string
+-
+-func (p *Parser) Set(value string) error {
+-	parts := strings.Split(value, ",")
+-	if len(parts) != 2 {
+-		return fmt.Errorf("invalid format")
+-	}
+-
+-	(*p)[0] = parts[0]
+-	(*p)[1] = parts[1]
+-
+-	return nil
+-}
+-
+-func (p *Parser) String() string {
+-	return fmt.Sprintf("%s,%s", p[0], p[1])
+-}
+-
+-func TestParseGeneric(t *testing.T) {
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.GenericFlag{Name: "serve, s", Value: &Parser{}},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.Generic("serve"), &Parser{"10", "20"}) {
+-				t.Errorf("main name not set")
+-			}
+-			if !reflect.DeepEqual(ctx.Generic("s"), &Parser{"10", "20"}) {
+-				t.Errorf("short name not set")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run", "-s", "10,20"})
+-}
+-
+-func TestParseGenericFromEnv(t *testing.T) {
+-	os.Setenv("APP_SERVE", "20,30")
+-	a := cli.App{
+-		Flags: []cli.Flag{
+-			cli.GenericFlag{Name: "serve, s", Value: &Parser{}, EnvVar: "APP_SERVE"},
+-		},
+-		Action: func(ctx *cli.Context) {
+-			if !reflect.DeepEqual(ctx.Generic("serve"), &Parser{"20", "30"}) {
+-				t.Errorf("main name not set from env")
+-			}
+-			if !reflect.DeepEqual(ctx.Generic("s"), &Parser{"20", "30"}) {
+-				t.Errorf("short name not set from env")
+-			}
+-		},
+-	}
+-	a.Run([]string{"run"})
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/help.go b/Godeps/_workspace/src/github.com/codegangsta/cli/help.go
+deleted file mode 100644
+index 5667d3a8c59..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/help.go
++++ /dev/null
+@@ -1,224 +0,0 @@
+-package cli
+-
+-import (
+-	"fmt"
+-	"os"
+-	"text/tabwriter"
+-	"text/template"
+-)
+-
+-// The text template for the Default help topic.
+-// cli.go uses text/template to render templates. You can
+-// render custom help text by setting this variable.
+-var AppHelpTemplate = `NAME:
+-   {{.Name}} - {{.Usage}}
+-
+-USAGE:
+-   {{.Name}} {{if .Flags}}[global options] {{end}}command{{if .Flags}} [command options]{{end}} [arguments...]
+-
+-VERSION:
+-   {{.Version}}{{if or .Author .Email}}
+-
+-AUTHOR:{{if .Author}}
+-  {{.Author}}{{if .Email}} - <{{.Email}}>{{end}}{{else}}
+-  {{.Email}}{{end}}{{end}}
+-
+-COMMANDS:
+-   {{range .Commands}}{{.Name}}{{with .ShortName}}, {{.}}{{end}}{{ "\t" }}{{.Usage}}
+-   {{end}}{{if .Flags}}
+-GLOBAL OPTIONS:
+-   {{range .Flags}}{{.}}
+-   {{end}}{{end}}
+-`
+-
+-// The text template for the command help topic.
+-// cli.go uses text/template to render templates. You can
+-// render custom help text by setting this variable.
+-var CommandHelpTemplate = `NAME:
+-   {{.Name}} - {{.Usage}}
+-
+-USAGE:
+-   command {{.Name}}{{if .Flags}} [command options]{{end}} [arguments...]{{if .Description}}
+-
+-DESCRIPTION:
+-   {{.Description}}{{end}}{{if .Flags}}
+-
+-OPTIONS:
+-   {{range .Flags}}{{.}}
+-   {{end}}{{ end }}
+-`
+-
+-// The text template for the subcommand help topic.
+-// cli.go uses text/template to render templates. You can
+-// render custom help text by setting this variable.
+-var SubcommandHelpTemplate = `NAME:
+-   {{.Name}} - {{.Usage}}
+-
+-USAGE:
+-   {{.Name}} command{{if .Flags}} [command options]{{end}} [arguments...]
+-
+-COMMANDS:
+-   {{range .Commands}}{{.Name}}{{with .ShortName}}, {{.}}{{end}}{{ "\t" }}{{.Usage}}
+-   {{end}}{{if .Flags}}
+-OPTIONS:
+-   {{range .Flags}}{{.}}
+-   {{end}}{{end}}
+-`
+-
+-var helpCommand = Command{
+-	Name:      "help",
+-	ShortName: "h",
+-	Usage:     "Shows a list of commands or help for one command",
+-	Action: func(c *Context) {
+-		args := c.Args()
+-		if args.Present() {
+-			ShowCommandHelp(c, args.First())
+-		} else {
+-			ShowAppHelp(c)
+-		}
+-	},
+-}
+-
+-var helpSubcommand = Command{
+-	Name:      "help",
+-	ShortName: "h",
+-	Usage:     "Shows a list of commands or help for one command",
+-	Action: func(c *Context) {
+-		args := c.Args()
+-		if args.Present() {
+-			ShowCommandHelp(c, args.First())
+-		} else {
+-			ShowSubcommandHelp(c)
+-		}
+-	},
+-}
+-
+-// Prints help for the App
+-var HelpPrinter = printHelp
+-
+-// Prints version for the App
+-var VersionPrinter = printVersion
+-
+-func ShowAppHelp(c *Context) {
+-	HelpPrinter(AppHelpTemplate, c.App)
+-}
+-
+-// Prints the list of subcommands as the default app completion method
+-func DefaultAppComplete(c *Context) {
+-	for _, command := range c.App.Commands {
+-		fmt.Println(command.Name)
+-		if command.ShortName != "" {
+-			fmt.Println(command.ShortName)
+-		}
+-	}
+-}
+-
+-// Prints help for the given command
+-func ShowCommandHelp(c *Context, command string) {
+-	for _, c := range c.App.Commands {
+-		if c.HasName(command) {
+-			HelpPrinter(CommandHelpTemplate, c)
+-			return
+-		}
+-	}
+-
+-	if c.App.CommandNotFound != nil {
+-		c.App.CommandNotFound(c, command)
+-	} else {
+-		fmt.Printf("No help topic for '%v'\n", command)
+-	}
+-}
+-
+-// Prints help for the given subcommand
+-func ShowSubcommandHelp(c *Context) {
+-	HelpPrinter(SubcommandHelpTemplate, c.App)
+-}
+-
+-// Prints the version number of the App
+-func ShowVersion(c *Context) {
+-	VersionPrinter(c)
+-}
+-
+-func printVersion(c *Context) {
+-	fmt.Printf("%v version %v\n", c.App.Name, c.App.Version)
+-}
+-
+-// Prints the lists of commands within a given context
+-func ShowCompletions(c *Context) {
+-	a := c.App
+-	if a != nil && a.BashComplete != nil {
+-		a.BashComplete(c)
+-	}
+-}
+-
+-// Prints the custom completions for a given command
+-func ShowCommandCompletions(ctx *Context, command string) {
+-	c := ctx.App.Command(command)
+-	if c != nil && c.BashComplete != nil {
+-		c.BashComplete(ctx)
+-	}
+-}
+-
+-func printHelp(templ string, data interface{}) {
+-	w := tabwriter.NewWriter(os.Stdout, 0, 8, 1, '\t', 0)
+-	t := template.Must(template.New("help").Parse(templ))
+-	err := t.Execute(w, data)
+-	if err != nil {
+-		panic(err)
+-	}
+-	w.Flush()
+-}
+-
+-func checkVersion(c *Context) bool {
+-	if c.GlobalBool("version") {
+-		ShowVersion(c)
+-		return true
+-	}
+-
+-	return false
+-}
+-
+-func checkHelp(c *Context) bool {
+-	if c.GlobalBool("h") || c.GlobalBool("help") {
+-		ShowAppHelp(c)
+-		return true
+-	}
+-
+-	return false
+-}
+-
+-func checkCommandHelp(c *Context, name string) bool {
+-	if c.Bool("h") || c.Bool("help") {
+-		ShowCommandHelp(c, name)
+-		return true
+-	}
+-
+-	return false
+-}
+-
+-func checkSubcommandHelp(c *Context) bool {
+-	if c.GlobalBool("h") || c.GlobalBool("help") {
+-		ShowSubcommandHelp(c)
+-		return true
+-	}
+-
+-	return false
+-}
+-
+-func checkCompletions(c *Context) bool {
+-	if (c.GlobalBool(BashCompletionFlag.Name) || c.Bool(BashCompletionFlag.Name)) && c.App.EnableBashCompletion {
+-		ShowCompletions(c)
+-		return true
+-	}
+-
+-	return false
+-}
+-
+-func checkCommandCompletions(c *Context, name string) bool {
+-	if c.Bool(BashCompletionFlag.Name) && c.App.EnableBashCompletion {
+-		ShowCommandCompletions(c, name)
+-		return true
+-	}
+-
+-	return false
+-}
+diff --git a/Godeps/_workspace/src/github.com/codegangsta/cli/helpers_test.go b/Godeps/_workspace/src/github.com/codegangsta/cli/helpers_test.go
+deleted file mode 100644
+index cdc4feb2fcd..00000000000
+--- a/Godeps/_workspace/src/github.com/codegangsta/cli/helpers_test.go
++++ /dev/null
+@@ -1,19 +0,0 @@
+-package cli_test
+-
+-import (
+-	"reflect"
+-	"testing"
+-)
+-
+-/* Test Helpers */
+-func expect(t *testing.T, a interface{}, b interface{}) {
+-	if a != b {
+-		t.Errorf("Expected %v (type %v) - Got %v (type %v)", b, reflect.TypeOf(b), a, reflect.TypeOf(a))
+-	}
+-}
+-
+-func refute(t *testing.T, a interface{}, b interface{}) {
+-	if a == b {
+-		t.Errorf("Did not expect %v (type %v) - Got %v (type %v)", b, reflect.TypeOf(b), a, reflect.TypeOf(a))
+-	}
+-}
+diff --git a/build.go b/build.go
+index 4ee59928d67..b3f77ba1179 100644
+--- a/build.go
++++ b/build.go
+@@ -22,16 +22,13 @@ import (
+ )
+ 
+ var (
+-	versionRe  = regexp.MustCompile(`-[0-9]{1,3}-g[0-9a-f]{5,10}`)
+-	goarch     string
+-	goos       string
+-	version    string = "v1"
+-	race       bool
+-	workingDir string
+-
+-	installRoot   = "/opt/grafana"
+-	configRoot    = "/etc/grafana"
+-	grafanaLogDir = "/var/log/grafana"
++	versionRe        = regexp.MustCompile(`-[0-9]{1,3}-g[0-9a-f]{5,10}`)
++	goarch           string
++	goos             string
++	version          string = "v1"
++	race             bool
++	workingDir       string
++	serverBinaryName string = "grafana-server"
+ )
+ 
+ const minGoVersion = 1.3
+@@ -73,8 +70,8 @@ func main() {
+ 
+ 		case "package":
+ 			//verifyGitRepoIsClean()
+-			grunt("release", "--pkgVer="+version)
+-			createRpmAndDeb()
++			//grunt("release", "--pkgVer="+version)
++			createLinuxPackages()
+ 
+ 		case "latest":
+ 			makeLatestDistCopies()
+@@ -112,23 +109,88 @@ func readVersionFromPackageJson() {
+ 	version = jsonObj["version"].(string)
+ }
+ 
+-func createRpmAndDeb() {
+-	packageRoot, _ := ioutil.TempDir("", "grafana-linux-pack")
+-	postInstallScriptPath, _ := ioutil.TempFile("", "postinstall")
++type linuxPackageOptions struct {
++	packageType            string
++	homeDir                string
++	binPath                string
++	configDir              string
++	configFilePath         string
++	etcDefaultPath         string
++	etcDefaultFilePath     string
++	initdScriptFilePath    string
++	systemdServiceFilePath string
++
++	postinstSrc    string
++	initdScriptSrc string
++	defaultFileSrc string
++	systemdFileSrc string
++
++	depends []string
++}
+ 
+-	versionFolder := filepath.Join(packageRoot, installRoot, "versions", version)
+-	configDir := filepath.Join(packageRoot, configRoot)
++func createLinuxPackages() {
++	createPackage(linuxPackageOptions{
++		packageType:            "deb",
++		homeDir:                "/usr/share/grafana",
++		binPath:                "/usr/sbin/grafana-server",
++		configDir:              "/etc/grafana",
++		configFilePath:         "/etc/grafana/grafana.ini",
++		etcDefaultPath:         "/etc/default",
++		etcDefaultFilePath:     "/etc/default/grafana-server",
++		initdScriptFilePath:    "/etc/init.d/grafana-server",
++		systemdServiceFilePath: "/usr/lib/systemd/system/grafana-server.service",
++
++		postinstSrc:    "packaging/deb/control/postinst",
++		initdScriptSrc: "packaging/deb/init.d/grafana-server",
++		defaultFileSrc: "packaging/deb/default/grafana-server",
++		systemdFileSrc: "packaging/deb/systemd/grafana-server.service",
++
++		depends: []string{"adduser", "libfontconfig"},
++	})
+ 
+-	runError("mkdir", "-p", versionFolder)
+-	runError("mkdir", "-p", configDir)
++	createPackage(linuxPackageOptions{
++		packageType:            "rpm",
++		homeDir:                "/usr/share/grafana",
++		binPath:                "/usr/sbin/grafana-server",
++		configDir:              "/etc/grafana",
++		configFilePath:         "/etc/grafana/grafana.ini",
++		etcDefaultPath:         "/etc/sysconfig",
++		etcDefaultFilePath:     "/etc/sysconfig/grafana-server",
++		initdScriptFilePath:    "/etc/init.d/grafana-server",
++		systemdServiceFilePath: "/usr/lib/systemd/system/grafana-server.service",
++
++		postinstSrc:    "packaging/rpm/control/postinst",
++		initdScriptSrc: "packaging/rpm/init.d/grafana-server",
++		defaultFileSrc: "packaging/rpm/sysconfig/grafana-server",
++		systemdFileSrc: "packaging/rpm/systemd/grafana-server.service",
++
++		depends: []string{"initscripts", "fontconfig"},
++	})
++}
+ 
+-	// copy sample ini file to /etc/opt/grafana
+-	configFile := filepath.Join(configDir, "grafana.ini")
+-	runError("cp", "conf/sample.ini", configFile)
+-	// copy release files
+-	runError("cp", "-a", filepath.Join(workingDir, "tmp")+"/.", versionFolder)
++func createPackage(options linuxPackageOptions) {
++	packageRoot, _ := ioutil.TempDir("", "grafana-linux-pack")
+ 
+-	GeneratePostInstallScript(postInstallScriptPath.Name())
++	// create directories
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, options.homeDir))
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, options.configDir))
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, "/etc/init.d"))
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, options.etcDefaultPath))
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, "/usr/lib/systemd/system"))
++	runPrint("mkdir", "-p", filepath.Join(packageRoot, "/usr/sbin"))
++
++	// copy binary
++	runPrint("cp", "-p", filepath.Join(workingDir, "tmp/bin/"+serverBinaryName), filepath.Join(packageRoot, options.binPath))
++	// copy init.d script
++	runPrint("cp", "-p", options.initdScriptSrc, filepath.Join(packageRoot, options.initdScriptFilePath))
++	// copy environment var file
++	runPrint("cp", "-p", options.defaultFileSrc, filepath.Join(packageRoot, options.etcDefaultFilePath))
++	// copy systemd file
++	runPrint("cp", "-p", options.systemdFileSrc, filepath.Join(packageRoot, options.systemdServiceFilePath))
++	// copy release files
++	runPrint("cp", "-a", filepath.Join(workingDir, "tmp")+"/.", filepath.Join(packageRoot, options.homeDir))
++	// copy sample ini file to /etc/opt/grafana
++	runPrint("cp", "conf/sample.ini", filepath.Join(packageRoot, options.configFilePath))
+ 
+ 	args := []string{
+ 		"-s", "dir",
+@@ -138,50 +200,25 @@ func createRpmAndDeb() {
+ 		"--url", "http://grafana.org",
+ 		"--license", "Apache 2.0",
+ 		"--maintainer", "contact@grafana.org",
+-		"--config-files", filepath.Join(configRoot, "grafana.ini"),
+-		"--after-install", postInstallScriptPath.Name(),
++		"--config-files", options.configFilePath,
++		"--config-files", options.initdScriptFilePath,
++		"--config-files", options.etcDefaultFilePath,
++		"--config-files", options.systemdServiceFilePath,
++		"--after-install", options.postinstSrc,
+ 		"--name", "grafana",
+ 		"--version", version,
+ 		"-p", "./dist",
+-		".",
+ 	}
+ 
+-	fmt.Println("Creating debian package")
+-	runPrint("fpm", append([]string{"-t", "deb"}, args...)...)
++	// add dependenciesj
++	for _, dep := range options.depends {
++		args = append(args, "--depends", dep)
++	}
+ 
+-	fmt.Println("Creating redhat/centos package")
+-	runPrint("fpm", append([]string{"-t", "rpm"}, args...)...)
+-}
++	args = append(args, ".")
+ 
+-func GeneratePostInstallScript(path string) {
+-	content := `
+-rm -f $INSTALL_ROOT_DIR/current
+-ln -s $INSTALL_ROOT_DIR/versions/$VERSION/ $INSTALL_ROOT_DIR/current
+-
+-if [ ! -L /etc/init.d/grafana ]; then
+-    ln -sfn $INSTALL_ROOT_DIR/current/scripts/init.sh /etc/init.d/grafana
+-fi
+-
+-chmod +x /etc/init.d/grafana
+-if which update-rc.d > /dev/null 2>&1 ; then
+-   update-rc.d -f grafana remove
+-   update-rc.d grafana defaults
+-else
+-   chkconfig --add grafana
+-fi
+-
+-if ! id grafana >/dev/null 2>&1; then
+-   useradd --system -U -M grafana
+-fi
+-chown -R -L grafana:grafana $INSTALL_ROOT_DIR
+-chmod -R a+rX $INSTALL_ROOT_DIR
+-mkdir -p $GRAFANA_LOG_DIR
+-chown -R -L grafana:grafana $GRAFANA_LOG_DIR
+-`
+-	content = strings.Replace(content, "$INSTALL_ROOT_DIR", installRoot, -1)
+-	content = strings.Replace(content, "$VERSION", version, -1)
+-	content = strings.Replace(content, "$GRAFANA_LOG_DIR", grafanaLogDir, -1)
+-	ioutil.WriteFile(path, []byte(content), 0644)
++	fmt.Println("Creating package: ", options.packageType)
++	runPrint("fpm", append([]string{"-t", options.packageType}, args...)...)
+ }
+ 
+ func verifyGitRepoIsClean() {
+@@ -230,7 +267,7 @@ func test(pkg string) {
+ }
+ 
+ func build(pkg string, tags []string) {
+-	binary := "./bin/grafana"
++	binary := "./bin/" + serverBinaryName
+ 	if goos == "windows" {
+ 		binary += ".exe"
+ 	}
+diff --git a/conf/defaults.ini b/conf/defaults.ini
+index 182af44ac5f..abd91bff8ba 100644
+--- a/conf/defaults.ini
++++ b/conf/defaults.ini
+@@ -1,93 +1,139 @@
+-app_name = Grafana
++##################### Grafana Configuration Defaults #####################
++#
++# Do not modify this file in grafana installs
++#
++
+ app_mode = production
+ 
++#################################### Paths ####################################
++[paths]
++# Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is useD)
++#
++data = data
++#
++# Directory where grafana can store logs
++#
++logs = data/log
++
++#################################### Server ####################################
+ [server]
+-; protocol (http or https)
++# Protocol (http or https)
+ protocol = http
+-; the ip address to bind to, empty will bind to all interfaces
++
++# The ip address to bind to, empty will bind to all interfaces
+ http_addr =
+-; the http port  to use
++
++# The http port  to use
+ http_port = 3000
+-; The public facing domain name used to access grafana from a browser
++
++# The public facing domain name used to access grafana from a browser
+ domain = localhost
+-; the full public facing url
++
++# The full public facing url
+ root_url = %(protocol)s://%(domain)s:%(http_port)s/
++
++# Log web requests
+ router_logging = false
+-; the path relative to the binary where the static (html/js/css) files are placed
++
++# the path relative working path
+ static_root_path = public
+-; enable gzip
++
++# enable gzip
+ enable_gzip = false
+-; https certs & key file
++
++# https certs & key file
+ cert_file =
+ cert_key =
+ 
+-[analytics]
+-# Server reporting, sends usage counters to stats.grafana.org every 24 hours.
+-# No ip addresses are being tracked, only simple counters to track
+-# running instances, dashboard and error counts. It is very helpful to us.
+-# Change this option to false to disable reporting.
+-reporting_enabled = true
+-; Google Analytics universal tracking code, only enabled if you specify an id here
+-google_analytics_ua_id =
+-
++#################################### Database ####################################
+ [database]
+-; Either "mysql", "postgres" or "sqlite3", it's your choice
++# Either "mysql", "postgres" or "sqlite3", it's your choice
+ type = sqlite3
+ host = 127.0.0.1:3306
+ name = grafana
+ user = root
+ password =
+-; For "postgres" only, either "disable", "require" or "verify-full"
++
++# For "postgres" only, either "disable", "require" or "verify-full"
+ ssl_mode = disable
+-; For "sqlite3" only
+-path = data/grafana.db
+ 
++# For "sqlite3" only, path relative to data_path setting
++path = grafana.db
++
++#################################### Session ####################################
+ [session]
+-; Either "memory", "file", "redis", "mysql", default is "memory"
++# Either "memory", "file", "redis", "mysql", default is "memory"
+ provider = file
+-; Provider config options
+-; memory: not have any config yet
+-; file: session file path, e.g. `data/sessions`
+-; redis: config like redis server addr, poolSize, password, e.g. `127.0.0.1:6379,100,grafana`
+-; mysql: go-sql-driver/mysql dsn config string, e.g. `user:password@tcp(127.0.0.1)/database_name`
+-provider_config = data/sessions
+-; Session cookie name
++
++# Provider config options
++# memory: not have any config yet
++# file: session dir path, is relative to grafana data_path
++# redis: config like redis server addr, poolSize, password, e.g. `127.0.0.1:6379,100,grafana`
++# mysql: go-sql-driver/mysql dsn config string, e.g. `user:password@tcp(127.0.0.1)/database_name`
++provider_config = sessions
++
++# Session cookie name
+ cookie_name = grafana_sess
+-; If you use session in https only, default is false
++
++# If you use session in https only, default is false
+ cookie_secure = false
+-; Session life time, default is 86400
++
++# Session life time, default is 86400
+ session_life_time = 86400
+ 
++#################################### Analytics ####################################
++[analytics]
++# Server reporting, sends usage counters to stats.grafana.org every 24 hours.
++# No ip addresses are being tracked, only simple counters to track
++# running instances, dashboard and error counts. It is very helpful to us.
++# Change this option to false to disable reporting.
++reporting_enabled = true
++
++# Google Analytics universal tracking code, only enabled if you specify an id here
++google_analytics_ua_id =
++
++#################################### Security ####################################
+ [security]
+-; default admin user, created on startup
++# default admin user, created on startup
+ admin_user = admin
+-; default admin password, can be changed before first start of grafana,  or in profile settings
++
++# default admin password, can be changed before first start of grafana,  or in profile settings
+ admin_password = admin
+-; used for signing
++
++# used for signing
+ secret_key = SW2YcwTIb9zpOOhoPsMm
+-; Auto-login remember days
++
++# Auto-login remember days
+ login_remember_days = 7
+ cookie_username = grafana_user
+ cookie_remember_name = grafana_remember
+ 
++#################################### Users ####################################
+ [users]
+-; disable user signup / registration
++# disable user signup / registration
+ allow_sign_up = true
+-; Allow non admin users to create organizations
++
++# Allow non admin users to create organizations
+ allow_org_create = true
++
+ # Set to true to automatically assign new users to the default organization (id 1)
+ auto_assign_org = true
+-; Default role new users will be automatically assigned (if disabled above is set to true)
++
++# Default role new users will be automatically assigned (if disabled above is set to true)
+ auto_assign_org_role = Viewer
+ 
++#################################### Anonymous Auth ##########################
+ [auth.anonymous]
+-; enable anonymous access
++# enable anonymous access
+ enabled = false
+-; specify organization name that should be used for unauthenticated users
++
++# specify organization name that should be used for unauthenticated users
+ org_name = Main Org.
+-; specify role for unauthenticated users
++
++# specify role for unauthenticated users
+ org_role = Viewer
+ 
++#################################### Github Auth ##########################
+ [auth.github]
+ enabled = false
+ client_id = some_id
+@@ -95,9 +141,10 @@ client_secret = some_secret
+ scopes = user:email
+ auth_url = https://github.com/login/oauth/authorize
+ token_url = https://github.com/login/oauth/access_token
+-; uncomment bellow to only allow specific email domains
++# Uncomment bellow to only allow specific email domains
+ ; allowed_domains = mycompany.com othercompany.com
+ 
++#################################### Google Auth ##########################
+ [auth.google]
+ enabled = false
+ client_id = some_client_id
+@@ -105,37 +152,44 @@ client_secret = some_client_secret
+ scopes = https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email
+ auth_url = https://accounts.google.com/o/oauth2/auth
+ token_url = https://accounts.google.com/o/oauth2/token
+-; uncomment bellow to only allow specific email domains
++# Uncomment bellow to only allow specific email domains
+ ; allowed_domains = mycompany.com othercompany.com
+ 
++#################################### Logging ##########################
+ [log]
+-root_path = data/log
+-; Either "console", "file", default is "console"
+-; Use comma to separate multiple modes, e.g. "console, file"
+-mode = console
+-; Buffer length of channel, keep it as it is if you don't know what it is.
++# Either "console", "file", default is "console"
++# Use comma to separate multiple modes, e.g. "console, file"
++mode = console, file
++
++# Buffer length of channel, keep it as it is if you don't know what it is.
+ buffer_len = 10000
+-; Either "Trace", "Debug", "Info", "Warn", "Error", "Critical", default is "Trace"
++
++# Either "Trace", "Debug", "Info", "Warn", "Error", "Critical", default is "Trace"
+ level = Info
+ 
+-; For "console" mode only
++# For "console" mode only
+ [log.console]
+ level =
+ 
+-; For "file" mode only
++# For "file" mode only
+ [log.file]
+ level =
+-; This enables automated log rotate(switch of following options), default is true
++# This enables automated log rotate(switch of following options), default is true
+ log_rotate = true
+-; Max line number of single file, default is 1000000
++
++# Max line number of single file, default is 1000000
+ max_lines = 1000000
+-; Max size shift of single file, default is 28 means 1 << 28, 256MB
++
++# Max size shift of single file, default is 28 means 1 << 28, 256MB
+ max_lines_shift = 28
+-; Segment log daily, default is true
++
++# Segment log daily, default is true
+ daily_rotate = true
+-; Expired days of log file(delete after max days), default is 7
++
++# Expired days of log file(delete after max days), default is 7
+ max_days = 7
+ 
++#################################### AMPQ Event Publisher ##########################
+ [event_publisher]
+ enabled = false
+ rabbitmq_url = amqp://localhost/
+diff --git a/conf/sample.ini b/conf/sample.ini
+index bc312fdfc49..9a340c74975 100644
+--- a/conf/sample.ini
++++ b/conf/sample.ini
+@@ -1,99 +1,196 @@
+-# Sample grafana config for deb & rpm packages
+-# You only need to specify overrides here
+-# Defaults are in the /opt/grafana/current/conf/defaults.ini file
+-# This file is never ovewritten when upgrading grafana via deb or rpm package
++##################### Grafana Configuration Example #####################
++#
++# Everything has defaults so you only need to uncomment things you want to
++# change
+ 
+-app_mode = production
++; app_mode = production
+ 
++#################################### Paths ####################################
++[paths]
++# Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is useD)
++#
++;data = /var/lib/grafana
++#
++# Directory where grafana can store logs
++#
++;logs = /var/log/grafana
++
++#################################### Server ####################################
+ [server]
+-; protocol (http or https)
+-protocol = http
+-; the ip address to bind to, empty will bind to all interfaces
+-http_addr =
+-; the http port  to use
+-http_port = 3000
+-; The public facing domain name used to access grafana from a browser
+-domain = localhost
+-; the full public facing url
+-root_url = %(protocol)s://%(domain)s:%(http_port)s/
+-router_logging = false
+-; the path relative to grafana process working directory
+-static_root_path = public
+-enable_gzip = false
+-; https certs & key file
+-cert_file =
+-cert_key =
++# Protocol (http or https)
++;protocol = http
++
++# The ip address to bind to, empty will bind to all interfaces
++;http_addr =
++
++# The http port  to use
++;http_port = 3000
++
++# The public facing domain name used to access grafana from a browser
++;domain = localhost
++
++# The full public facing url
++;root_url = %(protocol)s://%(domain)s:%(http_port)s/
++
++# Log web requests
++;router_logging = false
++
++# the path relative working path
++;static_root_path = public
++
++# enable gzip
++;enable_gzip = false
++
++# https certs & key file
++;cert_file =
++;cert_key =
++
++#################################### Database ####################################
++[database]
++# Either "mysql", "postgres" or "sqlite3", it's your choice
++;type = sqlite3
++;host = 127.0.0.1:3306
++;name = grafana
++;user = root
++;password =
++
++# For "postgres" only, either "disable", "require" or "verify-full"
++;ssl_mode = disable
++
++# For "sqlite3" only, path relative to data_path setting
++;path = grafana.db
++
++#################################### Session ####################################
++[session]
++# Either "memory", "file", "redis", "mysql", default is "memory"
++;provider = file
+ 
++# Provider config options
++# memory: not have any config yet
++# file: session dir path, is relative to grafana data_path
++# redis: config like redis server addr, poolSize, password, e.g. `127.0.0.1:6379,100,grafana`
++# mysql: go-sql-driver/mysql dsn config string, e.g. `user:password@tcp(127.0.0.1)/database_name`
++;provider_config = sessions
++
++# Session cookie name
++;cookie_name = grafana_sess
++
++# If you use session in https only, default is false
++;cookie_secure = false
++
++# Session life time, default is 86400
++;session_life_time = 86400
++
++#################################### Analytics ####################################
+ [analytics]
+-# Server reporting, sends usage counters to stats.grafana.org (https).
++# Server reporting, sends usage counters to stats.grafana.org every 24 hours.
+ # No ip addresses are being tracked, only simple counters to track
+ # running instances, dashboard and error counts. It is very helpful to us.
+ # Change this option to false to disable reporting.
+-reporting_enabled = true
+-; Google Analytics universal tracking code, only enabled if you specify an id here
+-google_analytics_ua_id =
+-
+-[database]
+-; Either "mysql", "postgres" or "sqlite3", it's your choice
+-type = sqlite3
+-host = 127.0.0.1:3306
+-name = grafana
+-user = root
+-password =
+-; For "postgres" only, either "disable", "require" or "verify-full"
+-ssl_mode = disable
+-; For "sqlite3" only
+-path = /opt/grafana/data/grafana.db
++;reporting_enabled = true
+ 
+-[session]
+-; Either "memory", "file", "redis", "mysql", default is "memory"
+-provider = file
+-; Provider config options
+-; memory: not have any config yet
+-; file: session file path, e.g. `data/sessions`
+-; redis: config like redis server addr, poolSize, password, e.g. `127.0.0.1:6379,100,grafana`
+-; mysql: go-sql-driver/mysql dsn config string, e.g. `user:password@tcp(127.0.0.1)/database_name`
+-provider_config = /opt/grafana/data/sessions
+-; Session cookie name
+-cookie_name = grafana_sess
+-; If you use session in https only, default is false
+-cookie_secure = false
+-; Session life time, default is 86400
+-session_life_time = 86400
++# Google Analytics universal tracking code, only enabled if you specify an id here
++;google_analytics_ua_id =
+ 
++#################################### Security ####################################
+ [security]
+-; default admin user, created on startup
+-admin_user = admin
+-; default admin password, can be changed before first start of grafana,  or in profile settings
+-admin_password = admin
+-; used for signing
+-secret_key = SW2YcwTIb9zpOOhoPsMm
+-; Auto-login remember days
+-login_remember_days = 7
+-cookie_username = grafana_user
+-cookie_remember_name = grafana_remember
++# default admin user, created on startup
++;admin_user = admin
++
++# default admin password, can be changed before first start of grafana,  or in profile settings
++;admin_password = admin
++
++# used for signing
++;secret_key = SW2YcwTIb9zpOOhoPsMm
++
++# Auto-login remember days
++;login_remember_days = 7
++;cookie_username = grafana_user
++;cookie_remember_name = grafana_remember
+ 
++#################################### Users ####################################
+ [users]
+-; disable user signup / registration
+-allow_sign_up = true
+-; Allow non admin users to create organizations
+-allow_org_create = true
++# disable user signup / registration
++;allow_sign_up = true
++
++# Allow non admin users to create organizations
++;allow_org_create = true
++
+ # Set to true to automatically assign new users to the default organization (id 1)
+-auto_assign_org = true
+-; Default role new users will be automatically assigned (if disabled above is set to true)
+-auto_assign_org_role = Viewer
++;auto_assign_org = true
++
++# Default role new users will be automatically assigned (if disabled above is set to true)
++;auto_assign_org_role = Viewer
+ 
++#################################### Anonymous Auth ##########################
+ [auth.anonymous]
+-; enable anonymous access
+-enabled = false
+-; specify organization name that should be used for unauthenticated users
+-org_name = Main org.
+-; specify role for unauthenticated users
+-org_role = Viewer
++# enable anonymous access
++;enabled = false
++
++# specify organization name that should be used for unauthenticated users
++;org_name = Main Org.
++
++# specify role for unauthenticated users
++;org_role = Viewer
+ 
++#################################### Github Auth ##########################
++[auth.github]
++;enabled = false
++;client_id = some_id
++;client_secret = some_secret
++;scopes = user:email
++;auth_url = https://github.com/login/oauth/authorize
++;token_url = https://github.com/login/oauth/access_token
++# Uncomment bellow to only allow specific email domains
++; allowed_domains = mycompany.com othercompany.com
++
++#################################### Google Auth ##########################
++[auth.google]
++;enabled = false
++;client_id = some_client_id
++;client_secret = some_client_secret
++;scopes = https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email
++;auth_url = https://accounts.google.com/o/oauth2/auth
++;token_url = https://accounts.google.com/o/oauth2/token
++# Uncomment bellow to only allow specific email domains
++; allowed_domains = mycompany.com othercompany.com
++
++#################################### Logging ##########################
+ [log]
+-; Either "Trace", "Debug", "Info", "Warn", "Error", "Critical", default is "Trace"
+-level = Info
+-mode = console, file
+-root_path = /var/log/grafana
++# Either "console", "file", default is "console"
++# Use comma to separate multiple modes, e.g. "console, file"
++;mode = console, file
++
++# Buffer length of channel, keep it as it is if you don't know what it is.
++;buffer_len = 10000
++
++# Either "Trace", "Debug", "Info", "Warn", "Error", "Critical", default is "Trace"
++;level = Info
++
++# For "console" mode only
++[log.console]
++;level =
++
++# For "file" mode only
++[log.file]
++;level =
++# This enables automated log rotate(switch of following options), default is true
++;log_rotate = true
++
++# Max line number of single file, default is 1000000
++;max_lines = 1000000
++
++# Max size shift of single file, default is 28 means 1 << 28, 256MB
++;max_lines_shift = 28
++
++# Segment log daily, default is true
++;daily_rotate = true
++
++# Expired days of log file(delete after max days), default is 7
++;max_days = 7
+ 
++#################################### AMPQ Event Publisher ##########################
++[event_publisher]
++;enabled = false
++;rabbitmq_url = amqp://localhost/
++;exchange = grafana_events
+diff --git a/docker/debtest/Dockerfile b/docker/debtest/Dockerfile
+index 0d32380194c..ee752c98e7d 100644
+--- a/docker/debtest/Dockerfile
++++ b/docker/debtest/Dockerfile
+@@ -1,4 +1,6 @@
+-FROM debian
++FROM debian:jessie
++
++RUN apt-get update && apt-get install -y vim
+ 
+ ADD *.deb /tmp/
+ 
+diff --git a/docker/rpmtest/Dockerfile b/docker/rpmtest/Dockerfile
+index e13e4abffb0..3c18cfa1797 100644
+--- a/docker/rpmtest/Dockerfile
++++ b/docker/rpmtest/Dockerfile
+@@ -1,6 +1,6 @@
+-FROM centos:6.6
++FROM centos:latest
+ 
+ RUN yum install -y initscripts
+ 
+-ADD * /tmp/
++ADD *.rpm /tmp/
+ 
+diff --git a/main.go b/main.go
+index 3b25b73039d..a7e731bc84c 100644
+--- a/main.go
++++ b/main.go
+@@ -1,22 +1,32 @@
+ package main
+ 
+ import (
++	"flag"
++	"io/ioutil"
+ 	"os"
+ 	"os/signal"
++	"path/filepath"
+ 	"runtime"
+ 	"strconv"
++	"time"
+ 
+ 	"github.com/grafana/grafana/pkg/cmd"
+ 	"github.com/grafana/grafana/pkg/log"
++	"github.com/grafana/grafana/pkg/metrics"
++	"github.com/grafana/grafana/pkg/plugins"
++	"github.com/grafana/grafana/pkg/services/eventpublisher"
++	"github.com/grafana/grafana/pkg/services/sqlstore"
+ 	"github.com/grafana/grafana/pkg/setting"
+-
+-	"github.com/codegangsta/cli"
++	"github.com/grafana/grafana/pkg/social"
+ )
+ 
+ var version = "master"
+ var commit = "NA"
+ var buildstamp string
+ 
++var configFile = flag.String("config", "", "path to config file")
++var pidFile = flag.String("pidfile", "", "path to pid file")
++
+ func init() {
+ 	runtime.GOMAXPROCS(runtime.NumCPU())
+ }
+@@ -35,23 +45,52 @@ func main() {
+ 		os.Exit(0)
+ 	}()
+ 
+-	app := cli.NewApp()
+-	app.Name = "Grafana Backend"
+-	app.Usage = "grafana web"
+-	app.Version = version
+-	app.Commands = []cli.Command{cmd.ImportDashboard, cmd.Web}
+-	app.Flags = append(app.Flags, []cli.Flag{
+-		cli.StringFlag{
+-			Name:  "config",
+-			Usage: "path to grafana.ini config file",
+-		},
+-		cli.StringFlag{
+-			Name:  "pidfile",
+-			Usage: "path to pidfile",
+-		},
+-	}...)
+-
+-	app.Run(os.Args)
++	flag.Parse()
++
++	initRuntime()
++	writePIDFile()
++
++	social.NewOAuthService()
++	eventpublisher.Init()
++	plugins.Init()
++
++	if setting.ReportingEnabled {
++		go metrics.StartUsageReportLoop()
++	}
++
++	cmd.StartServer()
+ 
+ 	log.Close()
+ }
++
++func initRuntime() {
++	setting.NewConfigContext(&setting.CommandLineArgs{
++		Config: *configFile,
++		Args:   flag.Args(),
++	})
++
++	log.Info("Starting Grafana")
++	log.Info("Version: %v, Commit: %v, Build date: %v", setting.BuildVersion, setting.BuildCommit, time.Unix(setting.BuildStamp, 0))
++	setting.LogConfigurationInfo()
++
++	sqlstore.NewEngine()
++	sqlstore.EnsureAdminUser()
++}
++
++func writePIDFile() {
++	if *pidFile == "" {
++		return
++	}
++
++	// Ensure the required directory structure exists.
++	err := os.MkdirAll(filepath.Dir(*pidFile), 0700)
++	if err != nil {
++		log.Fatal(3, "Failed to verify pid directory", err)
++	}
++
++	// Retrieve the PID and write it.
++	pid := strconv.Itoa(os.Getpid())
++	if err := ioutil.WriteFile(*pidFile, []byte(pid), 0644); err != nil {
++		log.Fatal(3, "Failed to write pidfile", err)
++	}
++}
+diff --git a/package.json b/package.json
+index 8df5f593006..8bfca3df45c 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,7 @@
+     "company": "Coding Instinct AB"
+   },
+   "name": "grafana",
+-  "version": "2.0.0-beta2",
++  "version": "2.0.0-beta3",
+   "repository": {
+     "type": "git",
+     "url": "http://github.com/torkelo/grafana.git"
+diff --git a/packaging/deb/control/postinst b/packaging/deb/control/postinst
+new file mode 100755
+index 00000000000..cad56695658
+--- /dev/null
++++ b/packaging/deb/control/postinst
+@@ -0,0 +1,64 @@
++#!/bin/sh
++
++set -e
++
++[ -f /etc/default/grafana-server ] && . /etc/default/grafana-server
++
++startGrafana() {
++    if [ -x /bin/systemctl ] ; then
++        /bin/systemctl daemon-reload
++        /bin/systemctl start grafana.service
++	elif [ -x "/etc/init.d/grafana" ]; then
++		if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
++			invoke-rc.d grafana start || true
++		else
++			/etc/init.d/grafana start || true
++		fi
++	fi
++}
++
++case "$1" in
++	configure)
++	[ -z "$GRAFANA_USER" ] && GRAFANA_USER="grafana"
++	[ -z "$GRAFANA_GROUP" ] && GRAFANA_GROUP="grafana"
++	if ! getent group "$GRAFANA_GROUP" > /dev/null 2>&1 ; then
++	    addgroup --system "$GRAFANA_GROUP" --quiet
++	fi
++	if ! id $GRAFANA_USER > /dev/null 2>&1 ; then
++	    adduser --system --home /usr/share/grafana --no-create-home \
++		--ingroup "$GRAFANA_GROUP" --disabled-password --shell /bin/false \
++		"$GRAFANA_USER"
++	fi
++
++	# Set user permissions on /var/log/grafana, /var/lib/grafana
++	mkdir -p /var/log/grafana /var/lib/grafana
++	chown -R $GRAFANA_USER:$GRAFANA_GROUP /var/log/grafana /var/lib/grafana
++	chmod 755 /var/log/grafana /var/lib/grafana
++
++	# configuration files should not be modifiable by grafana user, as this can be a security issue
++	chown -Rh root:root /etc/grafana/*
++	chmod 755 /etc/grafana
++	find /etc/grafana -type f -exec chmod 644 {} ';'
++	find /etc/grafana -type d -exec chmod 755 {} ';'
++
++	# if $2 is set, this is an upgrade
++	if ( [ -n $2 ] && [ "$RESTART_ON_UPGRADE" = "true" ] ) ; then
++		startGrafana
++	# this is a fresh installation
++	elif [ -z $2 ] ; then
++        if [ -x /bin/systemctl ] ; then
++            echo "### NOT starting on installation, please execute the following statements to configure elasticsearch to start automatically using systemd"
++            echo " sudo /bin/systemctl daemon-reload"
++            echo " sudo /bin/systemctl enable grafana-server.service"
++            echo "### You can start grafana-server by executing"
++            echo " sudo /bin/systemctl start grafana-server.service"
++
++        elif [ -x /usr/sbin/update-rc.d ] ; then
++            echo "### NOT starting grafana-server by default on bootup, please execute"
++            echo " sudo update-rc.d grafana-server defaults 95 10"
++            echo "### In order to start grafana-server, execute"
++            echo " sudo service grafana-server start"
++        fi
++	fi
++	;;
++esac
+diff --git a/packaging/deb/default/grafana-server b/packaging/deb/default/grafana-server
+new file mode 100644
+index 00000000000..14d2545f6ce
+--- /dev/null
++++ b/packaging/deb/default/grafana-server
+@@ -0,0 +1,17 @@
++GRAFANA_USER=grafana
++
++GRAFANA_GROUP=grafana
++
++GRAFANA_HOME=/usr/share/grafana
++
++LOG_DIR=/var/log/grafana
++
++DATA_DIR=/var/lib/grafana
++
++MAX_OPEN_FILES=10000
++
++CONF_DIR=/etc/grafana
++
++CONF_FILE=/etc/grafana/grafana.ini
++
++RESTART_ON_UPGRADE=false
+diff --git a/packaging/deb/init.d/grafana-server b/packaging/deb/init.d/grafana-server
+new file mode 100755
+index 00000000000..2e98f12aece
+--- /dev/null
++++ b/packaging/deb/init.d/grafana-server
+@@ -0,0 +1,140 @@
++#! /usr/bin/env bash
++
++# chkconfig: 2345 80 05
++# description: Grafana web server & backend
++# processname: grafana
++# config: /etc/grafana/grafana.ini
++# pidfile: /var/run/grafana.pid
++
++### BEGIN INIT INFO
++# Provides:          grafana
++# Required-Start:    $all
++# Required-Stop:     $remote_fs $syslog
++# Default-Start:     2 3 4 5
++# Default-Stop:      0 1 6
++# Short-Description: Start grafana at boot time
++### END INIT INFO
++
++#  tested on
++#  1. New lsb that define start-stop-daemon
++#  3. Centos with initscripts package installed
++
++PATH=/bin:/usr/bin:/sbin:/usr/sbin
++NAME=grafana-server
++DESC="Grafana Server"
++DEFAULT=/etc/default/$NAME
++
++GRAFANA_USER=grafana
++GRAFANA_GROUP=grafana
++GRAFANA_HOME=/usr/share/grafana
++CONF_DIR=/etc/grafana
++WORK_DIR=$GRAFANA_HOME
++DATA_DIR=/var/lib/grafana
++LOG_DIR=/var/log/grafana
++CONF_FILE=$CONF_DIR/grafana.ini
++MAX_OPEN_FILES=10000
++PID_FILE=/var/run/$NAME.pid
++DAEMON=/usr/sbin/$NAME
++
++if [ `id -u` -ne 0 ]; then
++	echo "You need root privileges to run this script"
++	exit 1
++fi
++
++. /lib/lsb/init-functions
++
++if [ -r /etc/default/rcS ]; then
++	. /etc/default/rcS
++fi
++
++# overwrite settings from default file
++if [ -f "$DEFAULT" ]; then
++	. "$DEFAULT"
++fi
++
++DAEMON_OPTS="--pidfile=${PID_FILE} --config=${CONF_FILE} cfg:default.paths.data=${DATA_DIR} cfg:default.paths.logs=${LOG_DIR}"
++
++# Check DAEMON exists
++test -x $DAEMON || exit 0
++
++case "$1" in
++  start)
++
++	log_daemon_msg "Starting $DESC"
++
++	pid=`pidofproc -p $PID_FILE grafana`
++	if [ -n "$pid" ] ; then
++		log_begin_msg "Already running."
++		log_end_msg 0
++		exit 0
++	fi
++
++	# Prepare environment
++	mkdir -p "$LOG_DIR" "$DATA_DIR" && chown "$GRAFANA_USER":"$GRAFANA_GROUP" "$LOG_DIR" "$DATA_DIR"
++	touch "$PID_FILE" && chown "$GRAFANA_USER":"$GRAFANA_GROUP" "$PID_FILE"
++
++  if [ -n "$MAX_OPEN_FILES" ]; then
++		ulimit -n $MAX_OPEN_FILES
++	fi
++
++	# Start Daemon
++	start-stop-daemon --start -b --chdir "$WORK_DIR" --user "$GRAFANA_USER" -c "$GRAFANA_USER" --pidfile "$PID_FILE" --exec $DAEMON -- $DAEMON_OPTS
++	return=$?
++	if [ $return -eq 0 ]
++	then
++	  sleep 1
++
++    # check if pid file has been written two
++	  if ! [[ -s $PID_FILE ]]; then
++	    log_end_msg 1
++	  fi
++
++		i=0
++		timeout=10
++		# Wait for the process to be properly started before exiting
++		until { cat "$PID_FILE" | xargs kill -0; } >/dev/null 2>&1
++		do
++			sleep 1
++			i=$(($i + 1))
++			[ $i -gt $timeout ] && log_end_msg 1
++		done
++  fi
++  log_end_msg $return
++	;;
++  stop)
++	log_daemon_msg "Stopping $DESC"
++
++	if [ -f "$PID_FILE" ]; then
++		start-stop-daemon --stop --pidfile "$PID_FILE" \
++			--user "$GRAFANA_USER" \
++			--retry=TERM/20/KILL/5 >/dev/null
++		if [ $? -eq 1 ]; then
++			log_progress_msg "$DESC is not running but pid file exists, cleaning up"
++		elif [ $? -eq 3 ]; then
++			PID="`cat $PID_FILE`"
++			log_failure_msg "Failed to stop $DESC (pid $PID)"
++			exit 1
++		fi
++		rm -f "$PID_FILE"
++	else
++		log_progress_msg "(not running)"
++	fi
++	log_end_msg 0
++	;;
++  status)
++	status_of_proc -p $PID_FILE grafana grafana && exit 0 || exit $?
++    ;;
++  restart|force-reload)
++	if [ -f "$PID_FILE" ]; then
++		$0 stop
++		sleep 1
++	fi
++	$0 start
++	;;
++  *)
++	log_success_msg "Usage: $0 {start|stop|restart|force-reload|status}"
++	exit 1
++	;;
++esac
++
++exit 0
+diff --git a/packaging/deb/systemd/grafana-server.service b/packaging/deb/systemd/grafana-server.service
+new file mode 100644
+index 00000000000..f99c96fcb13
+--- /dev/null
++++ b/packaging/deb/systemd/grafana-server.service
+@@ -0,0 +1,21 @@
++[Unit]
++Description=Starts and stops a single grafana instance on this system
++Documentation=http://docs.grafana.org
++Wants=network-online.target
++After=network-online.target
++
++[Service]
++EnvironmentFile=/etc/default/grafana-server
++User=grafana
++Group=grafana
++Type=simple
++WorkingDirectory=/usr/share/grafana
++ExecStart=/usr/sbin/grafana-server                                \
++                            --config=${CONF_FILE}                 \
++                            cfg:default.paths.logs=${LOG_DIR}     \
++                            cfg:default.paths.data=${DATA_DIR}    \
++LimitNOFILE=10000
++TimeoutStopSec=20
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/packaging/rpm/control/postinst b/packaging/rpm/control/postinst
+new file mode 100644
+index 00000000000..3efd8da0d07
+--- /dev/null
++++ b/packaging/rpm/control/postinst
+@@ -0,0 +1,67 @@
++#!/bin/sh
++
++set -e
++
++[ -f /etc/sysconfig/grafana-server ] && . /etc/sysconfig/grafana-server
++
++startGrafana() {
++  if [ -x /bin/systemctl ] ; then
++		/bin/systemctl start grafana-server.service
++	elif [ -x /etc/init.d/grafana-server ] ; then
++		/etc/init.d/grafana-server start
++	elif [ -x /etc/rc.d/init.d/grafana-server ] ; then
++		/etc/rc.d/init.d/grafana-server start
++	fi
++}
++
++stopGrafana() {
++	if [ -x /bin/systemctl ] ; then
++		/bin/systemctl stop grafana-server.service > /dev/null 2>&1 || :
++	elif [ -x /etc/init.d/grafana-service ] ; then
++		/etc/init.d/grafana-service stop
++	elif [ -x /etc/rc.d/init.d/grafana-service ] ; then
++		/etc/rc.d/init.d/grafana-service stop
++	fi
++}
++
++# Initial installation: $1 == 1
++# Upgrade: $1 == 2, and configured to restart on upgrade
++if [ $1 -eq 1 ] ; then
++	[ -z "$GRAFANA_USER" ] && GRAFANA_USER="grafana"
++	[ -z "$GRAFANA_GROUP" ] && GRAFANA_GROUP="grafana"
++	if ! getent group "$GRAFANA_GROUP" > /dev/null 2>&1 ; then
++    groupadd -r "$GRAFANA_GROUP"
++	fi
++	if ! getent passwd "$GRAFANA_USER" > /dev/null 2>&1 ; then
++    useradd -r -g grafana -d /usr/share/grafana -s /sbin/nologin \
++    -c "grafana user" grafana
++	fi
++
++	# Set user permissions on /var/log/grafana, /var/lib/grafana
++	mkdir -p /var/log/grafana /var/lib/grafana
++	chown -R $GRAFANA_USER:$GRAFANA_GROUP /var/log/grafana /var/lib/grafana
++	chmod 755 /var/log/grafana /var/lib/grafana
++
++	# configuration files should not be modifiable by grafana user, as this can be a security issue
++	chown -Rh root:root /etc/grafana/*
++	chmod 755 /etc/grafana
++	find /etc/grafana -type f -exec chmod 644 {} ';'
++	find /etc/grafana -type d -exec chmod 755 {} ';'
++
++  if [ -x /bin/systemctl ] ; then
++    echo "### NOT starting on installation, please execute the following statements to configure elasticsearch to start automatically using systemd"
++    echo " sudo /bin/systemctl daemon-reload"
++    echo " sudo /bin/systemctl enable grafana-server.service"
++    echo "### You can start grafana-server by executing"
++    echo " sudo /bin/systemctl start grafana-server.service"
++
++  elif [ -x /usr/sbin/update-rc.d ] ; then
++    echo "### NOT starting grafana-server by default on bootup, please execute"
++    echo " sudo update-rc.d grafana-server defaults 95 10"
++    echo "### In order to start grafana-server, execute"
++    echo " sudo service grafana-server start"
++  fi
++elif [ $1 -ge 2 -a "$RESTART_ON_UPGRADE" == "true" ] ; then
++  stopGrafana
++  startGrafana
++fi
+diff --git a/packaging/rpm/init.d/grafana-server b/packaging/rpm/init.d/grafana-server
+new file mode 100755
+index 00000000000..a28f9ef04c7
+--- /dev/null
++++ b/packaging/rpm/init.d/grafana-server
+@@ -0,0 +1,144 @@
++#! /usr/bin/env bash
++
++# chkconfig: 2345 80 05
++# description: Grafana web server & backend
++# processname: grafana
++# config: /etc/grafana/grafana.ini
++# pidfile: /var/run/grafana.pid
++
++### BEGIN INIT INFO
++# Provides:          grafana
++# Required-Start:    $all
++# Required-Stop:     $remote_fs $syslog
++# Default-Start:     2 3 4 5
++# Default-Stop:      0 1 6
++# Short-Description: Start grafana at boot time
++### END INIT INFO
++
++#  tested on
++#  1. New lsb that define start-stop-daemon
++#  3. Centos with initscripts package installed
++
++PATH=/bin:/usr/bin:/sbin:/usr/sbin
++NAME=grafana-server
++DESC="Grafana Server"
++
++GRAFANA_USER=grafana
++GRAFANA_GROUP=grafana
++GRAFANA_HOME=/usr/share/grafana
++CONF_DIR=/etc/grafana
++WORK_DIR=$GRAFANA_HOME
++DATA_DIR=/var/lib/grafana
++LOG_DIR=/var/log/grafana
++CONF_FILE=$CONF_DIR/grafana.ini
++MAX_OPEN_FILES=10000
++PID_FILE=/var/run/$NAME.pid
++DAEMON=/usr/sbin/$NAME
++
++#
++# init.d / servicectl compatibility (openSUSE)
++#
++if [ -f /etc/rc.status ]; then
++    . /etc/rc.status
++    rc_reset
++fi
++
++#
++# Source function library.
++#
++if [ -f /etc/rc.d/init.d/functions ]; then
++    . /etc/rc.d/init.d/functions
++fi
++
++# overwrite settings from default file
++[ -e /etc/sysconfig/$NAME ] && . /etc/sysconfig/$NAME
++
++DAEMON_OPTS="--pidfile=${PID_FILE} --config=${CONF_FILE} cfg:default.paths.data=${DATA_DIR} cfg:default.paths.logs=${LOG_DIR}"
++
++# Check DAEMON exists
++test -x $DAEMON || exit 0
++
++function isRunning() {
++  status -p $PID_FILE $NAME > /dev/null 2>&1
++}
++
++case "$1" in
++  start)
++    echo -n $"Starting $DESC: .... "
++
++    isRunning
++    if [ $? -eq 0 ]; then
++      echo "Already running."
++      exit 2
++    fi
++
++    # Prepare environment
++    mkdir -p "$LOG_DIR" "$DATA_DIR" && chown "$GRAFANA_USER":"$GRAFANA_GROUP" "$LOG_DIR" "$DATA_DIR"
++    touch "$PID_FILE" && chown "$GRAFANA_USER":"$GRAFANA_GROUP" "$PID_FILE"
++
++    if [ -n "$MAX_OPEN_FILES" ]; then
++      ulimit -n $MAX_OPEN_FILES
++    fi
++
++    # Start Daemon
++    cd $GRAFANA_HOME
++    su -s /bin/sh -c "nohup ${DAEMON} ${DAEMON_OPTS} >> /dev/null 3>&1 &" $DAEMON_USER
++    return=$?
++    if [ $return -eq 0 ]
++    then
++      sleep 1
++      # check if pid file has been written two
++      if ! [[ -s $PID_FILE ]]; then
++        exit 3
++      fi
++      i=0
++      timeout=10
++      # Wait for the process to be properly started before exiting
++      until { cat "$PID_FILE" | xargs kill -0; } >/dev/null 2>&1
++      do
++        sleep 1
++        i=$(($i + 1))
++        [ $i -gt $timeout ] && exit 4
++      done
++    fi
++
++    echo "OK"
++    exit $return
++    ;;
++  stop)
++    echo -n "Stopping $DESC ..."
++
++    if [ -f "$PID_FILE" ]; then
++      killproc -p $PID_FILE -d 20 $NAME
++      if [ $? -eq 1 ]; then
++        echo -n "$DESC is not running but pid file exists, cleaning up"
++      elif [ $? -eq 3 ]; then
++        PID="`cat $PID_FILE`"
++        echo -n "Failed to stop $DESC (pid $PID)"
++        exit 1
++      fi
++      rm -f "$PID_FILE"
++      echo "OK"
++      exit 0
++    else
++      echo -n "(not running)"
++    fi
++    exit 0
++    ;;
++  status)
++    status -p $PID_FILE $NAME
++    ;;
++  restart|force-reload)
++    if [ -f "$PID_FILE" ]; then
++      $0 stop
++      sleep 1
++    fi
++    $0 start
++    ;;
++  *)
++    echo -n "Usage: $0 {start|stop|restart|force-reload|status}"
++    exit 1
++    ;;
++esac
++
++exit 0
+diff --git a/packaging/rpm/sysconfig/grafana-server b/packaging/rpm/sysconfig/grafana-server
+new file mode 100644
+index 00000000000..14d2545f6ce
+--- /dev/null
++++ b/packaging/rpm/sysconfig/grafana-server
+@@ -0,0 +1,17 @@
++GRAFANA_USER=grafana
++
++GRAFANA_GROUP=grafana
++
++GRAFANA_HOME=/usr/share/grafana
++
++LOG_DIR=/var/log/grafana
++
++DATA_DIR=/var/lib/grafana
++
++MAX_OPEN_FILES=10000
++
++CONF_DIR=/etc/grafana
++
++CONF_FILE=/etc/grafana/grafana.ini
++
++RESTART_ON_UPGRADE=false
+diff --git a/packaging/rpm/systemd/grafana-server.service b/packaging/rpm/systemd/grafana-server.service
+new file mode 100644
+index 00000000000..56a958032b7
+--- /dev/null
++++ b/packaging/rpm/systemd/grafana-server.service
+@@ -0,0 +1,21 @@
++[Unit]
++Description=Starts and stops a single grafana instance on this system
++Documentation=http://docs.grafana.org
++Wants=network-online.target
++After=network-online.target
++
++[Service]
++EnvironmentFile=/etc/sysconfig/grafana-server
++User=grafana
++Group=grafana
++Type=simple
++WorkingDirectory=/usr/share/grafana
++ExecStart=/usr/sbin/grafana-server                                \
++                            --config=${CONF_FILE}                 \
++                            cfg:default.paths.logs=${LOG_DIR}     \
++                            cfg:default.paths.data=${DATA_DIR}    \
++LimitNOFILE=10000
++TimeoutStopSec=20
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/pkg/cmd/common.go b/pkg/cmd/common.go
+deleted file mode 100644
+index 3caa8350700..00000000000
+--- a/pkg/cmd/common.go
++++ /dev/null
+@@ -1,21 +0,0 @@
+-package cmd
+-
+-import (
+-	"time"
+-
+-	"github.com/codegangsta/cli"
+-	"github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/services/sqlstore"
+-	"github.com/grafana/grafana/pkg/setting"
+-)
+-
+-func initRuntime(c *cli.Context) {
+-	setting.NewConfigContext(c.GlobalString("config"))
+-
+-	log.Info("Starting Grafana")
+-	log.Info("Version: %v, Commit: %v, Build date: %v", setting.BuildVersion, setting.BuildCommit, time.Unix(setting.BuildStamp, 0))
+-	setting.LogLoadedConfigFiles()
+-
+-	sqlstore.NewEngine()
+-	sqlstore.EnsureAdminUser()
+-}
+diff --git a/pkg/cmd/dashboard.go b/pkg/cmd/dashboard.go
+deleted file mode 100644
+index 10ceedd668d..00000000000
+--- a/pkg/cmd/dashboard.go
++++ /dev/null
+@@ -1,207 +0,0 @@
+-package cmd
+-
+-import (
+-	"encoding/json"
+-	"io"
+-	"os"
+-	"path/filepath"
+-	"strings"
+-
+-	"github.com/codegangsta/cli"
+-	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/log"
+-	m "github.com/grafana/grafana/pkg/models"
+-)
+-
+-var (
+-	ImportDashboard = cli.Command{
+-		Name:        "dashboards:import",
+-		Usage:       "imports dashboards in JSON from a directory",
+-		Description: "Starts Grafana import process",
+-		Action:      runImport,
+-		Flags: []cli.Flag{
+-			cli.StringFlag{
+-				Name:  "dir",
+-				Usage: "path to folder containing json dashboards",
+-			},
+-		},
+-	}
+-
+-	ExportDashboard = cli.Command{
+-		Name:        "dashboards:export",
+-		Usage:       "exports dashboards in JSON from a directory",
+-		Description: "Starts Grafana export process",
+-		Action:      runExport,
+-		Flags: []cli.Flag{
+-			cli.StringFlag{
+-				Name:  "dir",
+-				Usage: "path to folder containing json dashboards",
+-			},
+-		},
+-	}
+-)
+-
+-func runImport(c *cli.Context) {
+-	dir := c.String("dir")
+-	if len(dir) == 0 {
+-		log.ConsoleFatalf("Missing command flag --dir")
+-	}
+-
+-	file, err := os.Stat(dir)
+-	if os.IsNotExist(err) {
+-		log.ConsoleFatalf("Directory does not exist: %v", dir)
+-	}
+-
+-	if !file.IsDir() {
+-		log.ConsoleFatalf("%v is not a directory", dir)
+-	}
+-
+-	if !c.Args().Present() {
+-		log.ConsoleFatal("Organization name arg is required")
+-	}
+-
+-	orgName := c.Args().First()
+-
+-	initRuntime(c)
+-
+-	orgQuery := m.GetOrgByNameQuery{Name: orgName}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find account", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	visitor := func(path string, f os.FileInfo, err error) error {
+-		if err != nil {
+-			return err
+-		}
+-		if f.IsDir() {
+-			return nil
+-		}
+-		if strings.HasSuffix(f.Name(), ".json") {
+-			if err := importDashboard(path, orgId); err != nil {
+-				log.ConsoleFatalf("Failed to import dashboard file: %v,  err: %v", path, err)
+-			}
+-		}
+-		return nil
+-	}
+-
+-	if err := filepath.Walk(dir, visitor); err != nil {
+-		log.ConsoleFatalf("Failed to scan dir for json files: %v", err)
+-	}
+-}
+-
+-func importDashboard(path string, orgId int64) error {
+-	log.ConsoleInfof("Importing %v", path)
+-
+-	reader, err := os.Open(path)
+-	if err != nil {
+-		return err
+-	}
+-
+-	defer reader.Close()
+-
+-	dash := m.NewDashboard("temp")
+-	jsonParser := json.NewDecoder(reader)
+-
+-	if err := jsonParser.Decode(&dash.Data); err != nil {
+-		return err
+-	}
+-	dash.Data["id"] = nil
+-
+-	cmd := m.SaveDashboardCommand{
+-		OrgId:     orgId,
+-		Dashboard: dash.Data,
+-	}
+-
+-	if err := bus.Dispatch(&cmd); err != nil {
+-		return err
+-	}
+-
+-	return nil
+-}
+-
+-func runExport(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if !c.Args().Present() {
+-		log.ConsoleFatal("Account name arg is required")
+-	}
+-
+-	name := c.Args().First()
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	dir := c.String("dir")
+-	dash := c.Args().Get(1)
+-
+-	query := m.SearchDashboardsQuery{OrgId: orgId, Title: dash}
+-	err := bus.Dispatch(&query)
+-	if err != nil {
+-		log.ConsoleFatalf("Failed to find dashboards: %s", err)
+-		return
+-	}
+-
+-	if dir == "" && len(query.Result) > 1 {
+-		log.ConsoleFatalf("Dashboard title '%s' returned too many results. "+
+-			"Use --dir <dir> or a more specific title", dash)
+-		return
+-	}
+-
+-	for _, v := range query.Result {
+-		f := os.Stdout
+-		if dir != "" {
+-			dest := filepath.Join(dir, v.Slug+".json")
+-			f, err = os.Create(dest)
+-			if err != nil {
+-				log.ConsoleFatalf("Unable to create file: %s", err)
+-			}
+-			log.ConsoleInfof("Exporting '%s' dashboard to %s", v.Title, dest)
+-		}
+-
+-		exportDashboard(f, orgId, v.Slug)
+-
+-		if dir != "" {
+-			if err := f.Sync(); err != nil {
+-				log.ConsoleFatalf("Unable to sync file: %s", err)
+-			}
+-
+-			if err := f.Close(); err != nil {
+-				log.ConsoleFatalf("Unable to close file: %s", err)
+-			}
+-		}
+-	}
+-	if dir != "" {
+-		log.ConsoleInfof("Exported %d dashboards to %s", len(query.Result), dir)
+-	}
+-}
+-
+-func exportDashboard(w io.Writer, orgId int64, slug string) {
+-	query := m.GetDashboardQuery{Slug: slug, OrgId: orgId}
+-	err := bus.Dispatch(&query)
+-	if err != nil {
+-		log.ConsoleFatalf("Failed to find dashboard: %s", err)
+-		return
+-	}
+-
+-	out, err := json.MarshalIndent(query.Result.Data, "", "  ")
+-	if err != nil {
+-		log.ConsoleFatalf("Failed to marshal dashboard: %s", err)
+-		return
+-	}
+-
+-	n, err := w.Write(out)
+-	if err != nil {
+-		log.ConsoleFatalf("Failed to write dashboard: %s", err)
+-		return
+-	}
+-
+-	if n != len(out) {
+-		log.ConsoleFatalf("Failed to write dashboard: wrote %d expected %d", n, len(out))
+-		return
+-	}
+-}
+diff --git a/pkg/cmd/datasource.go b/pkg/cmd/datasource.go
+deleted file mode 100644
+index 9656180acd9..00000000000
+--- a/pkg/cmd/datasource.go
++++ /dev/null
+@@ -1,230 +0,0 @@
+-package cmd
+-
+-import (
+-	"fmt"
+-	"os"
+-	"text/tabwriter"
+-
+-	"github.com/codegangsta/cli"
+-	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/log"
+-	m "github.com/grafana/grafana/pkg/models"
+-)
+-
+-var (
+-	ListDataSources = cli.Command{
+-		Name:        "datasources",
+-		Usage:       "list datasources",
+-		Description: "Lists the datasources in the system",
+-		Action:      listDatasources,
+-	}
+-	CreateDataSource = cli.Command{
+-		Name:        "datasources:create",
+-		Usage:       "creates a new datasource",
+-		Description: "Creates a new datasource",
+-		Action:      createDataSource,
+-		Flags: []cli.Flag{
+-			cli.StringFlag{
+-				Name:  "type",
+-				Value: "graphite",
+-				Usage: fmt.Sprintf("Datasource type [%s,%s,%s,%s]",
+-					m.DS_GRAPHITE, m.DS_INFLUXDB, m.DS_ES, m.DS_OPENTSDB),
+-			},
+-			cli.StringFlag{
+-				Name:  "access",
+-				Value: "proxy",
+-				Usage: "Datasource access [proxy,direct]",
+-			},
+-			cli.BoolFlag{
+-				Name:  "default",
+-				Usage: "Make this the default datasource",
+-			},
+-			cli.StringFlag{
+-				Name:  "db",
+-				Usage: "InfluxDB DB",
+-			},
+-			cli.StringFlag{
+-				Name:  "user",
+-				Usage: "InfluxDB username",
+-			},
+-			cli.StringFlag{
+-				Name:  "password",
+-				Usage: "InfluxDB password",
+-			},
+-		},
+-	}
+-	DescribeDataSource = cli.Command{
+-		Name:        "datasources:info",
+-		Usage:       "describe the details of a datasource",
+-		Description: "Describes the details of a datasource",
+-		Action:      describeDataSource,
+-	}
+-	DeleteDataSource = cli.Command{
+-		Name:        "datasources:delete",
+-		Usage:       "Deletes a datasource",
+-		Description: "Deletes a datasource",
+-		Action:      deleteDataSource,
+-	}
+-)
+-
+-func createDataSource(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if len(c.Args()) != 3 {
+-		log.ConsoleFatal("Missing required arguments")
+-	}
+-
+-	name := c.Args().First()
+-	ds := c.Args()[1]
+-	url := c.Args()[2]
+-	dsType := c.String("type")
+-	dsAccess := c.String("access")
+-	dsDefault := c.Bool("default")
+-
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	query := m.GetDataSourceByNameQuery{OrgId: orgId, Name: ds}
+-	if err := bus.Dispatch(&query); err != nil {
+-		if err != m.ErrDataSourceNotFound {
+-			log.ConsoleFatalf("Failed to query for existing datasource: %s", err)
+-		}
+-	}
+-
+-	if query.Result.Id > 0 {
+-		log.ConsoleFatalf("DataSource %s already exists", ds)
+-	}
+-
+-	cmd := m.AddDataSourceCommand{
+-		OrgId:     orgId,
+-		Name:      ds,
+-		Url:       url,
+-		Type:      dsType,
+-		Access:    m.DsAccess(dsAccess),
+-		IsDefault: dsDefault,
+-	}
+-
+-	switch dsType {
+-	case m.DS_INFLUXDB:
+-		db := c.String("db")
+-		if db == "" {
+-			log.ConsoleFatal("db name is required for influxdb datasources")
+-		}
+-		cmd.Database = db
+-		cmd.User = c.String("user")
+-		cmd.Password = c.String("password")
+-	}
+-
+-	if err := bus.Dispatch(&cmd); err != nil {
+-		log.ConsoleFatalf("Failed to create datasource: %s", err)
+-	}
+-	datasource := cmd.Result
+-
+-	log.ConsoleInfof("Datasource %s created", datasource.Name)
+-}
+-
+-func listDatasources(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if !c.Args().Present() {
+-		log.ConsoleFatal("Account name arg is required")
+-	}
+-
+-	name := c.Args().First()
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	query := m.GetDataSourcesQuery{OrgId: orgId}
+-	if err := bus.Dispatch(&query); err != nil {
+-		log.ConsoleFatalf("Failed to find datasources: %s", err)
+-	}
+-
+-	w := tabwriter.NewWriter(os.Stdout, 8, 1, 4, ' ', 0)
+-
+-	fmt.Fprintf(w, "ID\tNAME\tURL\tTYPE\tACCESS\tDEFAULT\n")
+-	for _, ds := range query.Result {
+-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%t\n", ds.Id, ds.Name, ds.Url, ds.Type,
+-			ds.Access, ds.IsDefault)
+-	}
+-	w.Flush()
+-}
+-
+-func describeDataSource(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if len(c.Args()) != 2 {
+-		log.ConsoleFatal("Organization and datasource name args are required")
+-	}
+-
+-	name := c.Args().First()
+-	ds := c.Args()[1]
+-
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	query := m.GetDataSourceByNameQuery{OrgId: orgId, Name: ds}
+-	if err := bus.Dispatch(&query); err != nil {
+-		log.ConsoleFatalf("Failed to find datasource: %s", err)
+-	}
+-	datasource := query.Result
+-
+-	w := tabwriter.NewWriter(os.Stdout, 8, 1, 4, ' ', 0)
+-	fmt.Fprintf(w, "NAME\t%s\n", datasource.Name)
+-	fmt.Fprintf(w, "URL\t%s\n", datasource.Url)
+-	fmt.Fprintf(w, "DEFAULT\t%t\n", datasource.IsDefault)
+-	fmt.Fprintf(w, "ACCESS\t%s\n", datasource.Access)
+-	fmt.Fprintf(w, "TYPE\t%s\n", datasource.Type)
+-
+-	switch datasource.Type {
+-	case m.DS_INFLUXDB:
+-		fmt.Fprintf(w, "DATABASE\t%s\n", datasource.Database)
+-		fmt.Fprintf(w, "DB USER\t%s\n", datasource.User)
+-		fmt.Fprintf(w, "DB PASSWORD\t%s\n", datasource.Password)
+-	case m.DS_ES:
+-		fmt.Fprintf(w, "INDEX\t%s\n", datasource.Database)
+-	}
+-	w.Flush()
+-}
+-
+-func deleteDataSource(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if len(c.Args()) != 2 {
+-		log.ConsoleFatal("Account and datasource name args are required")
+-	}
+-
+-	name := c.Args().First()
+-	ds := c.Args()[1]
+-
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-
+-	query := m.GetDataSourceByNameQuery{OrgId: orgId, Name: ds}
+-	if err := bus.Dispatch(&query); err != nil {
+-		log.ConsoleFatalf("Failed to find datasource: %s", err)
+-	}
+-	datasource := query.Result
+-
+-	cmd := m.DeleteDataSourceCommand{OrgId: orgId, Id: datasource.Id}
+-	if err := bus.Dispatch(&cmd); err != nil {
+-		log.ConsoleFatalf("Failed to delete datasource: %s", err)
+-	}
+-
+-	log.ConsoleInfof("DataSource %s deleted", ds)
+-}
+diff --git a/pkg/cmd/orgs.go b/pkg/cmd/orgs.go
+deleted file mode 100644
+index bcc2eeec38a..00000000000
+--- a/pkg/cmd/orgs.go
++++ /dev/null
+@@ -1,99 +0,0 @@
+-package cmd
+-
+-import (
+-	"fmt"
+-	"os"
+-	"text/tabwriter"
+-
+-	"github.com/codegangsta/cli"
+-
+-	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/log"
+-	m "github.com/grafana/grafana/pkg/models"
+-	"github.com/grafana/grafana/pkg/setting"
+-)
+-
+-var ListOrgs = cli.Command{
+-	Name:        "orgs",
+-	Usage:       "list organizations",
+-	Description: "Lists the organizations in the system",
+-	Action:      listOrgs,
+-}
+-
+-var CreateOrg = cli.Command{
+-	Name:        "orgs:create",
+-	Usage:       "Creates a new organization",
+-	Description: "Creates a new organization",
+-	Action:      createOrg,
+-}
+-
+-var DeleteOrg = cli.Command{
+-	Name:        "orgs:delete",
+-	Usage:       "Delete an existing organization",
+-	Description: "Deletes an existing organization",
+-	Action:      deleteOrg,
+-}
+-
+-func listOrgs(c *cli.Context) {
+-	initRuntime(c)
+-
+-	orgsQuery := m.GetOrgListQuery{}
+-	if err := bus.Dispatch(&orgsQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organizations: %s", err)
+-	}
+-
+-	w := tabwriter.NewWriter(os.Stdout, 8, 1, 4, ' ', 0)
+-
+-	fmt.Fprintf(w, "ID\tNAME\n")
+-	for _, org := range orgsQuery.Result {
+-		fmt.Fprintf(w, "%d\t%s\n", org.Id, org.Name)
+-	}
+-	w.Flush()
+-}
+-
+-func createOrg(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if !c.Args().Present() {
+-		log.ConsoleFatal("Organization name arg is required")
+-	}
+-
+-	name := c.Args().First()
+-
+-	adminQuery := m.GetUserByLoginQuery{LoginOrEmail: setting.AdminUser}
+-
+-	if err := bus.Dispatch(&adminQuery); err == m.ErrUserNotFound {
+-		log.ConsoleFatalf("Failed to find default admin user: %s", err)
+-	}
+-
+-	adminUser := adminQuery.Result
+-
+-	cmd := m.CreateOrgCommand{Name: name, UserId: adminUser.Id}
+-	if err := bus.Dispatch(&cmd); err != nil {
+-		log.ConsoleFatalf("Failed to create organization: %s", err)
+-	}
+-
+-	log.ConsoleInfof("Organization %s created for admin user %s\n", name, adminUser.Email)
+-}
+-
+-func deleteOrg(c *cli.Context) {
+-	initRuntime(c)
+-
+-	if !c.Args().Present() {
+-		log.ConsoleFatal("Organization name arg is required")
+-	}
+-
+-	name := c.Args().First()
+-	orgQuery := m.GetOrgByNameQuery{Name: name}
+-	if err := bus.Dispatch(&orgQuery); err != nil {
+-		log.ConsoleFatalf("Failed to find organization: %s", err)
+-	}
+-
+-	orgId := orgQuery.Result.Id
+-	cmd := m.DeleteOrgCommand{Id: orgId}
+-	if err := bus.Dispatch(&cmd); err != nil {
+-		log.ConsoleFatalf("Failed to delete organization: %s", err)
+-	}
+-
+-	log.ConsoleInfof("Organization %s deleted", name)
+-}
+diff --git a/pkg/cmd/web.go b/pkg/cmd/web.go
+index 5f884ed40b1..7b6014aeb7e 100644
+--- a/pkg/cmd/web.go
++++ b/pkg/cmd/web.go
+@@ -5,38 +5,22 @@ package cmd
+ 
+ import (
+ 	"fmt"
+-	"io/ioutil"
+ 	"net/http"
+-	"os"
+ 	"path"
+-	"path/filepath"
+-	"strconv"
+ 
+ 	"github.com/Unknwon/macaron"
+-	"github.com/codegangsta/cli"
+ 
+ 	"github.com/grafana/grafana/pkg/api"
+ 	"github.com/grafana/grafana/pkg/api/static"
+ 	"github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/metrics"
+ 	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/plugins"
+-	"github.com/grafana/grafana/pkg/services/eventpublisher"
+ 	"github.com/grafana/grafana/pkg/setting"
+-	"github.com/grafana/grafana/pkg/social"
+ )
+ 
+-var Web = cli.Command{
+-	Name:        "web",
+-	Usage:       "Starts Grafana backend & web server",
+-	Description: "Starts Grafana backend & web server",
+-	Action:      runWeb,
+-}
+-
+ func newMacaron() *macaron.Macaron {
+ 	macaron.Env = setting.Env
+-
+ 	m := macaron.New()
++
+ 	m.Use(middleware.Logger())
+ 	m.Use(macaron.Recovery())
+ 
+@@ -83,22 +67,12 @@ func mapStatic(m *macaron.Macaron, dir string, prefix string) {
+ 	))
+ }
+ 
+-func runWeb(c *cli.Context) {
+-	initRuntime(c)
+-	writePIDFile(c)
+-
+-	social.NewOAuthService()
+-	eventpublisher.Init()
+-	plugins.Init()
++func StartServer() {
+ 
+ 	var err error
+ 	m := newMacaron()
+ 	api.Register(m)
+ 
+-	if setting.ReportingEnabled {
+-		go metrics.StartUsageReportLoop()
+-	}
+-
+ 	listenAddr := fmt.Sprintf("%s:%s", setting.HttpAddr, setting.HttpPort)
+ 	log.Info("Listen: %v://%s%s", setting.Protocol, listenAddr, setting.AppSubUrl)
+ 	switch setting.Protocol {
+@@ -114,22 +88,3 @@ func runWeb(c *cli.Context) {
+ 		log.Fatal(4, "Fail to start server: %v", err)
+ 	}
+ }
+-
+-func writePIDFile(c *cli.Context) {
+-	path := c.GlobalString("pidfile")
+-	if path == "" {
+-		return
+-	}
+-
+-	// Ensure the required directory structure exists.
+-	err := os.MkdirAll(filepath.Dir(path), 0700)
+-	if err != nil {
+-		log.Fatal(3, "Failed to verify pid directory", err)
+-	}
+-
+-	// Retrieve the PID and write it.
+-	pid := strconv.Itoa(os.Getpid())
+-	if err := ioutil.WriteFile(path, []byte(pid), 0644); err != nil {
+-		log.Fatal(3, "Failed to write pidfile", err)
+-	}
+-}
+diff --git a/pkg/services/sqlstore/sqlstore.go b/pkg/services/sqlstore/sqlstore.go
+index 609a4d9fb9e..2dd483651c0 100644
+--- a/pkg/services/sqlstore/sqlstore.go
++++ b/pkg/services/sqlstore/sqlstore.go
+@@ -4,6 +4,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path"
++	"path/filepath"
+ 	"strings"
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+@@ -85,7 +86,7 @@ func SetEngine(engine *xorm.Engine, enableLog bool) (err error) {
+ 	}
+ 
+ 	if enableLog {
+-		logPath := path.Join(setting.LogRootPath, "xorm.log")
++		logPath := path.Join(setting.LogsPath, "xorm.log")
+ 		os.MkdirAll(path.Dir(logPath), os.ModePerm)
+ 
+ 		f, err := os.Create(logPath)
+@@ -126,6 +127,9 @@ func getEngine() (*xorm.Engine, error) {
+ 		cnnstr = fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=%s sslmode=%s",
+ 			DbCfg.User, DbCfg.Pwd, host, port, DbCfg.Name, DbCfg.SslMode)
+ 	case "sqlite3":
++		if !filepath.IsAbs(DbCfg.Path) {
++			DbCfg.Path = filepath.Join(setting.DataPath, DbCfg.Path)
++		}
+ 		os.MkdirAll(path.Dir(DbCfg.Path), os.ModePerm)
+ 		cnnstr = "file:" + DbCfg.Path + "?cache=shared&mode=rwc&_loc=Local"
+ 	default:
+diff --git a/pkg/setting/setting.go b/pkg/setting/setting.go
+index 107a0147385..78b255818a8 100644
+--- a/pkg/setting/setting.go
++++ b/pkg/setting/setting.go
+@@ -4,15 +4,16 @@
+ package setting
+ 
+ import (
++	"bytes"
+ 	"fmt"
+ 	"net/url"
+ 	"os"
+ 	"path"
+ 	"path/filepath"
++	"regexp"
+ 	"runtime"
+ 	"strings"
+ 
+-	"github.com/Unknwon/com"
+ 	"github.com/macaron-contrib/session"
+ 	"gopkg.in/ini.v1"
+ 
+@@ -44,10 +45,14 @@ var (
+ 	BuildCommit  string
+ 	BuildStamp   int64
+ 
++	// Paths
++	LogsPath string
++	HomePath string
++	DataPath string
++
+ 	// Log settings.
+-	LogRootPath string
+-	LogModes    []string
+-	LogConfigs  []string
++	LogModes   []string
++	LogConfigs []string
+ 
+ 	// Http server options
+ 	Protocol           Scheme
+@@ -83,56 +88,32 @@ var (
+ 	SessionOptions session.Options
+ 
+ 	// Global setting objects.
+-	WorkDir      string
+ 	Cfg          *ini.File
+ 	ConfRootPath string
+-	CustomPath   string // Custom directory path.
+-	ProdMode     bool
+-	RunUser      string
+ 	IsWindows    bool
+ 
+ 	// PhantomJs Rendering
+ 	ImagesDir  string
+ 	PhantomDir string
+ 
+-	configFiles []string
++	// for logging purposes
++	configFiles                  []string
++	appliedCommandLineProperties []string
++	appliedEnvOverrides          []string
+ 
+ 	ReportingEnabled  bool
+ 	GoogleAnalyticsId string
+ )
+ 
++type CommandLineArgs struct {
++	Config string
++	Args   []string
++}
++
+ func init() {
+ 	IsWindows = runtime.GOOS == "windows"
+ 	log.NewLogger(0, "console", `{"level": 0}`)
+-	WorkDir, _ = filepath.Abs(".")
+-}
+-
+-func findConfigFiles(customConfigFile string) {
+-	ConfRootPath = path.Join(WorkDir, "conf")
+-	configFiles = make([]string, 0)
+-
+-	configFile := path.Join(ConfRootPath, "defaults.ini")
+-	if com.IsFile(configFile) {
+-		configFiles = append(configFiles, configFile)
+-	}
+-
+-	configFile = path.Join(ConfRootPath, "dev.ini")
+-	if com.IsFile(configFile) {
+-		configFiles = append(configFiles, configFile)
+-	}
+-
+-	configFile = path.Join(ConfRootPath, "custom.ini")
+-	if com.IsFile(configFile) {
+-		configFiles = append(configFiles, configFile)
+-	}
+-
+-	if customConfigFile != "" {
+-		configFiles = append(configFiles, customConfigFile)
+-	}
+-
+-	if len(configFiles) == 0 {
+-		log.Fatal(3, "Could not find any config file")
+-	}
++	HomePath, _ = filepath.Abs(".")
+ }
+ 
+ func parseAppUrlAndSubUrl(section *ini.Section) (string, string) {
+@@ -155,7 +136,8 @@ func ToAbsUrl(relativeUrl string) string {
+ 	return AppUrl + relativeUrl
+ }
+ 
+-func loadEnvVariableOverrides() {
++func applyEnvVariableOverrides() {
++	appliedEnvOverrides = make([]string, 0)
+ 	for _, section := range Cfg.Sections() {
+ 		for _, key := range section.Keys() {
+ 			sectionName := strings.ToUpper(strings.Replace(section.Name(), ".", "_", -1))
+@@ -164,33 +146,156 @@ func loadEnvVariableOverrides() {
+ 			envValue := os.Getenv(envKey)
+ 
+ 			if len(envValue) > 0 {
+-				log.Info("Setting: ENV override found: %s", envKey)
+ 				key.SetValue(envValue)
++				appliedEnvOverrides = append(appliedEnvOverrides, fmt.Sprintf("%s=%s", envKey, envValue))
+ 			}
+ 		}
+ 	}
+ }
+ 
+-func NewConfigContext(config string) {
+-	findConfigFiles(config)
++func applyCommandLineDefaultProperties(props map[string]string) {
++	appliedCommandLineProperties = make([]string, 0)
++	for _, section := range Cfg.Sections() {
++		for _, key := range section.Keys() {
++			keyString := fmt.Sprintf("default.%s.%s", section.Name(), key.Name())
++			value, exists := props[keyString]
++			if exists {
++				key.SetValue(value)
++				appliedCommandLineProperties = append(appliedCommandLineProperties, fmt.Sprintf("%s=%s", keyString, value))
++			}
++		}
++	}
++}
+ 
+-	var err error
++func applyCommandLineProperties(props map[string]string) {
++	for _, section := range Cfg.Sections() {
++		for _, key := range section.Keys() {
++			keyString := fmt.Sprintf("%s.%s", section.Name(), key.Name())
++			value, exists := props[keyString]
++			if exists {
++				key.SetValue(value)
++				appliedCommandLineProperties = append(appliedCommandLineProperties, fmt.Sprintf("%s=%s", keyString, value))
++			}
++		}
++	}
++}
+ 
+-	for i, file := range configFiles {
+-		if i == 0 {
+-			Cfg, err = ini.Load(configFiles[i])
+-			Cfg.BlockMode = false
+-		} else {
+-			err = Cfg.Append(configFiles[i])
++func getCommandLineProperties(args []string) map[string]string {
++	props := make(map[string]string)
++
++	for _, arg := range args {
++		if !strings.HasPrefix(arg, "cfg:") {
++			continue
+ 		}
+ 
+-		if err != nil {
+-			log.Fatal(4, "Fail to parse config file: %v, error: %v", file, err)
++		trimmed := strings.TrimPrefix(arg, "cfg:")
++		parts := strings.Split(trimmed, "=")
++		if len(parts) != 2 {
++			log.Fatal(3, "Invalid command line argument", arg)
++			return nil
++		}
++
++		props[parts[0]] = parts[1]
++	}
++	return props
++}
++
++func makeAbsolute(path string, root string) string {
++	if filepath.IsAbs(path) {
++		return path
++	}
++	return filepath.Join(root, path)
++}
++
++func evalEnvVarExpression(value string) string {
++	regex := regexp.MustCompile(`\${(\w+)}`)
++	return regex.ReplaceAllStringFunc(value, func(envVar string) string {
++		envVar = strings.TrimPrefix(envVar, "${")
++		envVar = strings.TrimSuffix(envVar, "}")
++		envValue := os.Getenv(envVar)
++		return envValue
++	})
++}
++
++func evalConfigValues() {
++	for _, section := range Cfg.Sections() {
++		for _, key := range section.Keys() {
++			key.SetValue(evalEnvVarExpression(key.Value()))
+ 		}
+ 	}
++}
++
++func loadSpecifedConfigFile(configFile string) {
++	userConfig, err := ini.Load(configFile)
++	userConfig.BlockMode = false
++	if err != nil {
++		log.Fatal(3, "Failed to parse %v, %v", configFile, err)
++	}
++
++	for _, section := range userConfig.Sections() {
++		for _, key := range section.Keys() {
++			if key.Value() == "" {
++				continue
++			}
++
++			defaultSec, err := Cfg.GetSection(section.Name())
++			if err != nil {
++				log.Fatal(3, "Unknown config section %s defined in %s", section.Name(), configFile)
++			}
++			defaultKey, err := defaultSec.GetKey(key.Name())
++			if err != nil {
++				log.Fatal(3, "Unknown config key %s defined in section %s, in file", key.Name(), section.Name(), configFile)
++			}
++			defaultKey.SetValue(key.Value())
++		}
++	}
++
++	configFiles = append(configFiles, configFile)
++}
++
++func loadConfiguration(args *CommandLineArgs) {
++	var err error
++
++	args.Config = evalEnvVarExpression(args.Config)
++
++	// load config defaults
++	defaultConfigFile := path.Join(HomePath, "conf/defaults.ini")
++	configFiles = append(configFiles, defaultConfigFile)
++
++	Cfg, err = ini.Load(defaultConfigFile)
++	Cfg.BlockMode = false
++
++	if err != nil {
++		log.Fatal(3, "Failed to parse defaults.ini, %v", err)
++	}
+ 
+-	loadEnvVariableOverrides()
+-	initLogging()
++	// command line props
++	commandLineProps := getCommandLineProperties(args.Args)
++
++	// load default overrides
++	applyCommandLineDefaultProperties(commandLineProps)
++
++	// load specified config file
++	if args.Config != "" {
++		loadSpecifedConfigFile(args.Config)
++	}
++
++	// apply environment overrides
++	applyEnvVariableOverrides()
++
++	// apply command line overrides
++	applyCommandLineProperties(commandLineProps)
++
++	// evaluate config values containing environment variables
++	evalConfigValues()
++}
++
++func NewConfigContext(args *CommandLineArgs) {
++	loadConfiguration(args)
++
++	DataPath = makeAbsolute(Cfg.Section("paths").Key("data").String(), HomePath)
++
++	initLogging(args)
+ 
+ 	AppName = Cfg.Section("").Key("app_name").MustString("Grafana")
+ 	Env = Cfg.Section("").Key("app_mode").MustString("development")
+@@ -209,7 +314,7 @@ func NewConfigContext(config string) {
+ 	HttpAddr = server.Key("http_addr").MustString("0.0.0.0")
+ 	HttpPort = server.Key("http_port").MustString("3000")
+ 
+-	StaticRootPath = server.Key("static_root_path").MustString(path.Join(WorkDir, "webapp"))
++	StaticRootPath = server.Key("static_root_path").MustString(path.Join(HomePath, "public"))
+ 	RouterLogging = server.Key("router_logging").MustBool(false)
+ 	EnableGzip = server.Key("enable_gzip").MustBool(false)
+ 
+@@ -234,8 +339,8 @@ func NewConfigContext(config string) {
+ 	AnonymousOrgRole = Cfg.Section("auth.anonymous").Key("org_role").String()
+ 
+ 	// PhantomJS rendering
+-	ImagesDir = "data/png"
+-	PhantomDir = "vendor/phantomjs"
++	ImagesDir = filepath.Join(DataPath, "png")
++	PhantomDir = filepath.Join(HomePath, "vendor/phantomjs")
+ 
+ 	analytics := Cfg.Section("analytics")
+ 	ReportingEnabled = analytics.Key("reporting_enabled").MustBool(true)
+@@ -257,6 +362,7 @@ func readSessionConfig() {
+ 	SessionOptions.IDLength = 16
+ 
+ 	if SessionOptions.Provider == "file" {
++		SessionOptions.ProviderConfig = makeAbsolute(SessionOptions.ProviderConfig, DataPath)
+ 		os.MkdirAll(path.Dir(SessionOptions.ProviderConfig), os.ModePerm)
+ 	}
+ 
+@@ -274,10 +380,11 @@ var logLevels = map[string]string{
+ 	"Critical": "5",
+ }
+ 
+-func initLogging() {
++func initLogging(args *CommandLineArgs) {
+ 	// Get and check log mode.
+ 	LogModes = strings.Split(Cfg.Section("log").Key("mode").MustString("console"), ",")
+-	LogRootPath = Cfg.Section("log").Key("root_path").MustString(path.Join(WorkDir, "/data/log"))
++	LogsPath = makeAbsolute(Cfg.Section("paths").Key("logs").String(), HomePath)
++
+ 	LogConfigs = make([]string, len(LogModes))
+ 	for i, mode := range LogModes {
+ 		mode = strings.TrimSpace(mode)
+@@ -299,7 +406,7 @@ func initLogging() {
+ 		case "console":
+ 			LogConfigs[i] = fmt.Sprintf(`{"level":%s}`, level)
+ 		case "file":
+-			logPath := sec.Key("file_name").MustString(path.Join(LogRootPath, "grafana.log"))
++			logPath := sec.Key("file_name").MustString(path.Join(LogsPath, "grafana.log"))
+ 			os.MkdirAll(path.Dir(logPath), os.ModePerm)
+ 			LogConfigs[i] = fmt.Sprintf(
+ 				`{"level":%s,"filename":"%s","rotate":%v,"maxlines":%d,"maxsize":%d,"daily":%v,"maxdays":%d}`, level,
+@@ -332,8 +439,33 @@ func initLogging() {
+ 	}
+ }
+ 
+-func LogLoadedConfigFiles() {
+-	for _, file := range configFiles {
+-		log.Info("Config: Loaded from %s", file)
++func LogConfigurationInfo() {
++	var text bytes.Buffer
++	text.WriteString("Configuration Info\n")
++
++	text.WriteString("Config files:\n")
++	for i, file := range configFiles {
++		text.WriteString(fmt.Sprintf("  [%d]: %s\n", i, file))
++	}
++
++	if len(appliedCommandLineProperties) > 0 {
++		text.WriteString("Command lines overrides:\n")
++		for i, prop := range appliedCommandLineProperties {
++			text.WriteString(fmt.Sprintf("  [%d]: %s\n", i, prop))
++		}
+ 	}
++
++	if len(appliedEnvOverrides) > 0 {
++		text.WriteString("\tEnvironment variables used:\n")
++		for i, prop := range appliedCommandLineProperties {
++			text.WriteString(fmt.Sprintf("  [%d]: %s\n", i, prop))
++		}
++	}
++
++	text.WriteString("Paths:\n")
++	text.WriteString(fmt.Sprintf("  home: %s\n", HomePath))
++	text.WriteString(fmt.Sprintf("  data: %s\n", DataPath))
++	text.WriteString(fmt.Sprintf("  logs: %s\n", LogsPath))
++
++	log.Info(text.String())
+ }
+diff --git a/pkg/setting/setting_test.go b/pkg/setting/setting_test.go
+index 253eb94f123..1d0582a32cf 100644
+--- a/pkg/setting/setting_test.go
++++ b/pkg/setting/setting_test.go
+@@ -10,12 +10,12 @@ import (
+ 
+ func TestLoadingSettings(t *testing.T) {
+ 
+-	WorkDir, _ = filepath.Abs("../../")
++	HomePath, _ = filepath.Abs("../../")
+ 
+ 	Convey("Testing loading settings from ini file", t, func() {
+ 
+ 		Convey("Given the default ini files", func() {
+-			NewConfigContext("")
++			NewConfigContext(&CommandLineArgs{})
+ 
+ 			So(AppName, ShouldEqual, "Grafana")
+ 			So(AdminUser, ShouldEqual, "admin")
+@@ -23,9 +23,66 @@ func TestLoadingSettings(t *testing.T) {
+ 
+ 		Convey("Should be able to override via environment variables", func() {
+ 			os.Setenv("GF_SECURITY_ADMIN_USER", "superduper")
+-			NewConfigContext("")
++			NewConfigContext(&CommandLineArgs{})
+ 
+ 			So(AdminUser, ShouldEqual, "superduper")
++			So(DataPath, ShouldEqual, filepath.Join(HomePath, "data"))
++			So(LogsPath, ShouldEqual, filepath.Join(DataPath, "log"))
++		})
++
++		Convey("Should get property map from command line args array", func() {
++			props := getCommandLineProperties([]string{"cfg:test=value", "cfg:map.test=1"})
++
++			So(len(props), ShouldEqual, 2)
++			So(props["test"], ShouldEqual, "value")
++			So(props["map.test"], ShouldEqual, "1")
++		})
++
++		Convey("Should be able to override via command line", func() {
++			NewConfigContext(&CommandLineArgs{
++				Args: []string{"cfg:paths.data=/tmp/data", "cfg:paths.logs=/tmp/logs"},
++			})
++
++			So(DataPath, ShouldEqual, "/tmp/data")
++			So(LogsPath, ShouldEqual, "/tmp/logs")
++		})
++
++		Convey("Should be able to override defaults via command line", func() {
++			NewConfigContext(&CommandLineArgs{
++				Args: []string{
++					"cfg:default.server.domain=test2",
++				},
++				Config: filepath.Join(HomePath, "tests/config-files/override.ini"),
++			})
++
++			So(Domain, ShouldEqual, "test2")
++		})
++
++		Convey("Defaults can be overriden in specified config file", func() {
++			NewConfigContext(&CommandLineArgs{
++				Args:   []string{"cfg:default.paths.data=/tmp/data"},
++				Config: filepath.Join(HomePath, "tests/config-files/override.ini"),
++			})
++
++			So(DataPath, ShouldEqual, "/tmp/override")
++		})
++
++		Convey("Command line overrides specified config file", func() {
++			NewConfigContext(&CommandLineArgs{
++				Args:   []string{"cfg:paths.data=/tmp/data"},
++				Config: filepath.Join(HomePath, "tests/config-files/override.ini"),
++			})
++
++			So(DataPath, ShouldEqual, "/tmp/data")
++		})
++
++		Convey("Can use environment variables in config values", func() {
++			os.Setenv("GF_DATA_PATH", "/tmp/env_override")
++			NewConfigContext(&CommandLineArgs{
++				Args: []string{"cfg:paths.data=${GF_DATA_PATH}"},
++			})
++
++			So(DataPath, ShouldEqual, "/tmp/env_override")
+ 		})
+ 
+ 	})
+diff --git a/scripts/init.sh b/scripts/init.sh
+deleted file mode 100644
+index 778107f8a73..00000000000
+--- a/scripts/init.sh
++++ /dev/null
+@@ -1,174 +0,0 @@
+-#! /usr/bin/env bash
+-
+-# chkconfig: 2345 80 05
+-# description: Grafana web server & backend
+-# processname: grafana
+-# config: /etc/grafana/grafana.ini
+-# pidfile: /var/run/grafana.pid
+-
+-### BEGIN INIT INFO
+-# Provides:          grafana
+-# Required-Start:    $all
+-# Required-Stop:     $remote_fs $syslog
+-# Default-Start:     2 3 4 5
+-# Default-Stop:      0 1 6
+-# Short-Description: Start grafana at boot time
+-### END INIT INFO
+-
+-#  tested on
+-#  1. New lsb that define start-stop-daemon
+-#  3. Centos with initscripts package installed
+-
+-if [ -r /lib/lsb/init-functions ]; then
+-    source /lib/lsb/init-functions
+-fi
+-
+-DAEMON_NAME="grafana"
+-DAEMON_USER="grafana"
+-DAEMON_PATH="/opt/grafana/current/grafana"
+-DAEMON_OPTS="--config=/etc/grafana/grafana.ini web"
+-DAEMON_PWD="/opt/grafana/current"
+-DAEMON_PID="/var/run/${DAEMON_NAME}.pid"
+-DAEMON_NICE=0
+-DAEMON_LOG='/var/log/grafana/grafana.log'
+-
+-# If the daemon is not there, then exit.
+-[ -x $DAEMON_PATH ] || exit 5
+-
+-if [ "x$STDOUT" == "x" ]; then
+-    STDOUT=/tmp/grafana.log
+-fi
+-
+-function pidofproc() {
+-    if [ $# -ne 3 ]; then
+-        echo "Expected three arguments, e.g. $0 -p pidfile daemon-name"
+-    fi
+-
+-    pid=`pgrep -f $3`
+-    local pidfile=`cat $2`
+-
+-    if [ "x$pidfile" == "x" ]; then
+-        return 1
+-    fi
+-
+-    if [ "x$pid" != "x" -a "$pidfile" == "$pid" ]; then
+-        return 0
+-    fi
+-
+-    return 1
+-}
+-
+-function killproc() {
+-    if [ $# -ne 3 ]; then
+-        echo "Expected three arguments, e.g. $0 -p pidfile signal"
+-    fi
+-
+-    pid=`cat $2`
+-
+-    kill -s $3 $pid
+-}
+-
+-function log_failure_msg() {
+-    echo "$@" "[ FAILED ]"
+-}
+-
+-function log_success_msg() {
+-    echo "$@" "[ OK ]"
+-}
+-
+-do_start() {
+-  cd $DAEMON_PWD
+-
+-  # Checked the PID file exists and check the actual status of process
+-  if [ -e $DAEMON_PID ]; then
+-    pidofproc -p $DAEMON_PID $DAEMON_PATH > /dev/null 2>&1 && status="0" || status="$?"
+-    # If the status is SUCCESS then don't need to start again.
+-    if [ "x$status" = "x0" ]; then
+-      log_failure_msg "$DAEMON_NAME process is running"
+-      exit 1 # Exit
+-    fi
+-  fi
+-  # Start the daemon.
+-  log_success_msg "Starting the process" "$DAEMON_NAME"
+-
+-  # Start the daemon with the help of start-stop-daemon
+-  # Log the message appropriately
+-  if which start-stop-daemon > /dev/null 2>&1; then
+-    start-stop-daemon \
+-      --start --quiet --oknodo --background \
+-      --nicelevel $DAEMON_NICE \
+-      --chdir "${DAEMON_PWD}" \
+-      --pidfile "${DAEMON_PID}" --make-pidfile \
+-      --chuid "${DAEMON_USER}" \
+-      --exec  "${DAEMON_PATH}" -- $DAEMON_OPTS
+-    result=$?
+-  else
+-    touch ${DAEMON_PID}
+-    chown $DAEMON_USER "${DAEMON_PID}"
+-    #daemon --user $DAEMON_USER --pidfile $DAEMON_PID nohup $DAEMON_PATH $DAEMON_OPTS
+-    su -s /bin/sh -c "nohup ${DAEMON_PATH} --pidfile=${DAEMON_PID} ${DAEMON_OPTS} >> $STDOUT 3>&1 &" $DAEMON_USER
+-  fi
+-
+-  log_success_msg "$DAEMON_NAME process was started"
+-}
+-
+-do_stop() {
+-  local result
+-
+-  pidofproc -p "${DAEMON_PID}" "${DAEMON_PATH}" > /dev/null
+-  if [ $? -ne 0 ]; then
+-    log_failure_msg "${DAEMON_NAME} is not started"
+-    result=0
+-  else
+-    log_success_msg "Stopping ${DAEMON_NAME}"
+-    killproc -p "${DAEMON_PID}" SIGTERM
+-    result=$?
+-    if [ $result = 0 ]; then
+-      log_success_msg "Stopped ${DAEMON_NAME}"
+-      rm "${DAEMON_PID}"
+-    fi
+-  fi
+-
+-  return $result
+-}
+-
+-do_restart() {
+-  local result
+-  do_stop
+-  result=$?
+-  sleep 2
+-  if [ $result = 0 ]; then
+-    do_start
+-    result=$?
+-  fi
+-  return $result
+-}
+-
+-do_status() {
+-  if [ -e $DEAMON_PID ]; then
+-    pidofproc -p "${DAEMON_PID}" "${DAEMON_PATH}" > /dev/null
+-    if [ $? -ne 0 ]; then
+-      log_failure_msg "$DAEMON_NAME Process is not running"
+-      exit 1
+-    else
+-      log_success_msg "$DAEMON_NAME Process is running"
+-      exit 0
+-    fi
+-  else
+-    log_failure_msg "$DAEMON_NAME Process is not running"
+-    exit 3
+-  fi
+-}
+-
+-do_usage() {
+-  echo $"Usage: $0 {start | stop | restart | status}"
+-  exit 1
+-}
+-
+-case "$1" in
+-  start)   do_start;   exit $? ;;
+-  stop)    do_stop;    exit $? ;;
+-  restart) do_restart; exit $? ;;
+-  status)  do_status;  exit $? ;;
+-  *)       do_usage;   exit  1 ;;
+-esac
+diff --git a/tasks/build_task.js b/tasks/build_task.js
+index 64f87522515..6db49cb1ef3 100644
+--- a/tasks/build_task.js
++++ b/tasks/build_task.js
+@@ -55,9 +55,9 @@ module.exports = function(grunt) {
+     grunt.config('copy.backend_bin', {
+       cwd: 'bin',
+       expand: true,
+-      src: ['grafana'],
++      src: ['grafana-server'],
+       options: { mode: true},
+-      dest: '<%= tempDir %>'
++      dest: '<%= tempDir %>/bin/'
+     });
+     grunt.config('copy.backend_files', {
+       expand: true,
+diff --git a/tests/config-files/override.ini b/tests/config-files/override.ini
+new file mode 100644
+index 00000000000..9cd79bb8a72
+--- /dev/null
++++ b/tests/config-files/override.ini
+@@ -0,0 +1,3 @@
++[paths]
++data = /tmp/override
++

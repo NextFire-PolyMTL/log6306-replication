@@ -1,0 +1,2215 @@
+commit 23738ad4acf19bda027131daca48feee9c8e9c8f (from 1236b7b91806b65e8ccd247cbcd6f6595f395221)
+Merge: 1236b7b9180 c40a50829d6
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Mon May 7 16:32:26 2018 +0200
+
+    Merge pull request #11801 from grafana/provision-service-refactor
+    
+    Server shutdown flow rewrite & provision service refactor
+
+diff --git a/pkg/api/http_server.go b/pkg/api/http_server.go
+index 38858606579..f30e5602484 100644
+--- a/pkg/api/http_server.go
++++ b/pkg/api/http_server.go
+@@ -26,9 +26,14 @@ import (
+ 	"github.com/grafana/grafana/pkg/middleware"
+ 	"github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
++	"github.com/grafana/grafana/pkg/registry"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
++func init() {
++	registry.RegisterService(&HTTPServer{})
++}
++
+ type HTTPServer struct {
+ 	log           log.Logger
+ 	macaron       *macaron.Macaron
+@@ -41,12 +46,14 @@ type HTTPServer struct {
+ 	Bus           bus.Bus       `inject:""`
+ }
+ 
+-func (hs *HTTPServer) Init() {
++func (hs *HTTPServer) Init() error {
+ 	hs.log = log.New("http.server")
+ 	hs.cache = gocache.New(5*time.Minute, 10*time.Minute)
++
++	return nil
+ }
+ 
+-func (hs *HTTPServer) Start(ctx context.Context) error {
++func (hs *HTTPServer) Run(ctx context.Context) error {
+ 	var err error
+ 
+ 	hs.context = ctx
+@@ -57,17 +64,18 @@ func (hs *HTTPServer) Start(ctx context.Context) error {
+ 	hs.streamManager.Run(ctx)
+ 
+ 	listenAddr := fmt.Sprintf("%s:%s", setting.HttpAddr, setting.HttpPort)
+-	hs.log.Info("Initializing HTTP Server", "address", listenAddr, "protocol", setting.Protocol, "subUrl", setting.AppSubUrl, "socket", setting.SocketPath)
++	hs.log.Info("HTTP Server Listen", "address", listenAddr, "protocol", setting.Protocol, "subUrl", setting.AppSubUrl, "socket", setting.SocketPath)
+ 
+ 	hs.httpSrv = &http.Server{Addr: listenAddr, Handler: hs.macaron}
+ 
+ 	// handle http shutdown on server context done
+ 	go func() {
+ 		<-ctx.Done()
++		// Hacky fix for race condition between ListenAndServe and Shutdown
++		time.Sleep(time.Millisecond * 100)
+ 		if err := hs.httpSrv.Shutdown(context.Background()); err != nil {
+ 			hs.log.Error("Failed to shutdown server", "error", err)
+ 		}
+-		hs.log.Info("Stopped HTTP Server")
+ 	}()
+ 
+ 	switch setting.Protocol {
+@@ -106,12 +114,6 @@ func (hs *HTTPServer) Start(ctx context.Context) error {
+ 	return err
+ }
+ 
+-func (hs *HTTPServer) Shutdown(ctx context.Context) error {
+-	err := hs.httpSrv.Shutdown(ctx)
+-	hs.log.Info("Stopped HTTP server")
+-	return err
+-}
+-
+ func (hs *HTTPServer) listenAndServeTLS(certfile, keyfile string) error {
+ 	if certfile == "" {
+ 		return fmt.Errorf("cert_file cannot be empty when using HTTPS")
+diff --git a/pkg/cmd/grafana-server/main.go b/pkg/cmd/grafana-server/main.go
+index 466e97ff2d6..c7ea6bb432b 100644
+--- a/pkg/cmd/grafana-server/main.go
++++ b/pkg/cmd/grafana-server/main.go
+@@ -39,7 +39,6 @@ var enterprise string
+ var configFile = flag.String("config", "", "path to config file")
+ var homePath = flag.String("homepath", "", "path to grafana install/home path, defaults to working directory")
+ var pidFile = flag.String("pidfile", "", "path to pid file")
+-var exitChan = make(chan int)
+ 
+ func main() {
+ 	v := flag.Bool("v", false, "prints current version and exits")
+@@ -81,29 +80,20 @@ func main() {
+ 	setting.Enterprise, _ = strconv.ParseBool(enterprise)
+ 
+ 	metrics.M_Grafana_Version.WithLabelValues(version).Set(1)
+-	shutdownCompleted := make(chan int)
+-	server := NewGrafanaServer()
+ 
+-	go listenToSystemSignals(server, shutdownCompleted)
++	server := NewGrafanaServer()
+ 
+-	go func() {
+-		code := 0
+-		if err := server.Start(); err != nil {
+-			log.Error2("Startup failed", "error", err)
+-			code = 1
+-		}
++	go listenToSystemSignals(server)
+ 
+-		exitChan <- code
+-	}()
++	err := server.Run()
+ 
+-	code := <-shutdownCompleted
+-	log.Info2("Grafana shutdown completed.", "code", code)
++	trace.Stop()
+ 	log.Close()
+-	os.Exit(code)
++
++	server.Exit(err)
+ }
+ 
+-func listenToSystemSignals(server *GrafanaServerImpl, shutdownCompleted chan int) {
+-	var code int
++func listenToSystemSignals(server *GrafanaServerImpl) {
+ 	signalChan := make(chan os.Signal, 1)
+ 	ignoreChan := make(chan os.Signal, 1)
+ 
+@@ -112,12 +102,6 @@ func listenToSystemSignals(server *GrafanaServerImpl, shutdownCompleted chan int
+ 
+ 	select {
+ 	case sig := <-signalChan:
+-		trace.Stop() // Stops trace if profiling has been enabled
+-		server.Shutdown(0, fmt.Sprintf("system signal: %s", sig))
+-		shutdownCompleted <- 0
+-	case code = <-exitChan:
+-		trace.Stop() // Stops trace if profiling has been enabled
+-		server.Shutdown(code, "startup error")
+-		shutdownCompleted <- code
++		server.Shutdown(fmt.Sprintf("System signal: %s", sig))
+ 	}
+ }
+diff --git a/pkg/cmd/grafana-server/server.go b/pkg/cmd/grafana-server/server.go
+index f20195b563a..0f364076a15 100644
+--- a/pkg/cmd/grafana-server/server.go
++++ b/pkg/cmd/grafana-server/server.go
+@@ -17,7 +17,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/middleware"
+ 	"github.com/grafana/grafana/pkg/registry"
+ 	"github.com/grafana/grafana/pkg/services/dashboards"
+-	"github.com/grafana/grafana/pkg/services/provisioning"
+ 
+ 	"golang.org/x/sync/errgroup"
+ 
+@@ -37,6 +36,7 @@ import (
+ 	_ "github.com/grafana/grafana/pkg/services/alerting"
+ 	_ "github.com/grafana/grafana/pkg/services/cleanup"
+ 	_ "github.com/grafana/grafana/pkg/services/notifications"
++	_ "github.com/grafana/grafana/pkg/services/provisioning"
+ 	_ "github.com/grafana/grafana/pkg/services/search"
+ )
+ 
+@@ -54,17 +54,19 @@ func NewGrafanaServer() *GrafanaServerImpl {
+ }
+ 
+ type GrafanaServerImpl struct {
+-	context       context.Context
+-	shutdownFn    context.CancelFunc
+-	childRoutines *errgroup.Group
+-	log           log.Logger
+-	cfg           *setting.Cfg
++	context            context.Context
++	shutdownFn         context.CancelFunc
++	childRoutines      *errgroup.Group
++	log                log.Logger
++	cfg                *setting.Cfg
++	shutdownReason     string
++	shutdownInProgress bool
+ 
+ 	RouteRegister api.RouteRegister `inject:""`
+ 	HttpServer    *api.HTTPServer   `inject:""`
+ }
+ 
+-func (g *GrafanaServerImpl) Start() error {
++func (g *GrafanaServerImpl) Run() error {
+ 	g.loadConfiguration()
+ 	g.writePIDFile()
+ 
+@@ -75,10 +77,6 @@ func (g *GrafanaServerImpl) Start() error {
+ 	login.Init()
+ 	social.NewOAuthService()
+ 
+-	if err := provisioning.Init(g.context, setting.HomePath, g.cfg.Raw); err != nil {
+-		return fmt.Errorf("Failed to provision Grafana from config. error: %v", err)
+-	}
+-
+ 	tracingCloser, err := tracing.Init(g.cfg.Raw)
+ 	if err != nil {
+ 		return fmt.Errorf("Tracing settings is not valid. error: %v", err)
+@@ -90,7 +88,6 @@ func (g *GrafanaServerImpl) Start() error {
+ 	serviceGraph.Provide(&inject.Object{Value: g.cfg})
+ 	serviceGraph.Provide(&inject.Object{Value: dashboards.NewProvisioningService()})
+ 	serviceGraph.Provide(&inject.Object{Value: api.NewRouteRegister(middleware.RequestMetrics, middleware.RequestTracing)})
+-	serviceGraph.Provide(&inject.Object{Value: api.HTTPServer{}})
+ 
+ 	// self registered services
+ 	services := registry.GetServices()
+@@ -116,7 +113,7 @@ func (g *GrafanaServerImpl) Start() error {
+ 		g.log.Info("Initializing " + reflect.TypeOf(service).Elem().Name())
+ 
+ 		if err := service.Init(); err != nil {
+-			return fmt.Errorf("Service init failed %v", err)
++			return fmt.Errorf("Service init failed: %v", err)
+ 		}
+ 	}
+ 
+@@ -132,14 +129,31 @@ func (g *GrafanaServerImpl) Start() error {
+ 		}
+ 
+ 		g.childRoutines.Go(func() error {
++			// Skip starting new service when shutting down
++			// Can happen when service stop/return during startup
++			if g.shutdownInProgress {
++				return nil
++			}
++
+ 			err := service.Run(g.context)
+-			g.log.Info("Stopped "+reflect.TypeOf(service).Elem().Name(), "reason", err)
++
++			// If error is not canceled then the service crashed
++			if err != context.Canceled {
++				g.log.Error("Stopped "+reflect.TypeOf(service).Elem().Name(), "reason", err)
++			} else {
++				g.log.Info("Stopped "+reflect.TypeOf(service).Elem().Name(), "reason", err)
++			}
++
++			// Mark that we are in shutdown mode
++			// So more services are not started
++			g.shutdownInProgress = true
+ 			return err
+ 		})
+ 	}
+ 
+ 	sendSystemdNotification("READY=1")
+-	return g.startHttpServer()
++
++	return g.childRoutines.Wait()
+ }
+ 
+ func (g *GrafanaServerImpl) loadConfiguration() {
+@@ -158,28 +172,29 @@ func (g *GrafanaServerImpl) loadConfiguration() {
+ 	g.cfg.LogConfigSources()
+ }
+ 
+-func (g *GrafanaServerImpl) startHttpServer() error {
+-	g.HttpServer.Init()
+-
+-	err := g.HttpServer.Start(g.context)
+-
+-	if err != nil {
+-		return fmt.Errorf("Fail to start server. error: %v", err)
+-	}
+-
+-	return nil
+-}
+-
+-func (g *GrafanaServerImpl) Shutdown(code int, reason string) {
+-	g.log.Info("Shutdown started", "code", code, "reason", reason)
++func (g *GrafanaServerImpl) Shutdown(reason string) {
++	g.log.Info("Shutdown started", "reason", reason)
++	g.shutdownReason = reason
++	g.shutdownInProgress = true
+ 
+ 	// call cancel func on root context
+ 	g.shutdownFn()
+ 
+ 	// wait for child routines
+-	if err := g.childRoutines.Wait(); err != nil && err != context.Canceled {
+-		g.log.Error("Server shutdown completed", "error", err)
++	g.childRoutines.Wait()
++}
++
++func (g *GrafanaServerImpl) Exit(reason error) {
++	// default exit code is 1
++	code := 1
++
++	if reason == context.Canceled && g.shutdownReason != "" {
++		reason = fmt.Errorf(g.shutdownReason)
++		code = 0
+ 	}
++
++	g.log.Error("Server shutdown", "reason", reason)
++	os.Exit(code)
+ }
+ 
+ func (g *GrafanaServerImpl) writePIDFile() {
+diff --git a/pkg/services/provisioning/dashboards/config_reader.go b/pkg/services/provisioning/dashboards/config_reader.go
+index 8ac79df0fac..4f9577f82db 100644
+--- a/pkg/services/provisioning/dashboards/config_reader.go
++++ b/pkg/services/provisioning/dashboards/config_reader.go
+@@ -69,7 +69,7 @@ func (cr *configReader) readConfig() ([]*DashboardsAsConfig, error) {
+ 
+ 		parsedDashboards, err := cr.parseConfigs(file)
+ 		if err != nil {
+-
++			return nil, err
+ 		}
+ 
+ 		if len(parsedDashboards) > 0 {
+diff --git a/pkg/services/provisioning/dashboards/dashboard.go b/pkg/services/provisioning/dashboards/dashboard.go
+index a5349517bbe..a856565bf01 100644
+--- a/pkg/services/provisioning/dashboards/dashboard.go
++++ b/pkg/services/provisioning/dashboards/dashboard.go
+@@ -10,19 +10,16 @@ import (
+ type DashboardProvisioner struct {
+ 	cfgReader *configReader
+ 	log       log.Logger
+-	ctx       context.Context
+ }
+ 
+-func Provision(ctx context.Context, configDirectory string) (*DashboardProvisioner, error) {
++func NewDashboardProvisioner(configDirectory string) *DashboardProvisioner {
+ 	log := log.New("provisioning.dashboard")
+ 	d := &DashboardProvisioner{
+ 		cfgReader: &configReader{path: configDirectory, log: log},
+ 		log:       log,
+-		ctx:       ctx,
+ 	}
+ 
+-	err := d.Provision(ctx)
+-	return d, err
++	return d
+ }
+ 
+ func (provider *DashboardProvisioner) Provision(ctx context.Context) error {
+diff --git a/pkg/services/provisioning/provisioning.go b/pkg/services/provisioning/provisioning.go
+index 71385994bb5..9044ae97389 100644
+--- a/pkg/services/provisioning/provisioning.go
++++ b/pkg/services/provisioning/provisioning.go
+@@ -2,30 +2,40 @@ package provisioning
+ 
+ import (
+ 	"context"
++	"fmt"
+ 	"path"
+-	"path/filepath"
+ 
++	"github.com/grafana/grafana/pkg/registry"
+ 	"github.com/grafana/grafana/pkg/services/provisioning/dashboards"
+ 	"github.com/grafana/grafana/pkg/services/provisioning/datasources"
+-	ini "gopkg.in/ini.v1"
++	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func Init(ctx context.Context, homePath string, cfg *ini.File) error {
+-	provisioningPath := makeAbsolute(cfg.Section("paths").Key("provisioning").String(), homePath)
++func init() {
++	registry.RegisterService(&ProvisioningService{})
++}
++
++type ProvisioningService struct {
++	Cfg *setting.Cfg `inject:""`
++}
+ 
+-	datasourcePath := path.Join(provisioningPath, "datasources")
++func (ps *ProvisioningService) Init() error {
++	datasourcePath := path.Join(ps.Cfg.ProvisioningPath, "datasources")
+ 	if err := datasources.Provision(datasourcePath); err != nil {
+-		return err
++		return fmt.Errorf("Datasource provisioning error: %v", err)
+ 	}
+ 
+-	dashboardPath := path.Join(provisioningPath, "dashboards")
+-	_, err := dashboards.Provision(ctx, dashboardPath)
+-	return err
++	return nil
+ }
+ 
+-func makeAbsolute(path string, root string) string {
+-	if filepath.IsAbs(path) {
+-		return path
++func (ps *ProvisioningService) Run(ctx context.Context) error {
++	dashboardPath := path.Join(ps.Cfg.ProvisioningPath, "dashboards")
++	dashProvisioner := dashboards.NewDashboardProvisioner(dashboardPath)
++
++	if err := dashProvisioner.Provision(ctx); err != nil {
++		return err
+ 	}
+-	return filepath.Join(root, path)
++
++	<-ctx.Done()
++	return ctx.Err()
+ }
+diff --git a/pkg/setting/setting.go b/pkg/setting/setting.go
+index 4db1a2ad7a1..f53b1f852d5 100644
+--- a/pkg/setting/setting.go
++++ b/pkg/setting/setting.go
+@@ -52,12 +52,11 @@ var (
+ 	ApplicationName string
+ 
+ 	// Paths
+-	LogsPath         string
+-	HomePath         string
+-	DataPath         string
+-	PluginsPath      string
+-	ProvisioningPath string
+-	CustomInitPath   = "conf/custom.ini"
++	LogsPath       string
++	HomePath       string
++	DataPath       string
++	PluginsPath    string
++	CustomInitPath = "conf/custom.ini"
+ 
+ 	// Log settings.
+ 	LogModes   []string
+@@ -188,6 +187,9 @@ var (
+ type Cfg struct {
+ 	Raw *ini.File
+ 
++	// Paths
++	ProvisioningPath string
++
+ 	// SMTP email settings
+ 	Smtp SmtpSettings
+ 
+@@ -517,7 +519,7 @@ func (cfg *Cfg) Load(args *CommandLineArgs) error {
+ 	Env = iniFile.Section("").Key("app_mode").MustString("development")
+ 	InstanceName = iniFile.Section("").Key("instance_name").MustString("unknown_instance_name")
+ 	PluginsPath = makeAbsolute(iniFile.Section("paths").Key("plugins").String(), HomePath)
+-	ProvisioningPath = makeAbsolute(iniFile.Section("paths").Key("provisioning").String(), HomePath)
++	cfg.ProvisioningPath = makeAbsolute(iniFile.Section("paths").Key("provisioning").String(), HomePath)
+ 	server := iniFile.Section("server")
+ 	AppUrl, AppSubUrl = parseAppUrlAndSubUrl(server)
+ 
+@@ -728,6 +730,6 @@ func (cfg *Cfg) LogConfigSources() {
+ 	logger.Info("Path Data", "path", DataPath)
+ 	logger.Info("Path Logs", "path", LogsPath)
+ 	logger.Info("Path Plugins", "path", PluginsPath)
+-	logger.Info("Path Provisioning", "path", ProvisioningPath)
++	logger.Info("Path Provisioning", "path", cfg.ProvisioningPath)
+ 	logger.Info("App mode " + Env)
+ }
+
+commit 23738ad4acf19bda027131daca48feee9c8e9c8f (from c40a50829d622f38c51462e13daec5d92bd75326)
+Merge: 1236b7b9180 c40a50829d6
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Mon May 7 16:32:26 2018 +0200
+
+    Merge pull request #11801 from grafana/provision-service-refactor
+    
+    Server shutdown flow rewrite & provision service refactor
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b977edaadf0..5d4e5fa80f6 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,18 @@
+ 
+ * **Graph**: Show invisible highest value bucket in histogram [#11498](https://github.com/grafana/grafana/issues/11498)
+ * **Dashboard**: Enable "Save As..." if user has edit permission [#11625](https://github.com/grafana/grafana/issues/11625)
++* **Prometheus**: Table columns order now changes when rearrange queries [#11690](https://github.com/grafana/grafana/issues/11690), thx [@mtanda](https://github.com/mtanda)
++* **Variables**: Fix variable interpolation when using multiple formatting types [#11800](https://github.com/grafana/grafana/issues/11800), thx [@svenklemm](https://github.com/svenklemm)
++* **Dashboard**: Fix date selector styling for dark/light theme in time picker control [#11616](https://github.com/grafana/grafana/issues/11616)
++* **Discord**: Alert notification channel type for Discord, [#7964](https://github.com/grafana/grafana/issues/7964) thx [@jereksel](https://github.com/jereksel), 
++
++
++# 5.1.1 (2018-05-07)
++
++* **LDAP**: LDAP login with MariaDB/MySQL database and dn>100 chars not possible [#11754](https://github.com/grafana/grafana/issues/11754)
++* **Build**: AppVeyor Windows build missing version and commit info [#11758](https://github.com/grafana/grafana/issues/11758)
++* **Scroll**: Scroll can't start in graphs on Chrome mobile [#11710](https://github.com/grafana/grafana/issues/11710)
++* **Units**: Revert renaming of unit key ppm [#11743](https://github.com/grafana/grafana/issues/11743)
+ 
+ # 5.1.0 (2018-04-26)
+ 
+diff --git a/Gopkg.lock b/Gopkg.lock
+index 3a7466c312a..41fc92313d1 100644
+--- a/Gopkg.lock
++++ b/Gopkg.lock
+@@ -111,6 +111,18 @@
+   ]
+   revision = "270bc3860bb94dd3a3ffd047377d746c5e276726"
+ 
++[[projects]]
++  branch = "master"
++  name = "github.com/facebookgo/inject"
++  packages = ["."]
++  revision = "cc1aa653e50f6a9893bcaef89e673e5b24e1e97b"
++
++[[projects]]
++  branch = "master"
++  name = "github.com/facebookgo/structtag"
++  packages = ["."]
++  revision = "217e25fb96916cc60332e399c9aa63f5c422ceed"
++
+ [[projects]]
+   name = "github.com/fatih/color"
+   packages = ["."]
+@@ -649,6 +661,6 @@
+ [solve-meta]
+   analyzer-name = "dep"
+   analyzer-version = 1
+-  inputs-digest = "2bd5b309496d57e2189a1cc28f5c1c41398c19729ba0cf53c8cbb17ea3f706b5"
++  inputs-digest = "bd54a1a836599d90b36d4ac1af56d716ef9ca5be4865e217bddd49e3d32a1997"
+   solver-name = "gps-cdcl"
+   solver-version = 1
+diff --git a/ROADMAP.md b/ROADMAP.md
+index e7bed99489e..7b9c043fef1 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -1,26 +1,20 @@
+-# Roadmap (2018-02-22)
++# Roadmap (2018-05-06)
+ 
+ This roadmap is a tentative plan for the core development team. Things change constantly as PRs come in and priorities change. 
+ But it will give you an idea of our current vision and plan. 
+-
+-### Short term (1-2 months)
+-
+-- v5.1
+-  - Build speed improvements & integration test execution
+-  - Kubernetes friendly docker container
+-  - Enterprise LDAP
+-  - Provisioning workflow
+-  - MSSQL datasource
+   
+-### Mid term (2-4 months)
++### Short term (1-2 months)
+ 
+-- v5.2
+-  - Azure monitor backend rewrite
+   - Elasticsearch alerting
+-  - First login registration view
+-  - Backend plugins? (alert notifiers, auth)
+   - Crossplatform builds
+-  - IFQL Initial support
++  - Backend service refactorings
++  - Explore UI 
++  - First login registration view
++  
++### Mid term (2-4 months)
++  - Multi-Stat panel
++  - React Panels 
++  - Templating Query Editor UI Plugin hook
+   
+ ### Long term (4 - 8 months)
+ 
+diff --git a/docker/blocks/apache_proxy/docker-compose.yaml b/docker/blocks/apache_proxy/docker-compose.yaml
+index 2aec3d4bc4f..86d4befadd6 100644
+--- a/docker/blocks/apache_proxy/docker-compose.yaml
++++ b/docker/blocks/apache_proxy/docker-compose.yaml
+@@ -2,7 +2,7 @@
+ # http://localhost:3000 (Grafana running locally)
+ #
+ # Please note that you'll need to change the root_url in the Grafana configuration:
+-# root_url = %(protocol)s://%(domain)s:/grafana/
++# root_url = %(protocol)s://%(domain)s:10081/grafana/
+ 
+   apacheproxy:
+     build: blocks/apache_proxy
+diff --git a/docker/blocks/nginx_proxy/docker-compose.yaml b/docker/blocks/nginx_proxy/docker-compose.yaml
+index 7c3447ade5c..a0ceceb83ac 100644
+--- a/docker/blocks/nginx_proxy/docker-compose.yaml
++++ b/docker/blocks/nginx_proxy/docker-compose.yaml
+@@ -2,7 +2,7 @@
+ # http://localhost:3000 (Grafana running locally)
+ #
+ # Please note that you'll need to change the root_url in the Grafana configuration:
+-# root_url = %(protocol)s://%(domain)s:/grafana/
++# root_url = %(protocol)s://%(domain)s:10080/grafana/
+ 
+   nginxproxy:
+     build: blocks/nginx_proxy
+diff --git a/docs/sources/guides/whats-new-in-v5-1.md b/docs/sources/guides/whats-new-in-v5-1.md
+index 66b04ce3d50..d992fd9062a 100644
+--- a/docs/sources/guides/whats-new-in-v5-1.md
++++ b/docs/sources/guides/whats-new-in-v5-1.md
+@@ -100,8 +100,8 @@ In the table below you can see some examples and you can find all different opti
+ Filter Option | Example | Raw | Interpolated | Description
+ ------------ | ------------- | ------------- | -------------  | -------------
+ `glob` | ${servers:glob} |  `'test1', 'test2'` | `{test1,test2}` | Formats multi-value variable into a glob
+-`regex` | ${servers:regex} | `'test.', 'test2'` |  `(test\\.|test2)` | Formats multi-value variable into a regex string
+-`pipe` | ${servers:pipe} | `'test.', 'test2'` |  `test.|test2` | Formats multi-value variable into a pipe-separated string
++`regex` | ${servers:regex} | `'test.', 'test2'` |  <code>(test\.&#124;test2)</code> | Formats multi-value variable into a regex string
++`pipe` | ${servers:pipe} | `'test.', 'test2'` |  <code>test.&#124;test2</code> | Formats multi-value variable into a pipe-separated string
+ `csv`| ${servers:csv} |  `'test1', 'test2'` | `test1,test2` | Formats multi-value variable as a comma-separated string
+ 
+ ## Improved workflow for provisioned dashboards
+@@ -122,4 +122,4 @@ More information in the [Provisioning documentation](/features/datasources/prome
+ ## Changelog
+ 
+ Checkout the [CHANGELOG.md](https://github.com/grafana/grafana/blob/master/CHANGELOG.md) file for a complete list
+-of new features, changes, and bug fixes.
+\ No newline at end of file
++of new features, changes, and bug fixes.
+diff --git a/docs/sources/installation/behind_proxy.md b/docs/sources/installation/behind_proxy.md
+index f1a00a5b1cc..89711aecb46 100644
+--- a/docs/sources/installation/behind_proxy.md
++++ b/docs/sources/installation/behind_proxy.md
+@@ -53,7 +53,7 @@ server {
+ ```bash
+ [server]
+ domain = foo.bar
+-root_url = %(protocol)s://%(domain)s:/grafana
++root_url = %(protocol)s://%(domain)s/grafana/
+ ```
+ 
+ #### Nginx configuration with sub path
+@@ -98,7 +98,7 @@ Given:
+     ```bash
+     [server]
+     domain = localhost:8080
+-    root_url = %(protocol)s://%(domain)s:/grafana
++    root_url = %(protocol)s://%(domain)s/grafana/
+     ```
+ 
+ Create an Inbound Rule for the parent website (localhost:8080 in this example) in IIS Manager with the following settings:
+diff --git a/docs/sources/installation/configuration.md b/docs/sources/installation/configuration.md
+index b7fe9040574..baec76df5d9 100644
+--- a/docs/sources/installation/configuration.md
++++ b/docs/sources/installation/configuration.md
+@@ -659,6 +659,10 @@ Set to `true` to enable auto sign up of users who do not exist in Grafana DB. De
+ 
+ Limit where auth proxy requests come from by configuring a list of IP addresses. This can be used to prevent users spoofing the X-WEBAUTH-USER header.
+ 
++### headers
++
++Used to define additional headers for `Name`, `Email` and/or `Login`, for example if the user's name is sent in the X-WEBAUTH-NAME header and their email address in the X-WEBAUTH-EMAIL header, set `headers = Name:X-WEBAUTH-NAME Email:X-WEBAUTH-EMAIL`.
++
+ <hr>
+ 
+ ## [session]
+diff --git a/docs/sources/installation/debian.md b/docs/sources/installation/debian.md
+index dccb880ec74..83d26351295 100644
+--- a/docs/sources/installation/debian.md
++++ b/docs/sources/installation/debian.md
+@@ -15,7 +15,7 @@ weight = 1
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for Debian-based Linux | [grafana_5.1.0_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.0_amd64.deb)
++Stable for Debian-based Linux | [grafana_5.1.1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.1_amd64.deb)
+ <!--
+ Beta for Debian-based Linux | [grafana_5.1.0-beta1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.0-beta1_amd64.deb)
+ -->
+@@ -27,9 +27,9 @@ installation.
+ 
+ 
+ ```bash
+-wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.0_amd64.deb
++wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.1_amd64.deb
+ sudo apt-get install -y adduser libfontconfig
+-sudo dpkg -i grafana_5.1.0_amd64.deb
++sudo dpkg -i grafana_5.1.1_amd64.deb
+ ```
+ 
+ <!-- ## Install Latest Beta
+diff --git a/docs/sources/installation/rpm.md b/docs/sources/installation/rpm.md
+index e142d6e2c95..71ef7433be1 100644
+--- a/docs/sources/installation/rpm.md
++++ b/docs/sources/installation/rpm.md
+@@ -15,7 +15,7 @@ weight = 2
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.0 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-1.x86_64.rpm)
++Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm)
+ <!--
+ Latest Beta for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.0-beta1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-beta1.x86_64.rpm)
+ -->
+@@ -28,7 +28,7 @@ installation.
+ You can install Grafana using Yum directly.
+ 
+ ```bash
+-$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-1.x86_64.rpm
++$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm
+ ```
+ 
+ <!-- ## Install Beta
+@@ -42,15 +42,15 @@ Or install manually using `rpm`.
+ #### On CentOS / Fedora / Redhat:
+ 
+ ```bash
+-$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-1.x86_64.rpm
++$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm
+ $ sudo yum install initscripts fontconfig
+-$ sudo rpm -Uvh grafana-5.1.0-1.x86_64.rpm
++$ sudo rpm -Uvh grafana-5.1.1-1.x86_64.rpm
+ ```
+ 
+ #### On OpenSuse:
+ 
+ ```bash
+-$ sudo rpm -i --nodeps grafana-5.1.0-1.x86_64.rpm
++$ sudo rpm -i --nodeps grafana-5.1.1-1.x86_64.rpm
+ ```
+ 
+ ## Install via YUM Repository
+diff --git a/docs/sources/installation/windows.md b/docs/sources/installation/windows.md
+index 8baccac6211..cea86812491 100644
+--- a/docs/sources/installation/windows.md
++++ b/docs/sources/installation/windows.md
+@@ -12,7 +12,7 @@ weight = 3
+ 
+ Description | Download
+ ------------ | -------------
+-Latest stable package for Windows | [grafana-5.1.0.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0.windows-x64.zip)
++Latest stable package for Windows | [grafana-5.1.1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1.windows-x64.zip)
+ 
+ <!--
+ Latest beta package for Windows | [grafana.5.1.0-beta1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-beta5.windows-x64.zip)
+diff --git a/docs/sources/plugins/developing/apps.md b/docs/sources/plugins/developing/apps.md
+index a3fc35066f6..155f97461c9 100644
+--- a/docs/sources/plugins/developing/apps.md
++++ b/docs/sources/plugins/developing/apps.md
+@@ -5,7 +5,7 @@ type = "docs"
+ [menu.docs]
+ name = "Developing App Plugins"
+ parent = "developing"
+-weight = 6
++weight = 4
+ +++
+ 
+ # Grafana Apps
+diff --git a/docs/sources/plugins/developing/datasources.md b/docs/sources/plugins/developing/datasources.md
+index 09a005ba714..064f3a850ae 100644
+--- a/docs/sources/plugins/developing/datasources.md
++++ b/docs/sources/plugins/developing/datasources.md
+@@ -5,7 +5,7 @@ type = "docs"
+ [menu.docs]
+ name = "Developing Datasource Plugins"
+ parent = "developing"
+-weight = 6
++weight = 5
+ +++
+ 
+ # Datasources
+diff --git a/docs/sources/plugins/developing/panels.md b/docs/sources/plugins/developing/panels.md
+index 26db69c7c94..d679288e2d2 100644
+--- a/docs/sources/plugins/developing/panels.md
++++ b/docs/sources/plugins/developing/panels.md
+@@ -1,16 +1,11 @@
+----
+-page_title: Plugin panel
+-page_description: Panel plugins for Grafana
+-page_keywords: grafana, plugins, documentation
+----
+-
+-
+ +++
+-title = "Installing Plugins"
++title = "Developing Panel Plugins"
++keywords = ["grafana", "plugins", "panel", "documentation"]
+ type = "docs"
+ [menu.docs]
++name = "Developing Panel Plugins"
+ parent = "developing"
+-weight = 1
++weight = 4
+ +++
+ 
+ 
+@@ -20,7 +15,21 @@ Panels are the main building blocks of dashboards.
+ 
+ ## Panel development
+ 
+-Examples
++
++### Scrolling
++The grafana dashboard framework controls the panel height.  To enable a scrollbar within the panel the PanelCtrl needs to set the scrollable static variable:
++
++```javascript
++export class MyPanelCtrl extends PanelCtrl {
++  static scrollable = true;
++  ...
++```
++
++In this case, make sure the template has a single `<div>...</div>` root.  The plugin loader will modifiy that element adding a scrollbar.
++
++
++
++### Examples
+ 
+ - [clock-panel](https://github.com/grafana/clock-panel)
+ - [singlestat-panel](https://github.com/grafana/grafana/blob/master/public/app/plugins/panel/singlestat/module.ts)
+diff --git a/docs/sources/plugins/developing/plugin.json.md b/docs/sources/plugins/developing/plugin.json.md
+index 7de5e91986f..2d21a665207 100644
+--- a/docs/sources/plugins/developing/plugin.json.md
++++ b/docs/sources/plugins/developing/plugin.json.md
+@@ -5,7 +5,7 @@ type = "docs"
+ [menu.docs]
+ name = "plugin.json Schema"
+ parent = "developing"
+-weight = 6
++weight = 8
+ +++
+ 
+ # Plugin.json
+diff --git a/docs/sources/tutorials/iis.md b/docs/sources/tutorials/iis.md
+index 63a41d67c16..896181c4a9f 100644
+--- a/docs/sources/tutorials/iis.md
++++ b/docs/sources/tutorials/iis.md
+@@ -16,7 +16,7 @@ Example:
+ - Parent site: http://localhost:8080
+ - Grafana: http://localhost:3000
+ 
+-Grafana as a subpath: http://localhost:8080/grafana 
++Grafana as a subpath: http://localhost:8080/grafana
+ 
+ ## Setup
+ 
+@@ -33,7 +33,7 @@ Given that the subpath should be `grafana` and the parent site is `localhost:808
+  ```bash
+ [server]
+ domain = localhost:8080
+-root_url = %(protocol)s://%(domain)s:/grafana
++root_url = %(protocol)s://%(domain)s/grafana/
+ ```
+ 
+ Restart the Grafana server after changing the config file.
+@@ -74,11 +74,11 @@ When navigating to the grafana url (`http://localhost:8080/grafana` in the examp
+ 
+ 1. The `root_url` setting in the Grafana config file does not match the parent url with subpath. This could happen if the root_url is commented out by mistake (`;` is used for commenting out a line in .ini files):
+ 
+-    `; root_url = %(protocol)s://%(domain)s:/grafana`
++    `; root_url = %(protocol)s://%(domain)s/grafana/`
+ 
+ 2. or if the subpath in the `root_url` setting does not match the subpath used in the pattern in the Inbound Rule in IIS:
+ 
+-    `root_url = %(protocol)s://%(domain)s:/grafana`
++    `root_url = %(protocol)s://%(domain)s/grafana/`
+ 
+     pattern in Inbound Rule: `wrongsubpath(/)?(.*)`
+ 
+diff --git a/pkg/components/null/float.go b/pkg/components/null/float.go
+index caf4d8b677c..4f783f2c584 100644
+--- a/pkg/components/null/float.go
++++ b/pkg/components/null/float.go
+@@ -106,6 +106,15 @@ func (f Float) String() string {
+ 	return fmt.Sprintf("%1.3f", f.Float64)
+ }
+ 
++// FullString returns float as string in full precision
++func (f Float) FullString() string {
++	if !f.Valid {
++		return "null"
++	}
++
++	return fmt.Sprintf("%f", f.Float64)
++}
++
+ // SetValid changes this Float's value and also sets it to be non-null.
+ func (f *Float) SetValid(n float64) {
+ 	f.Float64 = n
+diff --git a/pkg/middleware/auth_proxy.go b/pkg/middleware/auth_proxy.go
+index 36b059e4ae7..144a0ae3a69 100644
+--- a/pkg/middleware/auth_proxy.go
++++ b/pkg/middleware/auth_proxy.go
+@@ -4,6 +4,7 @@ import (
+ 	"fmt"
+ 	"net"
+ 	"net/mail"
++	"reflect"
+ 	"strings"
+ 	"time"
+ 
+@@ -111,6 +112,16 @@ func initContextWithAuthProxy(ctx *m.ReqContext, orgID int64) bool {
+ 			return true
+ 		}
+ 
++		for _, field := range []string{"Name", "Email", "Login"} {
++			if setting.AuthProxyHeaders[field] == "" {
++				continue
++			}
++
++			if val := ctx.Req.Header.Get(setting.AuthProxyHeaders[field]); val != "" {
++				reflect.ValueOf(extUser).Elem().FieldByName(field).SetString(val)
++			}
++		}
++
+ 		// add/update user in grafana
+ 		cmd := &m.UpsertUserCommand{
+ 			ReqContext:    ctx,
+diff --git a/pkg/models/notifications.go b/pkg/models/notifications.go
+index 089d7c4360d..4b25ecb4dc7 100644
+--- a/pkg/models/notifications.go
++++ b/pkg/models/notifications.go
+@@ -19,12 +19,13 @@ type SendEmailCommandSync struct {
+ }
+ 
+ type SendWebhookSync struct {
+-	Url        string
+-	User       string
+-	Password   string
+-	Body       string
+-	HttpMethod string
+-	HttpHeader map[string]string
++	Url         string
++	User        string
++	Password    string
++	Body        string
++	HttpMethod  string
++	HttpHeader  map[string]string
++	ContentType string
+ }
+ 
+ type SendResetPasswordEmailCommand struct {
+diff --git a/pkg/services/alerting/notifiers/discord.go b/pkg/services/alerting/notifiers/discord.go
+new file mode 100644
+index 00000000000..b6831c90cfe
+--- /dev/null
++++ b/pkg/services/alerting/notifiers/discord.go
+@@ -0,0 +1,171 @@
++package notifiers
++
++import (
++	"bytes"
++	"io"
++	"mime/multipart"
++	"os"
++	"strconv"
++	"strings"
++
++	"github.com/grafana/grafana/pkg/bus"
++	"github.com/grafana/grafana/pkg/components/simplejson"
++	"github.com/grafana/grafana/pkg/log"
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/alerting"
++	"github.com/grafana/grafana/pkg/setting"
++)
++
++func init() {
++	alerting.RegisterNotifier(&alerting.NotifierPlugin{
++		Type:        "discord",
++		Name:        "Discord",
++		Description: "Sends notifications to Discord",
++		Factory:     NewDiscordNotifier,
++		OptionsTemplate: `
++      <h3 class="page-heading">Discord settings</h3>
++      <div class="gf-form">
++        <span class="gf-form-label width-14">Webhook URL</span>
++        <input type="text" required class="gf-form-input max-width-22" ng-model="ctrl.model.settings.url" placeholder="Discord webhook URL"></input>
++      </div>
++    `,
++	})
++}
++
++func NewDiscordNotifier(model *m.AlertNotification) (alerting.Notifier, error) {
++	url := model.Settings.Get("url").MustString()
++	if url == "" {
++		return nil, alerting.ValidationError{Reason: "Could not find webhook url property in settings"}
++	}
++
++	return &DiscordNotifier{
++		NotifierBase: NewNotifierBase(model.Id, model.IsDefault, model.Name, model.Type, model.Settings),
++		WebhookURL:   url,
++		log:          log.New("alerting.notifier.discord"),
++	}, nil
++}
++
++type DiscordNotifier struct {
++	NotifierBase
++	WebhookURL string
++	log        log.Logger
++}
++
++func (this *DiscordNotifier) Notify(evalContext *alerting.EvalContext) error {
++	this.log.Info("Sending alert notification to", "webhook_url", this.WebhookURL)
++
++	ruleUrl, err := evalContext.GetRuleUrl()
++	if err != nil {
++		this.log.Error("Failed get rule link", "error", err)
++		return err
++	}
++
++	bodyJSON := simplejson.New()
++	bodyJSON.Set("username", "Grafana")
++
++	fields := make([]map[string]interface{}, 0)
++
++	for _, evt := range evalContext.EvalMatches {
++
++		fields = append(fields, map[string]interface{}{
++			"name":   evt.Metric,
++			"value":  evt.Value.FullString(),
++			"inline": true,
++		})
++	}
++
++	footer := map[string]interface{}{
++		"text":     "Grafana v" + setting.BuildVersion,
++		"icon_url": "https://grafana.com/assets/img/fav32.png",
++	}
++
++	color, _ := strconv.ParseInt(strings.TrimLeft(evalContext.GetStateModel().Color, "#"), 16, 0)
++
++	embed := simplejson.New()
++	embed.Set("title", evalContext.GetNotificationTitle())
++	//Discord takes integer for color
++	embed.Set("color", color)
++	embed.Set("url", ruleUrl)
++	embed.Set("description", evalContext.Rule.Message)
++	embed.Set("type", "rich")
++	embed.Set("fields", fields)
++	embed.Set("footer", footer)
++
++	var image = make(map[string]interface{})
++
++	var embeddedImage = false
++
++	if evalContext.ImagePublicUrl != "" {
++		image = map[string]interface{}{
++			"url": evalContext.ImagePublicUrl,
++		}
++		embed.Set("image", image)
++	} else {
++		image = map[string]interface{}{
++			"url": "attachment://graph.png",
++		}
++		embed.Set("image", image)
++		embeddedImage = true
++	}
++
++	bodyJSON.Set("embeds", []interface{}{embed})
++
++	json, _ := bodyJSON.MarshalJSON()
++
++	content_type := "application/json"
++
++	var body []byte
++
++	if embeddedImage {
++
++		var b bytes.Buffer
++
++		w := multipart.NewWriter(&b)
++
++		f, err := os.Open(evalContext.ImageOnDiskPath)
++
++		if err != nil {
++			this.log.Error("Can't open graph file", err)
++			return err
++		}
++
++		defer f.Close()
++
++		fw, err := w.CreateFormField("payload_json")
++		if err != nil {
++			return err
++		}
++
++		if _, err = fw.Write([]byte(string(json))); err != nil {
++			return err
++		}
++
++		fw, err = w.CreateFormFile("file", "graph.png")
++
++		if _, err = io.Copy(fw, f); err != nil {
++			return err
++		}
++
++		w.Close()
++
++		body = b.Bytes()
++		content_type = w.FormDataContentType()
++
++	} else {
++		body = json
++	}
++
++	cmd := &m.SendWebhookSync{
++		Url:         this.WebhookURL,
++		Body:        string(body),
++		HttpMethod:  "POST",
++		ContentType: content_type,
++	}
++
++	if err := bus.DispatchCtx(evalContext.Ctx, cmd); err != nil {
++		this.log.Error("Failed to send notification to Discord", "error", err)
++		return err
++	}
++
++	return nil
++}
+diff --git a/pkg/services/alerting/notifiers/discord_test.go b/pkg/services/alerting/notifiers/discord_test.go
+new file mode 100644
+index 00000000000..fe925aab362
+--- /dev/null
++++ b/pkg/services/alerting/notifiers/discord_test.go
+@@ -0,0 +1,52 @@
++package notifiers
++
++import (
++	"testing"
++
++	"github.com/grafana/grafana/pkg/components/simplejson"
++	m "github.com/grafana/grafana/pkg/models"
++	. "github.com/smartystreets/goconvey/convey"
++)
++
++func TestDiscordNotifier(t *testing.T) {
++	Convey("Telegram notifier tests", t, func() {
++
++		Convey("Parsing alert notification from settings", func() {
++			Convey("empty settings should return error", func() {
++				json := `{ }`
++
++				settingsJSON, _ := simplejson.NewJson([]byte(json))
++				model := &m.AlertNotification{
++					Name:     "discord_testing",
++					Type:     "discord",
++					Settings: settingsJSON,
++				}
++
++				_, err := NewDiscordNotifier(model)
++				So(err, ShouldNotBeNil)
++			})
++
++			Convey("settings should trigger incident", func() {
++				json := `
++				{
++          "url": "https://web.hook/"
++				}`
++
++				settingsJSON, _ := simplejson.NewJson([]byte(json))
++				model := &m.AlertNotification{
++					Name:     "discord_testing",
++					Type:     "discord",
++					Settings: settingsJSON,
++				}
++
++				not, err := NewDiscordNotifier(model)
++				discordNotifier := not.(*DiscordNotifier)
++
++				So(err, ShouldBeNil)
++				So(discordNotifier.Name, ShouldEqual, "discord_testing")
++				So(discordNotifier.Type, ShouldEqual, "discord")
++				So(discordNotifier.WebhookURL, ShouldEqual, "https://web.hook/")
++			})
++		})
++	})
++}
+diff --git a/pkg/services/notifications/notifications.go b/pkg/services/notifications/notifications.go
+index ee54e7269f7..14d362c5e1e 100644
+--- a/pkg/services/notifications/notifications.go
++++ b/pkg/services/notifications/notifications.go
+@@ -104,12 +104,13 @@ func (ns *NotificationService) Run(ctx context.Context) error {
+ 
+ func (ns *NotificationService) SendWebhookSync(ctx context.Context, cmd *m.SendWebhookSync) error {
+ 	return ns.sendWebRequestSync(ctx, &Webhook{
+-		Url:        cmd.Url,
+-		User:       cmd.User,
+-		Password:   cmd.Password,
+-		Body:       cmd.Body,
+-		HttpMethod: cmd.HttpMethod,
+-		HttpHeader: cmd.HttpHeader,
++		Url:         cmd.Url,
++		User:        cmd.User,
++		Password:    cmd.Password,
++		Body:        cmd.Body,
++		HttpMethod:  cmd.HttpMethod,
++		HttpHeader:  cmd.HttpHeader,
++		ContentType: cmd.ContentType,
+ 	})
+ }
+ 
+diff --git a/pkg/services/notifications/webhook.go b/pkg/services/notifications/webhook.go
+index 01db2d56471..a236a1d1c4e 100644
+--- a/pkg/services/notifications/webhook.go
++++ b/pkg/services/notifications/webhook.go
+@@ -15,12 +15,13 @@ import (
+ )
+ 
+ type Webhook struct {
+-	Url        string
+-	User       string
+-	Password   string
+-	Body       string
+-	HttpMethod string
+-	HttpHeader map[string]string
++	Url         string
++	User        string
++	Password    string
++	Body        string
++	HttpMethod  string
++	HttpHeader  map[string]string
++	ContentType string
+ }
+ 
+ var netTransport = &http.Transport{
+@@ -48,8 +49,13 @@ func (ns *NotificationService) sendWebRequestSync(ctx context.Context, webhook *
+ 		return err
+ 	}
+ 
+-	request.Header.Add("Content-Type", "application/json")
++	if webhook.ContentType == "" {
++		webhook.ContentType = "application/json"
++	}
++
++	request.Header.Add("Content-Type", webhook.ContentType)
+ 	request.Header.Add("User-Agent", "Grafana")
++
+ 	if webhook.User != "" && webhook.Password != "" {
+ 		request.Header.Add("Authorization", util.GetBasicAuthHeader(webhook.User, webhook.Password))
+ 	}
+diff --git a/pkg/services/sqlstore/migrations/user_auth_mig.go b/pkg/services/sqlstore/migrations/user_auth_mig.go
+index 4d8a18ce33e..be4d112f6f6 100644
+--- a/pkg/services/sqlstore/migrations/user_auth_mig.go
++++ b/pkg/services/sqlstore/migrations/user_auth_mig.go
+@@ -21,4 +21,9 @@ func addUserAuthMigrations(mg *Migrator) {
+ 	mg.AddMigration("create user auth table", NewAddTableMigration(userAuthV1))
+ 	// add indices
+ 	addTableIndicesMigrations(mg, "v1", userAuthV1)
++
++	mg.AddMigration("alter user_auth.auth_id to length 255", new(RawSqlMigration).
++		Sqlite("SELECT 0 WHERE 0;").
++		Postgres("ALTER TABLE user_auth ALTER COLUMN auth_id TYPE VARCHAR(255);").
++		Mysql("ALTER TABLE user_auth MODIFY auth_id VARCHAR(255);"))
+ }
+diff --git a/pkg/services/sqlstore/sqlstore.go b/pkg/services/sqlstore/sqlstore.go
+index b804d8b1621..cac0c54226c 100644
+--- a/pkg/services/sqlstore/sqlstore.go
++++ b/pkg/services/sqlstore/sqlstore.go
+@@ -123,7 +123,7 @@ func getEngine() (*xorm.Engine, error) {
+ 		}
+ 
+ 		cnnstr = fmt.Sprintf("%s:%s@%s(%s)/%s?collation=utf8mb4_unicode_ci&allowNativePasswords=true",
+-			DbCfg.User, DbCfg.Pwd, protocol, DbCfg.Host, DbCfg.Name)
++			url.QueryEscape(DbCfg.User), url.QueryEscape(DbCfg.Pwd), protocol, DbCfg.Host, url.PathEscape(DbCfg.Name))
+ 
+ 		if DbCfg.SslMode == "true" || DbCfg.SslMode == "skip-verify" {
+ 			tlsCert, err := makeCert("custom", DbCfg)
+@@ -142,13 +142,17 @@ func getEngine() (*xorm.Engine, error) {
+ 		if len(fields) > 1 && len(strings.TrimSpace(fields[1])) > 0 {
+ 			port = fields[1]
+ 		}
+-		if DbCfg.Pwd == "" {
+-			DbCfg.Pwd = "''"
+-		}
+-		if DbCfg.User == "" {
+-			DbCfg.User = "''"
+-		}
+-		cnnstr = fmt.Sprintf("user=%s password=%s host=%s port=%s dbname=%s sslmode=%s sslcert=%s sslkey=%s sslrootcert=%s", DbCfg.User, DbCfg.Pwd, host, port, DbCfg.Name, DbCfg.SslMode, DbCfg.ClientCertPath, DbCfg.ClientKeyPath, DbCfg.CaCertPath)
++		cnnstr = fmt.Sprintf("user='%s' password='%s' host='%s' port='%s' dbname='%s' sslmode='%s' sslcert='%s' sslkey='%s' sslrootcert='%s'",
++			strings.Replace(DbCfg.User, `'`, `\'`, -1),
++			strings.Replace(DbCfg.Pwd, `'`, `\'`, -1),
++			strings.Replace(host, `'`, `\'`, -1),
++			strings.Replace(port, `'`, `\'`, -1),
++			strings.Replace(DbCfg.Name, `'`, `\'`, -1),
++			strings.Replace(DbCfg.SslMode, `'`, `\'`, -1),
++			strings.Replace(DbCfg.ClientCertPath, `'`, `\'`, -1),
++			strings.Replace(DbCfg.ClientKeyPath, `'`, `\'`, -1),
++			strings.Replace(DbCfg.CaCertPath, `'`, `\'`, -1),
++		)
+ 	case "sqlite3":
+ 		if !filepath.IsAbs(DbCfg.Path) {
+ 			DbCfg.Path = filepath.Join(setting.DataPath, DbCfg.Path)
+diff --git a/pkg/setting/setting.go b/pkg/setting/setting.go
+index 44d14e166d0..f53b1f852d5 100644
+--- a/pkg/setting/setting.go
++++ b/pkg/setting/setting.go
+@@ -124,6 +124,7 @@ var (
+ 	AuthProxyAutoSignUp     bool
+ 	AuthProxyLdapSyncTtl    int
+ 	AuthProxyWhitelist      string
++	AuthProxyHeaders        map[string]string
+ 
+ 	// Basic Auth
+ 	BasicAuthEnabled bool
+@@ -613,6 +614,14 @@ func (cfg *Cfg) Load(args *CommandLineArgs) error {
+ 	AuthProxyLdapSyncTtl = authProxy.Key("ldap_sync_ttl").MustInt()
+ 	AuthProxyWhitelist = authProxy.Key("whitelist").String()
+ 
++	AuthProxyHeaders = make(map[string]string)
++	for _, propertyAndHeader := range util.SplitString(authProxy.Key("headers").String()) {
++		split := strings.SplitN(propertyAndHeader, ":", 2)
++		if len(split) == 2 {
++			AuthProxyHeaders[split[0]] = split[1]
++		}
++	}
++
+ 	// basic auth
+ 	authBasic := iniFile.Section("auth.basic")
+ 	BasicAuthEnabled = authBasic.Key("enabled").MustBool(true)
+diff --git a/public/app/containers/Explore/Explore.tsx b/public/app/containers/Explore/Explore.tsx
+index eae3f4d0a1f..40261ee635a 100644
+--- a/public/app/containers/Explore/Explore.tsx
++++ b/public/app/containers/Explore/Explore.tsx
+@@ -10,6 +10,7 @@ import Graph from './Graph';
+ import Table from './Table';
+ import { DatasourceSrv } from 'app/features/plugins/datasource_srv';
+ import { buildQueryOptions, ensureQueries, generateQueryKey, hasQuery } from './utils/query';
++import { decodePathComponent } from 'app/core/utils/location_util';
+ 
+ function makeTimeSeriesList(dataList, options) {
+   return dataList.map((seriesData, index) => {
+@@ -38,6 +39,19 @@ function makeTimeSeriesList(dataList, options) {
+   });
+ }
+ 
++function parseInitialQueries(initial) {
++  if (!initial) {
++    return [];
++  }
++  try {
++    const parsed = JSON.parse(decodePathComponent(initial));
++    return parsed.queries.map(q => q.query);
++  } catch (e) {
++    console.error(e);
++    return [];
++  }
++}
++
+ interface IExploreState {
+   datasource: any;
+   datasourceError: any;
+@@ -58,6 +72,7 @@ export class Explore extends React.Component<any, IExploreState> {
+ 
+   constructor(props) {
+     super(props);
++    const initialQueries = parseInitialQueries(props.routeParams.initial);
+     this.state = {
+       datasource: null,
+       datasourceError: null,
+@@ -65,7 +80,7 @@ export class Explore extends React.Component<any, IExploreState> {
+       graphResult: null,
+       latency: 0,
+       loading: false,
+-      queries: ensureQueries(),
++      queries: ensureQueries(initialQueries),
+       requestOptions: null,
+       showingGraph: true,
+       showingTable: true,
+@@ -77,7 +92,7 @@ export class Explore extends React.Component<any, IExploreState> {
+     const datasource = await this.props.datasourceSrv.get();
+     const testResult = await datasource.testDatasource();
+     if (testResult.status === 'success') {
+-      this.setState({ datasource, datasourceError: null, datasourceLoading: false });
++      this.setState({ datasource, datasourceError: null, datasourceLoading: false }, () => this.handleSubmit());
+     } else {
+       this.setState({ datasource: null, datasourceError: testResult.message, datasourceLoading: false });
+     }
+diff --git a/public/app/containers/Explore/QueryRows.tsx b/public/app/containers/Explore/QueryRows.tsx
+index a0a9981368d..3940d16b2f6 100644
+--- a/public/app/containers/Explore/QueryRows.tsx
++++ b/public/app/containers/Explore/QueryRows.tsx
+@@ -6,13 +6,16 @@ class QueryRow extends PureComponent<any, any> {
+   constructor(props) {
+     super(props);
+     this.state = {
+-      query: '',
++      edited: false,
++      query: props.query || '',
+     };
+   }
+ 
+   handleChangeQuery = value => {
+     const { index, onChangeQuery } = this.props;
+-    this.setState({ query: value });
++    const { query } = this.state;
++    const edited = query !== value;
++    this.setState({ edited, query: value });
+     if (onChangeQuery) {
+       onChangeQuery(value, index);
+     }
+@@ -41,6 +44,7 @@ class QueryRow extends PureComponent<any, any> {
+ 
+   render() {
+     const { request } = this.props;
++    const { edited, query } = this.state;
+     return (
+       <div className="query-row">
+         <div className="query-row-tools">
+@@ -52,7 +56,12 @@ class QueryRow extends PureComponent<any, any> {
+           </button>
+         </div>
+         <div className="query-field-wrapper">
+-          <QueryField onPressEnter={this.handlePressEnter} onQueryChange={this.handleChangeQuery} request={request} />
++          <QueryField
++            initialQuery={edited ? null : query}
++            onPressEnter={this.handlePressEnter}
++            onQueryChange={this.handleChangeQuery}
++            request={request}
++          />
+         </div>
+       </div>
+     );
+@@ -63,7 +72,9 @@ export default class QueryRows extends PureComponent<any, any> {
+   render() {
+     const { className = '', queries, ...handlers } = this.props;
+     return (
+-      <div className={className}>{queries.map((q, index) => <QueryRow key={q.key} index={index} {...handlers} />)}</div>
++      <div className={className}>
++        {queries.map((q, index) => <QueryRow key={q.key} index={index} query={q.query} {...handlers} />)}
++      </div>
+     );
+   }
+ }
+diff --git a/public/app/core/services/keybindingSrv.ts b/public/app/core/services/keybindingSrv.ts
+index 55d968fd981..94bf9efb31b 100644
+--- a/public/app/core/services/keybindingSrv.ts
++++ b/public/app/core/services/keybindingSrv.ts
+@@ -3,6 +3,7 @@ import _ from 'lodash';
+ 
+ import coreModule from 'app/core/core_module';
+ import appEvents from 'app/core/app_events';
++import { encodePathComponent } from 'app/core/utils/location_util';
+ 
+ import Mousetrap from 'mousetrap';
+ import 'mousetrap-global-bind';
+@@ -13,7 +14,7 @@ export class KeybindingSrv {
+   timepickerOpen = false;
+ 
+   /** @ngInject */
+-  constructor(private $rootScope, private $location) {
++  constructor(private $rootScope, private $location, private datasourceSrv) {
+     // clear out all shortcuts on route change
+     $rootScope.$on('$routeChangeSuccess', () => {
+       Mousetrap.reset();
+@@ -176,6 +177,17 @@ export class KeybindingSrv {
+       }
+     });
+ 
++    this.bind('x', async () => {
++      if (dashboard.meta.focusPanelId) {
++        const panel = dashboard.getPanelById(dashboard.meta.focusPanelId);
++        const datasource = await this.datasourceSrv.get(panel.datasource);
++        if (datasource && datasource.supportsExplore) {
++          const exploreState = encodePathComponent(JSON.stringify(datasource.getExploreState(panel)));
++          this.$location.url(`/explore/${exploreState}`);
++        }
++      }
++    });
++
+     // delete panel
+     this.bind('p r', () => {
+       if (dashboard.meta.focusPanelId && dashboard.meta.canEdit) {
+diff --git a/public/app/core/specs/file_export.jest.ts b/public/app/core/specs/file_export.jest.ts
+index bbb894094ff..82097227b97 100644
+--- a/public/app/core/specs/file_export.jest.ts
++++ b/public/app/core/specs/file_export.jest.ts
+@@ -30,17 +30,17 @@ describe('file_export', () => {
+     it('should export points in proper order', () => {
+       let text = fileExport.convertSeriesListToCsv(ctx.seriesList, ctx.timeFormat);
+       const expectedText =
+-        'Series;Time;Value\n' +
+-        'series_1;1500026100;1\n' +
+-        'series_1;1500026200;2\n' +
+-        'series_1;1500026300;null\n' +
+-        'series_1;1500026400;null\n' +
+-        'series_1;1500026500;null\n' +
+-        'series_1;1500026600;6\n' +
+-        'series_2;1500026100;11\n' +
+-        'series_2;1500026200;12\n' +
+-        'series_2;1500026300;13\n' +
+-        'series_2;1500026500;15\n';
++        '"Series";"Time";"Value"\r\n' +
++        '"series_1";"1500026100";1\r\n' +
++        '"series_1";"1500026200";2\r\n' +
++        '"series_1";"1500026300";null\r\n' +
++        '"series_1";"1500026400";null\r\n' +
++        '"series_1";"1500026500";null\r\n' +
++        '"series_1";"1500026600";6\r\n' +
++        '"series_2";"1500026100";11\r\n' +
++        '"series_2";"1500026200";12\r\n' +
++        '"series_2";"1500026300";13\r\n' +
++        '"series_2";"1500026500";15';
+ 
+       expect(text).toBe(expectedText);
+     });
+@@ -50,15 +50,79 @@ describe('file_export', () => {
+     it('should export points in proper order', () => {
+       let text = fileExport.convertSeriesListToCsvColumns(ctx.seriesList, ctx.timeFormat);
+       const expectedText =
+-        'Time;series_1;series_2\n' +
+-        '1500026100;1;11\n' +
+-        '1500026200;2;12\n' +
+-        '1500026300;null;13\n' +
+-        '1500026400;null;null\n' +
+-        '1500026500;null;15\n' +
+-        '1500026600;6;null\n';
++        '"Time";"series_1";"series_2"\r\n' +
++        '"1500026100";1;11\r\n' +
++        '"1500026200";2;12\r\n' +
++        '"1500026300";null;13\r\n' +
++        '"1500026400";null;null\r\n' +
++        '"1500026500";null;15\r\n' +
++        '"1500026600";6;null';
+ 
+       expect(text).toBe(expectedText);
+     });
+   });
++
++  describe('when exporting table data to csv', () => {
++
++    it('should properly escape special characters and quote all string values', () => {
++      const inputTable = {
++        columns: [
++          { title: 'integer_value' },
++          { text: 'string_value' },
++          { title: 'float_value' },
++          { text: 'boolean_value' },
++        ],
++        rows: [
++          [123, 'some_string', 1.234, true],
++          [0o765, 'some string with " in the middle', 1e-2, false],
++          [0o765, 'some string with "" in the middle', 1e-2, false],
++          [0o765, 'some string with """ in the middle', 1e-2, false],
++          [0o765, '"some string with " at the beginning', 1e-2, false],
++          [0o765, 'some string with " at the end"', 1e-2, false],
++          [0x123, 'some string with \n in the middle', 10.01, false],
++          [0b1011, 'some string with ; in the middle', -12.34, true],
++          [123, 'some string with ;; in the middle', -12.34, true],
++        ],
++      };
++
++      const returnedText = fileExport.convertTableDataToCsv(inputTable, false);
++
++      const expectedText =
++        '"integer_value";"string_value";"float_value";"boolean_value"\r\n' +
++        '123;"some_string";1.234;true\r\n' +
++        '501;"some string with "" in the middle";0.01;false\r\n' +
++        '501;"some string with """" in the middle";0.01;false\r\n' +
++        '501;"some string with """""" in the middle";0.01;false\r\n' +
++        '501;"""some string with "" at the beginning";0.01;false\r\n' +
++        '501;"some string with "" at the end""";0.01;false\r\n' +
++        '291;"some string with \n in the middle";10.01;false\r\n' +
++        '11;"some string with ; in the middle";-12.34;true\r\n' +
++        '123;"some string with ;; in the middle";-12.34;true';
++
++      expect(returnedText).toBe(expectedText);
++    });
++
++    it('should decode HTML encoded characters', function() {
++      const inputTable = {
++        columns: [
++          { text: 'string_value' },
++        ],
++        rows: [
++          ['&quot;&amp;&auml;'],
++          ['<strong>&quot;some html&quot;</strong>'],
++          ['<a href="http://something/index.html">some text</a>']
++        ],
++      };
++
++      const returnedText = fileExport.convertTableDataToCsv(inputTable, false);
++
++      const expectedText =
++        '"string_value"\r\n' +
++        '"""&ä"\r\n' +
++        '"<strong>""some html""</strong>"\r\n' +
++        '"<a href=""http://something/index.html"">some text</a>"';
++
++      expect(returnedText).toBe(expectedText);
++    });
++  });
+ });
+diff --git a/public/app/core/utils/file_export.ts b/public/app/core/utils/file_export.ts
+index 670326fc068..f25d340a0be 100644
+--- a/public/app/core/utils/file_export.ts
++++ b/public/app/core/utils/file_export.ts
+@@ -1,59 +1,108 @@
+-import _ from 'lodash';
++import { isBoolean, isNumber, sortedUniq, sortedIndexOf, unescape as htmlUnescaped } from 'lodash';
+ import moment from 'moment';
+ import { saveAs } from 'file-saver';
++import { isNullOrUndefined } from 'util';
+ 
+ const DEFAULT_DATETIME_FORMAT = 'YYYY-MM-DDTHH:mm:ssZ';
+ const POINT_TIME_INDEX = 1;
+ const POINT_VALUE_INDEX = 0;
+ 
++const END_COLUMN = ';';
++const END_ROW = '\r\n';
++const QUOTE = '"';
++const EXPORT_FILENAME = 'grafana_data_export.csv';
++
++function csvEscaped(text) {
++  if (!text) {
++    return text;
++  }
++
++  return text.split(QUOTE).join(QUOTE + QUOTE);
++}
++
++const domParser = new DOMParser();
++function htmlDecoded(text) {
++  if (!text) {
++    return text;
++  }
++
++  const regexp = /&[^;]+;/g;
++  function htmlDecoded(value) {
++    const parsedDom = domParser.parseFromString(value, 'text/html');
++    return parsedDom.body.textContent;
++  }
++  return text.replace(regexp, htmlDecoded).replace(regexp, htmlDecoded);
++}
++
++function formatSpecialHeader(useExcelHeader) {
++  return useExcelHeader ? `sep=${END_COLUMN}${END_ROW}` : '';
++}
++
++function formatRow(row, addEndRowDelimiter = true) {
++  let text = '';
++  for (let i = 0; i < row.length; i += 1) {
++    if (isBoolean(row[i]) || isNullOrUndefined(row[i])) {
++      text += row[i];
++    } else if (isNumber(row[i])) {
++      text += row[i].toLocaleString();
++    } else {
++      text += `${QUOTE}${csvEscaped(htmlUnescaped(htmlDecoded(row[i])))}${QUOTE}`;
++    }
++
++    if (i < row.length - 1) {
++      text += END_COLUMN;
++    }
++  }
++  return addEndRowDelimiter ? text + END_ROW : text;
++}
++
+ export function convertSeriesListToCsv(seriesList, dateTimeFormat = DEFAULT_DATETIME_FORMAT, excel = false) {
+-  var text = (excel ? 'sep=;\n' : '') + 'Series;Time;Value\n';
+-  _.each(seriesList, function(series) {
+-    _.each(series.datapoints, function(dp) {
+-      text +=
+-        series.alias + ';' + moment(dp[POINT_TIME_INDEX]).format(dateTimeFormat) + ';' + dp[POINT_VALUE_INDEX] + '\n';
+-    });
+-  });
++  let text = formatSpecialHeader(excel) + formatRow(['Series', 'Time', 'Value']);
++  for (let seriesIndex = 0; seriesIndex < seriesList.length; seriesIndex += 1) {
++    for (let i = 0; i < seriesList[seriesIndex].datapoints.length; i += 1) {
++      text += formatRow(
++        [
++          seriesList[seriesIndex].alias,
++          moment(seriesList[seriesIndex].datapoints[i][POINT_TIME_INDEX]).format(dateTimeFormat),
++          seriesList[seriesIndex].datapoints[i][POINT_VALUE_INDEX],
++        ],
++        i < seriesList[seriesIndex].datapoints.length - 1 || seriesIndex < seriesList.length - 1
++      );
++    }
++  }
+   return text;
+ }
+ 
+ export function exportSeriesListToCsv(seriesList, dateTimeFormat = DEFAULT_DATETIME_FORMAT, excel = false) {
+-  var text = convertSeriesListToCsv(seriesList, dateTimeFormat, excel);
+-  saveSaveBlob(text, 'grafana_data_export.csv');
++  let text = convertSeriesListToCsv(seriesList, dateTimeFormat, excel);
++  saveSaveBlob(text, EXPORT_FILENAME);
+ }
+ 
+ export function convertSeriesListToCsvColumns(seriesList, dateTimeFormat = DEFAULT_DATETIME_FORMAT, excel = false) {
+-  let text = (excel ? 'sep=;\n' : '') + 'Time;';
+   // add header
+-  _.each(seriesList, function(series) {
+-    text += series.alias + ';';
+-  });
+-  text = text.substring(0, text.length - 1);
+-  text += '\n';
+-
++  let text =
++    formatSpecialHeader(excel) +
++    formatRow(
++      ['Time'].concat(
++        seriesList.map(function(val) {
++          return val.alias;
++        })
++      )
++    );
+   // process data
+   seriesList = mergeSeriesByTime(seriesList);
+-  var dataArr = [[]];
+-  var sIndex = 1;
+-  _.each(seriesList, function(series) {
+-    var cIndex = 0;
+-    dataArr.push([]);
+-    _.each(series.datapoints, function(dp) {
+-      dataArr[0][cIndex] = moment(dp[POINT_TIME_INDEX]).format(dateTimeFormat);
+-      dataArr[sIndex][cIndex] = dp[POINT_VALUE_INDEX];
+-      cIndex++;
+-    });
+-    sIndex++;
+-  });
+ 
+   // make text
+-  for (var i = 0; i < dataArr[0].length; i++) {
+-    text += dataArr[0][i] + ';';
+-    for (var j = 1; j < dataArr.length; j++) {
+-      text += dataArr[j][i] + ';';
+-    }
+-    text = text.substring(0, text.length - 1);
+-    text += '\n';
++  for (let i = 0; i < seriesList[0].datapoints.length; i += 1) {
++    const timestamp = moment(seriesList[0].datapoints[i][POINT_TIME_INDEX]).format(dateTimeFormat);
++    text += formatRow(
++      [timestamp].concat(
++        seriesList.map(function(series) {
++          return series.datapoints[i][POINT_VALUE_INDEX];
++        })
++      ),
++      i < seriesList[0].datapoints.length - 1
++    );
+   }
+ 
+   return text;
+@@ -71,15 +120,15 @@ function mergeSeriesByTime(seriesList) {
+       timestamps.push(seriesPoints[j][POINT_TIME_INDEX]);
+     }
+   }
+-  timestamps = _.sortedUniq(timestamps.sort());
++  timestamps = sortedUniq(timestamps.sort());
+ 
+   for (let i = 0; i < seriesList.length; i++) {
+     let seriesPoints = seriesList[i].datapoints;
+-    let seriesTimestamps = _.map(seriesPoints, p => p[POINT_TIME_INDEX]);
++    let seriesTimestamps = seriesPoints.map(p => p[POINT_TIME_INDEX]);
+     let extendedSeries = [];
+     let pointIndex;
+     for (let j = 0; j < timestamps.length; j++) {
+-      pointIndex = _.sortedIndexOf(seriesTimestamps, timestamps[j]);
++      pointIndex = sortedIndexOf(seriesTimestamps, timestamps[j]);
+       if (pointIndex !== -1) {
+         extendedSeries.push(seriesPoints[pointIndex]);
+       } else {
+@@ -93,27 +142,26 @@ function mergeSeriesByTime(seriesList) {
+ 
+ export function exportSeriesListToCsvColumns(seriesList, dateTimeFormat = DEFAULT_DATETIME_FORMAT, excel = false) {
+   let text = convertSeriesListToCsvColumns(seriesList, dateTimeFormat, excel);
+-  saveSaveBlob(text, 'grafana_data_export.csv');
++  saveSaveBlob(text, EXPORT_FILENAME);
+ }
+ 
+-export function exportTableDataToCsv(table, excel = false) {
+-  var text = excel ? 'sep=;\n' : '';
+-  // add header
+-  _.each(table.columns, function(column) {
+-    text += (column.title || column.text) + ';';
+-  });
+-  text += '\n';
++export function convertTableDataToCsv(table, excel = false) {
++  let text = formatSpecialHeader(excel);
++  // add headline
++  text += formatRow(table.columns.map(val => val.title || val.text));
+   // process data
+-  _.each(table.rows, function(row) {
+-    _.each(row, function(value) {
+-      text += value + ';';
+-    });
+-    text += '\n';
+-  });
+-  saveSaveBlob(text, 'grafana_data_export.csv');
++  for (let i = 0; i < table.rows.length; i += 1) {
++    text += formatRow(table.rows[i], i < table.rows.length - 1);
++  }
++  return text;
++}
++
++export function exportTableDataToCsv(table, excel = false) {
++  let text = convertTableDataToCsv(table, excel);
++  saveSaveBlob(text, EXPORT_FILENAME);
+ }
+ 
+ export function saveSaveBlob(payload, fname) {
+-  var blob = new Blob([payload], { type: 'text/csv;charset=utf-8' });
++  let blob = new Blob([payload], { type: 'text/csv;charset=utf-8;header=present;' });
+   saveAs(blob, fname);
+ }
+diff --git a/public/app/core/utils/location_util.ts b/public/app/core/utils/location_util.ts
+index f8d6aa4ee5f..735272285ff 100644
+--- a/public/app/core/utils/location_util.ts
++++ b/public/app/core/utils/location_util.ts
+@@ -1,6 +1,11 @@
+ import config from 'app/core/config';
+ 
+-const _stripBaseFromUrl = url => {
++// Slash encoding for angular location provider, see https://github.com/angular/angular.js/issues/10479
++const SLASH = '<SLASH>';
++export const decodePathComponent = (pc: string) => decodeURIComponent(pc).replace(new RegExp(SLASH, 'g'), '/');
++export const encodePathComponent = (pc: string) => encodeURIComponent(pc.replace(/\//g, SLASH));
++
++export const stripBaseFromUrl = url => {
+   const appSubUrl = config.appSubUrl;
+   const stripExtraChars = appSubUrl.endsWith('/') ? 1 : 0;
+   const urlWithoutBase =
+@@ -9,6 +14,4 @@ const _stripBaseFromUrl = url => {
+   return urlWithoutBase;
+ };
+ 
+-export default {
+-  stripBaseFromUrl: _stripBaseFromUrl,
+-};
++export default { stripBaseFromUrl };
+diff --git a/public/app/features/panel/metrics_panel_ctrl.ts b/public/app/features/panel/metrics_panel_ctrl.ts
+index 9e9598e1732..acf46a193e8 100644
+--- a/public/app/features/panel/metrics_panel_ctrl.ts
++++ b/public/app/features/panel/metrics_panel_ctrl.ts
+@@ -6,6 +6,7 @@ import { PanelCtrl } from 'app/features/panel/panel_ctrl';
+ 
+ import * as rangeUtil from 'app/core/utils/rangeutil';
+ import * as dateMath from 'app/core/utils/datemath';
++import { encodePathComponent } from 'app/core/utils/location_util';
+ 
+ import { metricsTabDirective } from './metrics_tab';
+ 
+@@ -309,6 +310,24 @@ class MetricsPanelCtrl extends PanelCtrl {
+     this.refresh();
+   }
+ 
++  getAdditionalMenuItems() {
++    const items = [];
++    if (this.datasource.supportsExplore) {
++      items.push({
++        text: 'Explore',
++        click: 'ctrl.explore();',
++        icon: 'fa fa-fw fa-rocket',
++        shortcut: 'x',
++      });
++    }
++    return items;
++  }
++
++  explore() {
++    const exploreState = encodePathComponent(JSON.stringify(this.datasource.getExploreState(this.panel)));
++    this.$location.url(`/explore/${exploreState}`);
++  }
++
+   addQuery(target) {
+     target.refId = this.dashboard.getNextQueryLetter(this.panel);
+ 
+diff --git a/public/app/features/panel/panel_ctrl.ts b/public/app/features/panel/panel_ctrl.ts
+index da8adc4f908..67725ec5fec 100644
+--- a/public/app/features/panel/panel_ctrl.ts
++++ b/public/app/features/panel/panel_ctrl.ts
+@@ -22,6 +22,7 @@ export class PanelCtrl {
+   editorTabs: any;
+   $scope: any;
+   $injector: any;
++  $location: any;
+   $timeout: any;
+   fullscreen: boolean;
+   inspector: any;
+@@ -35,6 +36,7 @@ export class PanelCtrl {
+ 
+   constructor($scope, $injector) {
+     this.$injector = $injector;
++    this.$location = $injector.get('$location');
+     this.$scope = $scope;
+     this.$timeout = $injector.get('$timeout');
+     this.editorTabIndex = 0;
+@@ -161,6 +163,9 @@ export class PanelCtrl {
+       shortcut: 'p s',
+     });
+ 
++    // Additional items from sub-class
++    menu.push(...this.getAdditionalMenuItems());
++
+     let extendedMenu = this.getExtendedMenu();
+     menu.push({
+       text: 'More ...',
+@@ -209,6 +214,11 @@ export class PanelCtrl {
+     return menu;
+   }
+ 
++  // Override in sub-class to add items before extended menu
++  getAdditionalMenuItems() {
++    return [];
++  }
++
+   otherPanelInFullscreenMode() {
+     return this.dashboard.meta.fullscreen && !this.fullscreen;
+   }
+diff --git a/public/app/features/templating/specs/template_srv.jest.ts b/public/app/features/templating/specs/template_srv.jest.ts
+index 5290a883c48..59915776b4f 100644
+--- a/public/app/features/templating/specs/template_srv.jest.ts
++++ b/public/app/features/templating/specs/template_srv.jest.ts
+@@ -136,6 +136,11 @@ describe('templateSrv', function() {
+       var target = _templateSrv.replace('this=${test:pipe}', {});
+       expect(target).toBe('this=value1|value2');
+     });
++
++    it('should replace ${test:pipe} with piped value and $test with globbed value', function() {
++      var target = _templateSrv.replace('${test:pipe},$test', {}, 'glob');
++      expect(target).toBe('value1|value2,{value1,value2}');
++    });
+   });
+ 
+   describe('variable with all option', function() {
+@@ -164,6 +169,11 @@ describe('templateSrv', function() {
+       var target = _templateSrv.replace('this.${test:glob}.filters', {});
+       expect(target).toBe('this.{value1,value2}.filters');
+     });
++
++    it('should replace ${test:pipe} with piped value and $test with globbed value', function() {
++      var target = _templateSrv.replace('${test:pipe},$test', {}, 'glob');
++      expect(target).toBe('value1|value2,{value1,value2}');
++    });
+   });
+ 
+   describe('variable with all option and custom value', function() {
+diff --git a/public/app/features/templating/template_srv.ts b/public/app/features/templating/template_srv.ts
+index f6274a80165..e7c1dc7f102 100644
+--- a/public/app/features/templating/template_srv.ts
++++ b/public/app/features/templating/template_srv.ts
+@@ -179,16 +179,16 @@ export class TemplateSrv {
+       return target;
+     }
+ 
+-    var variable, systemValue, value;
++    var variable, systemValue, value, fmt;
+     this.regex.lastIndex = 0;
+ 
+     return target.replace(this.regex, (match, var1, var2, fmt2, var3, fmt3) => {
+       variable = this.index[var1 || var2 || var3];
+-      format = fmt2 || fmt3 || format;
++      fmt = fmt2 || fmt3 || format;
+       if (scopedVars) {
+         value = scopedVars[var1 || var2 || var3];
+         if (value) {
+-          return this.formatValue(value.value, format, variable);
++          return this.formatValue(value.value, fmt, variable);
+         }
+       }
+ 
+@@ -198,7 +198,7 @@ export class TemplateSrv {
+ 
+       systemValue = this.grafanaVariables[variable.current.value];
+       if (systemValue) {
+-        return this.formatValue(systemValue, format, variable);
++        return this.formatValue(systemValue, fmt, variable);
+       }
+ 
+       value = variable.current.value;
+@@ -210,7 +210,7 @@ export class TemplateSrv {
+         }
+       }
+ 
+-      var res = this.formatValue(value, format, variable);
++      var res = this.formatValue(value, fmt, variable);
+       return res;
+     });
+   }
+diff --git a/public/app/plugins/datasource/prometheus/datasource.ts b/public/app/plugins/datasource/prometheus/datasource.ts
+index 2a8b3069a53..1820cb1306d 100644
+--- a/public/app/plugins/datasource/prometheus/datasource.ts
++++ b/public/app/plugins/datasource/prometheus/datasource.ts
+@@ -19,6 +19,7 @@ export class PrometheusDatasource {
+   type: string;
+   editorSrc: string;
+   name: string;
++  supportsExplore: boolean;
+   supportMetrics: boolean;
+   url: string;
+   directUrl: string;
+@@ -34,6 +35,7 @@ export class PrometheusDatasource {
+     this.type = 'prometheus';
+     this.editorSrc = 'app/features/prometheus/partials/query.editor.html';
+     this.name = instanceSettings.name;
++    this.supportsExplore = true;
+     this.supportMetrics = true;
+     this.url = instanceSettings.url;
+     this.directUrl = instanceSettings.directUrl;
+@@ -153,6 +155,7 @@ export class PrometheusDatasource {
+           end: end,
+           responseListLength: responseList.length,
+           responseIndex: index,
++          refId: activeTargets[index].refId,
+         };
+ 
+         this.resultTransformer.transform(result, response, transformerOptions);
+@@ -323,6 +326,21 @@ export class PrometheusDatasource {
+     });
+   }
+ 
++  getExploreState(panel) {
++    let state = {};
++    if (panel.targets) {
++      const queries = panel.targets.map(t => ({
++        query: this.templateSrv.replace(t.expr, {}, this.interpolateQueryExpr),
++        format: t.format,
++      }));
++      state = {
++        ...state,
++        queries,
++      };
++    }
++    return state;
++  }
++
+   getPrometheusTime(date, roundUp) {
+     if (_.isString(date)) {
+       date = dateMath.parse(date, roundUp);
+diff --git a/public/app/plugins/datasource/prometheus/result_transformer.ts b/public/app/plugins/datasource/prometheus/result_transformer.ts
+index 6d97b783983..d5feda7d28c 100644
+--- a/public/app/plugins/datasource/prometheus/result_transformer.ts
++++ b/public/app/plugins/datasource/prometheus/result_transformer.ts
+@@ -8,7 +8,7 @@ export class ResultTransformer {
+     let prometheusResult = response.data.data.result;
+ 
+     if (options.format === 'table') {
+-      result.push(this.transformMetricDataToTable(prometheusResult, options.responseListLength, options.responseIndex));
++      result.push(this.transformMetricDataToTable(prometheusResult, options.responseListLength, options.refId));
+     } else if (options.format === 'heatmap') {
+       let seriesList = [];
+       prometheusResult.sort(sortSeriesByLabel);
+@@ -58,7 +58,7 @@ export class ResultTransformer {
+     return { target: metricLabel, datapoints: dps };
+   }
+ 
+-  transformMetricDataToTable(md, resultCount: number, resultIndex: number) {
++  transformMetricDataToTable(md, resultCount: number, refId: string) {
+     var table = new TableModel();
+     var i, j;
+     var metricLabels = {};
+@@ -83,7 +83,7 @@ export class ResultTransformer {
+       metricLabels[label] = labelIndex + 1;
+       table.columns.push({ text: label });
+     });
+-    let valueText = resultCount > 1 ? `Value #${String.fromCharCode(65 + resultIndex)}` : 'Value';
++    let valueText = resultCount > 1 ? `Value #${refId}` : 'Value';
+     table.columns.push({ text: valueText });
+ 
+     // Populate rows, set value to empty string when label not present.
+diff --git a/public/app/plugins/datasource/prometheus/specs/result_transformer.jest.ts b/public/app/plugins/datasource/prometheus/specs/result_transformer.jest.ts
+index abcc46d7ea8..64b983fc8a7 100644
+--- a/public/app/plugins/datasource/prometheus/specs/result_transformer.jest.ts
++++ b/public/app/plugins/datasource/prometheus/specs/result_transformer.jest.ts
+@@ -47,6 +47,18 @@ describe('Prometheus Result Transformer', () => {
+         { text: 'Value' },
+       ]);
+     });
++
++    it('should column title include refId if response count is more than 2', () => {
++      var table = ctx.resultTransformer.transformMetricDataToTable(response.data.result, 2, "B");
++      expect(table.type).toBe('table');
++      expect(table.columns).toEqual([
++        { text: 'Time', type: 'time' },
++        { text: '__name__' },
++        { text: 'instance' },
++        { text: 'job' },
++        { text: 'Value #B' },
++      ]);
++    });
+   });
+ 
+   describe('When resultFormat is table and instant = true', () => {
+diff --git a/public/app/plugins/panel/pluginlist/module.ts b/public/app/plugins/panel/pluginlist/module.ts
+index e97b1a8fbf9..acfa69b171c 100644
+--- a/public/app/plugins/panel/pluginlist/module.ts
++++ b/public/app/plugins/panel/pluginlist/module.ts
+@@ -12,7 +12,7 @@ class PluginListCtrl extends PanelCtrl {
+   panelDefaults = {};
+ 
+   /** @ngInject */
+-  constructor($scope, $injector, private backendSrv, private $location) {
++  constructor($scope, $injector, private backendSrv) {
+     super($scope, $injector);
+ 
+     _.defaults(this.panel, this.panelDefaults);
+diff --git a/public/app/plugins/panel/singlestat/module.ts b/public/app/plugins/panel/singlestat/module.ts
+index c7f523a9591..28d3f308d68 100644
+--- a/public/app/plugins/panel/singlestat/module.ts
++++ b/public/app/plugins/panel/singlestat/module.ts
+@@ -77,7 +77,7 @@ class SingleStatCtrl extends MetricsPanelCtrl {
+   };
+ 
+   /** @ngInject */
+-  constructor($scope, $injector, private $location, private linkSrv) {
++  constructor($scope, $injector, private linkSrv) {
+     super($scope, $injector);
+     _.defaults(this.panel, this.panelDefaults);
+ 
+diff --git a/public/app/plugins/panel/table/module.ts b/public/app/plugins/panel/table/module.ts
+index 51caed86c25..03d92f7e48f 100644
+--- a/public/app/plugins/panel/table/module.ts
++++ b/public/app/plugins/panel/table/module.ts
+@@ -154,6 +154,11 @@ class TablePanelCtrl extends MetricsPanelCtrl {
+     this.render();
+   }
+ 
++  moveQuery(target, direction) {
++    super.moveQuery(target, direction);
++    super.refresh();
++  }
++
+   exportCsv() {
+     var scope = this.$scope.$new(true);
+     scope.tableData = this.renderer.render_values();
+diff --git a/public/app/routes/ReactContainer.tsx b/public/app/routes/ReactContainer.tsx
+index d6d34372090..db6938cc878 100644
+--- a/public/app/routes/ReactContainer.tsx
++++ b/public/app/routes/ReactContainer.tsx
+@@ -29,6 +29,7 @@ export function reactContainer($route, $location, backendSrv: BackendSrv, dataso
+       const props = {
+         backendSrv: backendSrv,
+         datasourceSrv: datasourceSrv,
++        routeParams: $route.current.params,
+       };
+ 
+       ReactDOM.render(WrapInProvider(store, component, props), elem[0]);
+diff --git a/public/app/routes/routes.ts b/public/app/routes/routes.ts
+index 49690561728..6a61315f956 100644
+--- a/public/app/routes/routes.ts
++++ b/public/app/routes/routes.ts
+@@ -111,7 +111,7 @@ export function setupAngularRoutes($routeProvider, $locationProvider) {
+       controller: 'FolderDashboardsCtrl',
+       controllerAs: 'ctrl',
+     })
+-    .when('/explore', {
++    .when('/explore/:initial?', {
+       template: '<react-container />',
+       resolve: {
+         component: () => import(/* webpackChunkName: "explore" */ 'app/containers/Explore/Explore'),
+diff --git a/public/sass/components/_form_select_box.scss b/public/sass/components/_form_select_box.scss
+index beee2db15ab..0401f06eba8 100644
+--- a/public/sass/components/_form_select_box.scss
++++ b/public/sass/components/_form_select_box.scss
+@@ -102,5 +102,6 @@ $select-option-selected-bg: $dropdownLinkBackgroundActive;
+ .gf-form-input--form-dropdown-right {
+   .Select-menu-outer {
+     right: 0;
++    left: unset;
+   }
+ }
+diff --git a/public/sass/components/_timepicker.scss b/public/sass/components/_timepicker.scss
+index 2d7a12c3d01..e4d8f4555e0 100644
+--- a/public/sass/components/_timepicker.scss
++++ b/public/sass/components/_timepicker.scss
+@@ -71,21 +71,29 @@
+   td {
+     padding: 1px;
+   }
+-  button.btn-sm {
++  button {
+     @include buttonBackground($btn-inverse-bg, $btn-inverse-bg-hl);
+-    font-size: $font-size-sm;
+     background-image: none;
+     border: none;
+-    padding: 5px 11px;
+     color: $text-color;
+     &.active span {
+-      color: $blue;
++      color: $query-blue;
+       font-weight: bold;
+     }
+     .text-info {
+       color: $orange;
+       font-weight: bold;
+     }
++    &.btn-sm {
++      font-size: $font-size-sm;
++      padding: 5px 11px;
++    }
++    &:hover {
++      color: $text-color-strong;
++    }
++    &[disabled] {
++      color: $text-color;
++    }
+   }
+ }
+ 
+@@ -103,10 +111,10 @@
+ }
+ 
+ .fa-chevron-left::before {
+-  content: "\f053";
++  content: '\f053';
+ }
+ .fa-chevron-right::before {
+-  content: "\f054";
++  content: '\f054';
+ }
+ 
+ .glyphicon-chevron-right {
+diff --git a/public/sass/pages/_dashboard.scss b/public/sass/pages/_dashboard.scss
+index cf32522df7f..471e90ed9cf 100644
+--- a/public/sass/pages/_dashboard.scss
++++ b/public/sass/pages/_dashboard.scss
+@@ -44,7 +44,8 @@ div.flot-text {
+   padding: $panel-padding;
+   height: calc(100% - 27px);
+   position: relative;
+-  overflow: hidden;
++  // Fixes scrolling on mobile devices
++  overflow: auto;
+ }
+ 
+ .panel-title-container {
+diff --git a/scripts/webpack/webpack.common.js b/scripts/webpack/webpack.common.js
+index c2909b1c8d3..01ef1bc56d3 100644
+--- a/scripts/webpack/webpack.common.js
++++ b/scripts/webpack/webpack.common.js
+@@ -12,7 +12,7 @@ module.exports = {
+   output: {
+     path: path.resolve(__dirname, '../../public/build'),
+     filename: '[name].[hash].js',
+-    publicPath: "/public/build/",
++    publicPath: "public/build/",
+   },
+   resolve: {
+     extensions: ['.ts', '.tsx', '.es6', '.js', '.json'],
+diff --git a/scripts/webpack/webpack.dev.js b/scripts/webpack/webpack.dev.js
+index 26af661bf9d..a2c60cf15c4 100644
+--- a/scripts/webpack/webpack.dev.js
++++ b/scripts/webpack/webpack.dev.js
+@@ -85,7 +85,7 @@ module.exports = merge(common, {
+         ]
+       },
+       require('./sass.rule.js')({
+-        sourceMap: true, minimize: false, preserveUrl: true
++        sourceMap: true, minimize: false, preserveUrl: false
+       }, extractSass),
+       {
+         test: /\.(ttf|eot|svg|woff(2)?)(\?[a-z0-9=&.]+)?$/,

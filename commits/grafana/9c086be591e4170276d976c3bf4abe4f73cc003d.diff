@@ -1,0 +1,2787 @@
+commit 9c086be591e4170276d976c3bf4abe4f73cc003d (from f7170829ce22a512cd87106e802ff34cf8101ce6)
+Merge: f7170829ce2 2325c5dbedd
+Author: ryan <ryantxu@gmail.com>
+Date:   Wed Dec 19 11:35:44 2018 -0800
+
+    Merge remote-tracking branch 'grafana/master'
+    
+    * grafana/master: (41 commits)
+      Fixes undefined issue with angular panels and editorTabs
+      changelog: adds note about closing #14562
+      Update field name
+      Add documentation
+      Rename the setting and add description
+      export init notifier func
+      Increase recent and starred limit in search and home dashboard, closes #13950
+      changelog: adds note about closing #14486
+      Panel help view fixes
+      Add min/max height when resizing and replace debounce with throttle
+      changelog: adds note about closing #14546
+      Adding tests for auth proxy CIDR support
+      changelog: adds note about closing #14109
+      fix signed in user for orgId=0 result should return active org id
+      Another take on resizing the panel, now using react-draggable
+      Raise datasources number to 5000
+      copy props to state to make it visible in the view
+      refactor to not crash when no links
+      updating snaps
+      renaming component
+      ...
+
+diff --git a/.circleci/config.yml b/.circleci/config.yml
+index 3dd8f800b94..dba6c5f8bd0 100644
+--- a/.circleci/config.yml
++++ b/.circleci/config.yml
+@@ -19,7 +19,7 @@ version: 2
+ jobs:
+   mysql-integration-test:
+     docker:
+-      - image: circleci/golang:1.11
++      - image: circleci/golang:1.11.4
+       - image: circleci/mysql:5.6-ram
+         environment:
+           MYSQL_ROOT_PASSWORD: rootpass
+@@ -39,7 +39,7 @@ jobs:
+ 
+   postgres-integration-test:
+     docker:
+-      - image: circleci/golang:1.11
++      - image: circleci/golang:1.11.4
+       - image: circleci/postgres:9.3-ram
+         environment:
+           POSTGRES_USER: grafanatest
+@@ -74,7 +74,7 @@ jobs:
+ 
+   gometalinter:
+     docker:
+-      - image: circleci/golang:1.11
++      - image: circleci/golang:1.11.4
+         environment:
+           # we need CGO because of go-sqlite3
+           CGO_ENABLED: 1
+@@ -117,7 +117,7 @@ jobs:
+ 
+   test-backend:
+     docker:
+-      - image: circleci/golang:1.11
++      - image: circleci/golang:1.11.4
+     working_directory: /go/src/github.com/grafana/grafana
+     steps:
+       - checkout
+@@ -175,7 +175,7 @@ jobs:
+ 
+   build:
+     docker:
+-     - image: grafana/build-container:1.2.1
++     - image: grafana/build-container:1.2.2
+     working_directory: /go/src/github.com/grafana/grafana
+     steps:
+       - checkout
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 92366849a44..5b420dcc374 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,7 @@
+ 
+ ### New Features
+ * **Alerting**: Adds support for Google Hangouts Chat notifications [#11221](https://github.com/grafana/grafana/issues/11221), thx [@PatrickSchuster](https://github.com/PatrickSchuster)
++* **Snapshots**: Enable deletion of public snapshot [#14109](https://github.com/grafana/grafana/issues/14109)
+ 
+ ### Minor
+ 
+@@ -13,6 +14,11 @@
+ * **Templating**: Escaping "Custom" template variables [#13754](https://github.com/grafana/grafana/issues/13754), thx [@IntegersOfK](https://github.com/IntegersOfK)
+ * **Admin**: When multiple user invitations, all links are the same as the first user who was invited [#14483](https://github.com/grafana/grafana/issues/14483)
+ * **LDAP**: Upgrade go-ldap to v3 [#14548](https://github.com/grafana/grafana/issues/14548)
++* **Proxy whitelist**: Add CIDR capability to auth_proxy whitelist [#14546](https://github.com/grafana/grafana/issues/14546), thx [@jacobrichard](https://github.com/jacobrichard)
++* **OAuth**: Support OAuth providers that are not RFC6749 compliant [#14562](https://github.com/grafana/grafana/issues/14562), thx [@tdabasinskas](https://github.com/tdabasinskas)
++
++### Bug fixes
++* **Search**: Fix for issue with scrolling the "tags filter" dropdown, fixes [#14486](https://github.com/grafana/grafana/issues/14486)
+ 
+ # 5.4.2 (2018-12-13)
+ 
+diff --git a/Dockerfile b/Dockerfile
+index 65260e1a6a8..c3af89b6092 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,5 +1,5 @@
+ # Golang build container
+-FROM golang:1.11
++FROM golang:1.11.4
+ 
+ WORKDIR $GOPATH/src/github.com/grafana/grafana
+ 
+diff --git a/README.md b/README.md
+index 03fe840d5f1..1ce4ffbe109 100644
+--- a/README.md
++++ b/README.md
+@@ -90,7 +90,7 @@ Choose this option to build on platforms other than linux/amd64 and/or not have
+ 
+ The resulting image will be tagged as `grafana/grafana:dev`
+ 
+-Notice: If you are using Docker for MacOS, be sure to let limit of Memory bigger than 2 GiB (at docker -> Perferences -> Advanced), otherwize you may faild at `grunt build`
++Notice: If you are using Docker for MacOS, be sure to let limit of Memory bigger than 2 GiB (at docker -> Preferences -> Advanced), otherwize you may faild at `grunt build`
+ 
+ ### Dev config
+ 
+diff --git a/appveyor.yml b/appveyor.yml
+index 4bbd3668e19..5f97784dd38 100644
+--- a/appveyor.yml
++++ b/appveyor.yml
+@@ -7,7 +7,7 @@ clone_folder: c:\gopath\src\github.com\grafana\grafana
+ environment:
+   nodejs_version: "8"
+   GOPATH: C:\gopath
+-  GOVERSION: 1.11
++  GOVERSION: 1.11.4
+ 
+ install:
+   - rmdir c:\go /s /q
+diff --git a/conf/defaults.ini b/conf/defaults.ini
+index 2ef2ad7942a..97c87edb8b2 100644
+--- a/conf/defaults.ini
++++ b/conf/defaults.ini
+@@ -335,6 +335,7 @@ tls_skip_verify_insecure = false
+ tls_client_cert =
+ tls_client_key =
+ tls_client_ca =
++send_client_credentials_via_post = false
+ 
+ #################################### Basic Auth ##########################
+ [auth.basic]
+diff --git a/conf/sample.ini b/conf/sample.ini
+index ba65727dc4b..473e4e8450c 100644
+--- a/conf/sample.ini
++++ b/conf/sample.ini
+@@ -284,6 +284,10 @@ log_queries =
+ ;tls_client_key =
+ ;tls_client_ca =
+ 
++; Set to true to enable sending client_id and client_secret via POST body instead of Basic authentication HTTP header
++; This might be required if the OAuth provider is not RFC6749 compliant, only supporting credentials passed via POST payload
++;send_client_credentials_via_post = false
++
+ #################################### Grafana.com Auth ####################
+ [auth.grafana_com]
+ ;enabled = false
+diff --git a/docs/sources/auth/generic-oauth.md b/docs/sources/auth/generic-oauth.md
+index 6fa6531fc98..c3c44426ba7 100644
+--- a/docs/sources/auth/generic-oauth.md
++++ b/docs/sources/auth/generic-oauth.md
+@@ -17,7 +17,7 @@ can find examples using Okta, BitBucket, OneLogin and Azure.
+ 
+ This callback URL must match the full HTTP address that you use in your browser to access Grafana, but with the prefix path of `/login/generic_oauth`.
+ 
+-You may have to set the `root_url` option of `[server]` for the callback URL to be 
++You may have to set the `root_url` option of `[server]` for the callback URL to be
+ correct. For example in case you are serving Grafana behind a proxy.
+ 
+ Example config:
+@@ -209,6 +209,17 @@ allowed_organizations =
+     token_url = https://<your domain>.my.centrify.com/OAuth2/Token/<Application ID>
+     ```
+ 
++## Set up OAuth2 with non-compliant providers
++
++Some OAuth2 providers might not support `client_id` and `client_secret` passed via Basic Authentication HTTP header, which
++results in `invalid_client` error. To allow Grafana to authenticate via these type of providers, the client identifiers must be
++send via POST body, which can be enabled via the following settings:
++
++    ```bash
++    [auth.generic_oauth]
++    send_client_credentials_via_post = true
++    ```
++
+ <hr>
+ 
+ 
+diff --git a/pkg/api/dashboard_snapshot.go b/pkg/api/dashboard_snapshot.go
+index e4e9c9d040f..ca7e78a58cd 100644
+--- a/pkg/api/dashboard_snapshot.go
++++ b/pkg/api/dashboard_snapshot.go
+@@ -1,10 +1,15 @@
+ package api
+ 
+ import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"net/http"
+ 	"time"
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
++	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	"github.com/grafana/grafana/pkg/metrics"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+@@ -12,6 +17,11 @@ import (
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
++var client = &http.Client{
++	Timeout:   time.Second * 5,
++	Transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
++}
++
+ func GetSharingOptions(c *m.ReqContext) {
+ 	c.JSON(200, util.DynMap{
+ 		"externalSnapshotURL":  setting.ExternalSnapshotUrl,
+@@ -20,26 +30,79 @@ func GetSharingOptions(c *m.ReqContext) {
+ 	})
+ }
+ 
++type CreateExternalSnapshotResponse struct {
++	Key       string `json:"key"`
++	DeleteKey string `json:"deleteKey"`
++	Url       string `json:"url"`
++	DeleteUrl string `json:"deleteUrl"`
++}
++
++func createExternalDashboardSnapshot(cmd m.CreateDashboardSnapshotCommand) (*CreateExternalSnapshotResponse, error) {
++	var createSnapshotResponse CreateExternalSnapshotResponse
++	message := map[string]interface{}{
++		"name":      cmd.Name,
++		"expires":   cmd.Expires,
++		"dashboard": cmd.Dashboard,
++	}
++
++	messageBytes, err := simplejson.NewFromAny(message).Encode()
++	if err != nil {
++		return nil, err
++	}
++
++	response, err := client.Post(setting.ExternalSnapshotUrl+"/api/snapshots", "application/json", bytes.NewBuffer(messageBytes))
++	if err != nil {
++		return nil, err
++	}
++	defer response.Body.Close()
++
++	if response.StatusCode != 200 {
++		return nil, fmt.Errorf("Create external snapshot response status code %d", response.StatusCode)
++	}
++
++	if err := json.NewDecoder(response.Body).Decode(&createSnapshotResponse); err != nil {
++		return nil, err
++	}
++
++	return &createSnapshotResponse, nil
++}
++
++// POST /api/snapshots
+ func CreateDashboardSnapshot(c *m.ReqContext, cmd m.CreateDashboardSnapshotCommand) {
+ 	if cmd.Name == "" {
+ 		cmd.Name = "Unnamed snapshot"
+ 	}
+ 
++	var url string
++	cmd.ExternalUrl = ""
++	cmd.OrgId = c.OrgId
++	cmd.UserId = c.UserId
++
+ 	if cmd.External {
+-		// external snapshot ref requires key and delete key
+-		if cmd.Key == "" || cmd.DeleteKey == "" {
+-			c.JsonApiErr(400, "Missing key and delete key for external snapshot", nil)
++		if !setting.ExternalEnabled {
++			c.JsonApiErr(403, "External dashboard creation is disabled", nil)
++			return
++		}
++
++		response, err := createExternalDashboardSnapshot(cmd)
++		if err != nil {
++			c.JsonApiErr(500, "Failed to create external snaphost", err)
+ 			return
+ 		}
+ 
+-		cmd.OrgId = -1
+-		cmd.UserId = -1
++		url = response.Url
++		cmd.Key = response.Key
++		cmd.DeleteKey = response.DeleteKey
++		cmd.ExternalUrl = response.Url
++		cmd.ExternalDeleteUrl = response.DeleteUrl
++		cmd.Dashboard = simplejson.New()
++
+ 		metrics.M_Api_Dashboard_Snapshot_External.Inc()
+ 	} else {
+ 		cmd.Key = util.GetRandomString(32)
+ 		cmd.DeleteKey = util.GetRandomString(32)
+-		cmd.OrgId = c.OrgId
+-		cmd.UserId = c.UserId
++		url = setting.ToAbsUrl("dashboard/snapshot/" + cmd.Key)
++
+ 		metrics.M_Api_Dashboard_Snapshot_Create.Inc()
+ 	}
+ 
+@@ -51,7 +114,7 @@ func CreateDashboardSnapshot(c *m.ReqContext, cmd m.CreateDashboardSnapshotComma
+ 	c.JSON(200, util.DynMap{
+ 		"key":       cmd.Key,
+ 		"deleteKey": cmd.DeleteKey,
+-		"url":       setting.ToAbsUrl("dashboard/snapshot/" + cmd.Key),
++		"url":       url,
+ 		"deleteUrl": setting.ToAbsUrl("api/snapshots-delete/" + cmd.DeleteKey),
+ 	})
+ }
+@@ -91,6 +154,33 @@ func GetDashboardSnapshot(c *m.ReqContext) {
+ 	c.JSON(200, dto)
+ }
+ 
++func deleteExternalDashboardSnapshot(externalUrl string) error {
++	response, err := client.Get(externalUrl)
++	if err != nil {
++		return err
++	}
++	defer response.Body.Close()
++
++	if response.StatusCode == 200 {
++		return nil
++	}
++
++	// Gracefully ignore "snapshot not found" errors as they could have already
++	// been removed either via the cleanup script or by request.
++	if response.StatusCode == 500 {
++		var respJson map[string]interface{}
++		if err := json.NewDecoder(response.Body).Decode(&respJson); err != nil {
++			return err
++		}
++
++		if respJson["message"] == "Failed to get dashboard snapshot" {
++			return nil
++		}
++	}
++
++	return fmt.Errorf("Unexpected response when deleting external snapshot. Status code: %d", response.StatusCode)
++}
++
+ // GET /api/snapshots-delete/:deleteKey
+ func DeleteDashboardSnapshotByDeleteKey(c *m.ReqContext) Response {
+ 	key := c.Params(":deleteKey")
+@@ -102,6 +192,13 @@ func DeleteDashboardSnapshotByDeleteKey(c *m.ReqContext) Response {
+ 		return Error(500, "Failed to get dashboard snapshot", err)
+ 	}
+ 
++	if query.Result.External {
++		err := deleteExternalDashboardSnapshot(query.Result.ExternalDeleteUrl)
++		if err != nil {
++			return Error(500, "Failed to delete external dashboard", err)
++		}
++	}
++
+ 	cmd := &m.DeleteDashboardSnapshotCommand{DeleteKey: query.Result.DeleteKey}
+ 
+ 	if err := bus.Dispatch(cmd); err != nil {
+@@ -138,6 +235,13 @@ func DeleteDashboardSnapshot(c *m.ReqContext) Response {
+ 		return Error(403, "Access denied to this snapshot", nil)
+ 	}
+ 
++	if query.Result.External {
++		err := deleteExternalDashboardSnapshot(query.Result.ExternalDeleteUrl)
++		if err != nil {
++			return Error(500, "Failed to delete external dashboard", err)
++		}
++	}
++
+ 	cmd := &m.DeleteDashboardSnapshotCommand{DeleteKey: query.Result.DeleteKey}
+ 
+ 	if err := bus.Dispatch(cmd); err != nil {
+diff --git a/pkg/api/dashboard_snapshot_test.go b/pkg/api/dashboard_snapshot_test.go
+index e58f2c4712d..a24d0f38d85 100644
+--- a/pkg/api/dashboard_snapshot_test.go
++++ b/pkg/api/dashboard_snapshot_test.go
+@@ -1,6 +1,9 @@
+ package api
+ 
+ import (
++	"fmt"
++	"net/http"
++	"net/http/httptest"
+ 	"testing"
+ 	"time"
+ 
+@@ -13,13 +16,17 @@ import (
+ 
+ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 	Convey("Given a single snapshot", t, func() {
++		var externalRequest *http.Request
+ 		jsonModel, _ := simplejson.NewJson([]byte(`{"id":100}`))
+ 
+ 		mockSnapshotResult := &m.DashboardSnapshot{
+ 			Id:        1,
++			Key:       "12345",
++			DeleteKey: "54321",
+ 			Dashboard: jsonModel,
+ 			Expires:   time.Now().Add(time.Duration(1000) * time.Second),
+ 			UserId:    999999,
++			External:  true,
+ 		}
+ 
+ 		bus.AddHandler("test", func(query *m.GetDashboardSnapshotQuery) error {
+@@ -45,13 +52,25 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 			return nil
+ 		})
+ 
++		setupRemoteServer := func(fn func(http.ResponseWriter, *http.Request)) *httptest.Server {
++			return httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
++				fn(rw, r)
++			}))
++		}
++
+ 		Convey("When user has editor role and is not in the ACL", func() {
+ 			Convey("Should not be able to delete snapshot", func() {
+ 				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						externalRequest = req
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
+ 					sc.handlerFunc = DeleteDashboardSnapshot
+ 					sc.fakeReqWithParams("DELETE", sc.url, map[string]string{"key": "12345"}).exec()
+ 
+ 					So(sc.resp.Code, ShouldEqual, 403)
++					So(externalRequest, ShouldBeNil)
+ 				})
+ 			})
+ 		})
+@@ -59,6 +78,12 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 		Convey("When user is anonymous", func() {
+ 			Convey("Should be able to delete snapshot by deleteKey", func() {
+ 				anonymousUserScenario("When calling GET on", "GET", "/api/snapshots-delete/12345", "/api/snapshots-delete/:deleteKey", func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						rw.WriteHeader(200)
++						externalRequest = req
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
+ 					sc.handlerFunc = DeleteDashboardSnapshotByDeleteKey
+ 					sc.fakeReqWithParams("GET", sc.url, map[string]string{"deleteKey": "12345"}).exec()
+ 
+@@ -67,6 +92,10 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 					So(err, ShouldBeNil)
+ 
+ 					So(respJSON.Get("message").MustString(), ShouldStartWith, "Snapshot deleted")
++
++					So(externalRequest.Method, ShouldEqual, http.MethodGet)
++					So(fmt.Sprintf("http://%s", externalRequest.Host), ShouldEqual, ts.URL)
++					So(externalRequest.URL.EscapedPath(), ShouldEqual, "/")
+ 				})
+ 			})
+ 		})
+@@ -79,6 +108,12 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 
+ 			Convey("Should be able to delete a snapshot", func() {
+ 				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						rw.WriteHeader(200)
++						externalRequest = req
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
+ 					sc.handlerFunc = DeleteDashboardSnapshot
+ 					sc.fakeReqWithParams("DELETE", sc.url, map[string]string{"key": "12345"}).exec()
+ 
+@@ -87,6 +122,8 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 					So(err, ShouldBeNil)
+ 
+ 					So(respJSON.Get("message").MustString(), ShouldStartWith, "Snapshot deleted")
++					So(fmt.Sprintf("http://%s", externalRequest.Host), ShouldEqual, ts.URL)
++					So(externalRequest.URL.EscapedPath(), ShouldEqual, "/")
+ 				})
+ 			})
+ 		})
+@@ -94,6 +131,7 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 		Convey("When user is editor and is the creator of the snapshot", func() {
+ 			aclMockResp = []*m.DashboardAclInfoDTO{}
+ 			mockSnapshotResult.UserId = TestUserID
++			mockSnapshotResult.External = false
+ 
+ 			Convey("Should be able to delete a snapshot", func() {
+ 				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
+@@ -108,5 +146,54 @@ func TestDashboardSnapshotApiEndpoint(t *testing.T) {
+ 				})
+ 			})
+ 		})
++
++		Convey("When deleting an external snapshot", func() {
++			aclMockResp = []*m.DashboardAclInfoDTO{}
++			mockSnapshotResult.UserId = TestUserID
++
++			Convey("Should gracefully delete local snapshot when remote snapshot has already been removed", func() {
++				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						rw.Write([]byte(`{"message":"Failed to get dashboard snapshot"}`))
++						rw.WriteHeader(500)
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
++					sc.handlerFunc = DeleteDashboardSnapshot
++					sc.fakeReqWithParams("DELETE", sc.url, map[string]string{"key": "12345"}).exec()
++
++					So(sc.resp.Code, ShouldEqual, 200)
++				})
++			})
++
++			Convey("Should fail to delete local snapshot when an unexpected 500 error occurs", func() {
++				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						rw.WriteHeader(500)
++						rw.Write([]byte(`{"message":"Unexpected"}`))
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
++					sc.handlerFunc = DeleteDashboardSnapshot
++					sc.fakeReqWithParams("DELETE", sc.url, map[string]string{"key": "12345"}).exec()
++
++					So(sc.resp.Code, ShouldEqual, 500)
++				})
++			})
++
++			Convey("Should fail to delete local snapshot when an unexpected remote error occurs", func() {
++				loggedInUserScenarioWithRole("When calling DELETE on", "DELETE", "/api/snapshots/12345", "/api/snapshots/:key", m.ROLE_EDITOR, func(sc *scenarioContext) {
++					ts := setupRemoteServer(func(rw http.ResponseWriter, req *http.Request) {
++						rw.WriteHeader(404)
++					})
++
++					mockSnapshotResult.ExternalDeleteUrl = ts.URL
++					sc.handlerFunc = DeleteDashboardSnapshot
++					sc.fakeReqWithParams("DELETE", sc.url, map[string]string{"key": "12345"}).exec()
++
++					So(sc.resp.Code, ShouldEqual, 500)
++				})
++			})
++		})
+ 	})
+ }
+diff --git a/pkg/api/plugins.go b/pkg/api/plugins.go
+index 455420e4688..0d54f0707a6 100644
+--- a/pkg/api/plugins.go
++++ b/pkg/api/plugins.go
+@@ -164,6 +164,14 @@ func GetPluginMarkdown(c *m.ReqContext) Response {
+ 		return Error(500, "Could not get markdown file", err)
+ 	}
+ 
++	// fallback try readme
++	if len(content) == 0 {
++		content, err = plugins.GetPluginMarkdown(pluginID, "readme")
++		if err != nil {
++			return Error(501, "Could not get markdown file", err)
++		}
++	}
++
+ 	resp := Respond(200, content)
+ 	resp.Header("Content-Type", "text/plain; charset=utf-8")
+ 	return resp
+diff --git a/pkg/middleware/auth_proxy.go b/pkg/middleware/auth_proxy.go
+index 29bd305b336..fc109ac707f 100644
+--- a/pkg/middleware/auth_proxy.go
++++ b/pkg/middleware/auth_proxy.go
+@@ -198,17 +198,31 @@ func checkAuthenticationProxy(remoteAddr string, proxyHeaderValue string) error
+ 	}
+ 
+ 	proxies := strings.Split(setting.AuthProxyWhitelist, ",")
+-	sourceIP, _, err := net.SplitHostPort(remoteAddr)
+-	if err != nil {
+-		return err
++	var proxyObjs []*net.IPNet
++	for _, proxy := range proxies {
++		proxyObjs = append(proxyObjs, coerceProxyAddress(proxy))
+ 	}
+ 
+-	// Compare allowed IP addresses to actual address
+-	for _, proxyIP := range proxies {
+-		if sourceIP == strings.TrimSpace(proxyIP) {
++	sourceIP, _, _ := net.SplitHostPort(remoteAddr)
++	sourceObj := net.ParseIP(sourceIP)
++
++	for _, proxyObj := range proxyObjs {
++		if proxyObj.Contains(sourceObj) {
+ 			return nil
+ 		}
+ 	}
+-
+ 	return fmt.Errorf("Request for user (%s) from %s is not from the authentication proxy", proxyHeaderValue, sourceIP)
+ }
++
++func coerceProxyAddress(proxyAddr string) *net.IPNet {
++	proxyAddr = strings.TrimSpace(proxyAddr)
++	if !strings.Contains(proxyAddr, "/") {
++		proxyAddr = strings.Join([]string{proxyAddr, "32"}, "/")
++	}
++
++	_, network, err := net.ParseCIDR(proxyAddr)
++	if err != nil {
++		fmt.Println(err)
++	}
++	return network
++}
+diff --git a/pkg/middleware/middleware_test.go b/pkg/middleware/middleware_test.go
+index e9a3c8059f8..b9a8afce6c6 100644
+--- a/pkg/middleware/middleware_test.go
++++ b/pkg/middleware/middleware_test.go
+@@ -271,6 +271,23 @@ func TestMiddlewareContext(t *testing.T) {
+ 			})
+ 		})
+ 
++		middlewareScenario("When auth_proxy is enabled and IPv4 request RemoteAddr is not within trusted CIDR block", func(sc *scenarioContext) {
++			setting.AuthProxyEnabled = true
++			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
++			setting.AuthProxyHeaderProperty = "username"
++			setting.AuthProxyWhitelist = "192.168.1.0/24, 2001::0/120"
++
++			sc.fakeReq("GET", "/")
++			sc.req.Header.Add("X-WEBAUTH-USER", "torkelo")
++			sc.req.RemoteAddr = "192.168.3.1:12345"
++			sc.exec()
++
++			Convey("should return 407 status code", func() {
++				So(sc.resp.Code, ShouldEqual, 407)
++				So(sc.resp.Body.String(), ShouldContainSubstring, "Request for user (torkelo) from 192.168.3.1 is not from the authentication proxy")
++			})
++		})
++
+ 		middlewareScenario("When auth_proxy is enabled and IPv6 request RemoteAddr is not trusted", func(sc *scenarioContext) {
+ 			setting.AuthProxyEnabled = true
+ 			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
+@@ -288,6 +305,23 @@ func TestMiddlewareContext(t *testing.T) {
+ 			})
+ 		})
+ 
++		middlewareScenario("When auth_proxy is enabled and IPv6 request RemoteAddr is not within trusted CIDR block", func(sc *scenarioContext) {
++			setting.AuthProxyEnabled = true
++			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
++			setting.AuthProxyHeaderProperty = "username"
++			setting.AuthProxyWhitelist = "192.168.1.0/24, 2001::0/120"
++
++			sc.fakeReq("GET", "/")
++			sc.req.Header.Add("X-WEBAUTH-USER", "torkelo")
++			sc.req.RemoteAddr = "[2001:23]:12345"
++			sc.exec()
++
++			Convey("should return 407 status code", func() {
++				So(sc.resp.Code, ShouldEqual, 407)
++				So(sc.resp.Body.String(), ShouldContainSubstring, "Request for user (torkelo) from 2001:23 is not from the authentication proxy")
++			})
++		})
++
+ 		middlewareScenario("When auth_proxy is enabled and request RemoteAddr is trusted", func(sc *scenarioContext) {
+ 			setting.AuthProxyEnabled = true
+ 			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
+@@ -316,6 +350,62 @@ func TestMiddlewareContext(t *testing.T) {
+ 			})
+ 		})
+ 
++		middlewareScenario("When auth_proxy is enabled and IPv4 request RemoteAddr is within trusted CIDR block", func(sc *scenarioContext) {
++			setting.AuthProxyEnabled = true
++			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
++			setting.AuthProxyHeaderProperty = "username"
++			setting.AuthProxyWhitelist = "192.168.1.0/24, 2001::0/120"
++
++			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
++				query.Result = &m.SignedInUser{OrgId: 4, UserId: 33}
++				return nil
++			})
++
++			bus.AddHandler("test", func(cmd *m.UpsertUserCommand) error {
++				cmd.Result = &m.User{Id: 33}
++				return nil
++			})
++
++			sc.fakeReq("GET", "/")
++			sc.req.Header.Add("X-WEBAUTH-USER", "torkelo")
++			sc.req.RemoteAddr = "192.168.1.10:12345"
++			sc.exec()
++
++			Convey("Should init context with user info", func() {
++				So(sc.context.IsSignedIn, ShouldBeTrue)
++				So(sc.context.UserId, ShouldEqual, 33)
++				So(sc.context.OrgId, ShouldEqual, 4)
++			})
++		})
++
++		middlewareScenario("When auth_proxy is enabled and IPv6 request RemoteAddr is within trusted CIDR block", func(sc *scenarioContext) {
++			setting.AuthProxyEnabled = true
++			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
++			setting.AuthProxyHeaderProperty = "username"
++			setting.AuthProxyWhitelist = "192.168.1.0/24, 2001::0/120"
++
++			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
++				query.Result = &m.SignedInUser{OrgId: 4, UserId: 33}
++				return nil
++			})
++
++			bus.AddHandler("test", func(cmd *m.UpsertUserCommand) error {
++				cmd.Result = &m.User{Id: 33}
++				return nil
++			})
++
++			sc.fakeReq("GET", "/")
++			sc.req.Header.Add("X-WEBAUTH-USER", "torkelo")
++			sc.req.RemoteAddr = "[2001::23]:12345"
++			sc.exec()
++
++			Convey("Should init context with user info", func() {
++				So(sc.context.IsSignedIn, ShouldBeTrue)
++				So(sc.context.UserId, ShouldEqual, 33)
++				So(sc.context.OrgId, ShouldEqual, 4)
++			})
++		})
++
+ 		middlewareScenario("When session exists for previous user, create a new session", func(sc *scenarioContext) {
+ 			setting.AuthProxyEnabled = true
+ 			setting.AuthProxyHeaderName = "X-WEBAUTH-USER"
+diff --git a/pkg/models/dashboard_snapshot.go b/pkg/models/dashboard_snapshot.go
+index 3024ba94122..e8db0372758 100644
+--- a/pkg/models/dashboard_snapshot.go
++++ b/pkg/models/dashboard_snapshot.go
+@@ -8,14 +8,15 @@ import (
+ 
+ // DashboardSnapshot model
+ type DashboardSnapshot struct {
+-	Id          int64
+-	Name        string
+-	Key         string
+-	DeleteKey   string
+-	OrgId       int64
+-	UserId      int64
+-	External    bool
+-	ExternalUrl string
++	Id                int64
++	Name              string
++	Key               string
++	DeleteKey         string
++	OrgId             int64
++	UserId            int64
++	External          bool
++	ExternalUrl       string
++	ExternalDeleteUrl string
+ 
+ 	Expires time.Time
+ 	Created time.Time
+@@ -48,7 +49,10 @@ type CreateDashboardSnapshotCommand struct {
+ 	Expires   int64            `json:"expires"`
+ 
+ 	// these are passed when storing an external snapshot ref
+-	External  bool   `json:"external"`
++	External          bool   `json:"external"`
++	ExternalUrl       string `json:"-"`
++	ExternalDeleteUrl string `json:"-"`
++
+ 	Key       string `json:"key"`
+ 	DeleteKey string `json:"deleteKey"`
+ 
+diff --git a/pkg/plugins/datasource_plugin.go b/pkg/plugins/datasource_plugin.go
+index 04b77a892c5..dd4ae6972aa 100644
+--- a/pkg/plugins/datasource_plugin.go
++++ b/pkg/plugins/datasource_plugin.go
+@@ -3,10 +3,8 @@ package plugins
+ import (
+ 	"context"
+ 	"encoding/json"
+-	"os"
+ 	"os/exec"
+ 	"path"
+-	"path/filepath"
+ 	"time"
+ 
+ 	"github.com/grafana/grafana-plugin-model/go/datasource"
+@@ -29,7 +27,6 @@ type DataSourcePlugin struct {
+ 	QueryOptions map[string]bool   `json:"queryOptions,omitempty"`
+ 	BuiltIn      bool              `json:"builtIn,omitempty"`
+ 	Mixed        bool              `json:"mixed,omitempty"`
+-	HasQueryHelp bool              `json:"hasQueryHelp,omitempty"`
+ 	Routes       []*AppPluginRoute `json:"routes"`
+ 
+ 	Backend    bool   `json:"backend,omitempty"`
+@@ -48,15 +45,6 @@ func (p *DataSourcePlugin) Load(decoder *json.Decoder, pluginDir string) error {
+ 		return err
+ 	}
+ 
+-	// look for help markdown
+-	helpPath := filepath.Join(p.PluginDir, "QUERY_HELP.md")
+-	if _, err := os.Stat(helpPath); os.IsNotExist(err) {
+-		helpPath = filepath.Join(p.PluginDir, "query_help.md")
+-	}
+-	if _, err := os.Stat(helpPath); err == nil {
+-		p.HasQueryHelp = true
+-	}
+-
+ 	DataSources[p.Id] = p
+ 	return nil
+ }
+diff --git a/pkg/services/alerting/notifier.go b/pkg/services/alerting/notifier.go
+index 9ce50eadd6b..75c68615750 100644
+--- a/pkg/services/alerting/notifier.go
++++ b/pkg/services/alerting/notifier.go
+@@ -166,7 +166,7 @@ func (n *notificationService) getNeededNotifiers(orgId int64, notificationIds []
+ 
+ 	var result notifierStateSlice
+ 	for _, notification := range query.Result {
+-		not, err := n.createNotifierFor(notification)
++		not, err := InitNotifier(notification)
+ 		if err != nil {
+ 			n.log.Error("Could not create notifier", "notifier", notification.Id, "error", err)
+ 			continue
+@@ -195,7 +195,8 @@ func (n *notificationService) getNeededNotifiers(orgId int64, notificationIds []
+ 	return result, nil
+ }
+ 
+-func (n *notificationService) createNotifierFor(model *m.AlertNotification) (Notifier, error) {
++// InitNotifier instantiate a new notifier based on the model
++func InitNotifier(model *m.AlertNotification) (Notifier, error) {
+ 	notifierPlugin, found := notifierFactories[model.Type]
+ 	if !found {
+ 		return nil, errors.New("Unsupported notification type")
+@@ -208,6 +209,7 @@ type NotifierFactory func(notification *m.AlertNotification) (Notifier, error)
+ 
+ var notifierFactories = make(map[string]*NotifierPlugin)
+ 
++// RegisterNotifier register an notifier
+ func RegisterNotifier(plugin *NotifierPlugin) {
+ 	notifierFactories[plugin.Type] = plugin
+ }
+diff --git a/pkg/services/alerting/test_notification.go b/pkg/services/alerting/test_notification.go
+index 8aa1b80aa22..b6e59f694c8 100644
+--- a/pkg/services/alerting/test_notification.go
++++ b/pkg/services/alerting/test_notification.go
+@@ -32,7 +32,7 @@ func handleNotificationTestCommand(cmd *NotificationTestCommand) error {
+ 		Settings: cmd.Settings,
+ 	}
+ 
+-	notifiers, err := notifier.createNotifierFor(model)
++	notifiers, err := InitNotifier(model)
+ 
+ 	if err != nil {
+ 		log.Error2("Failed to create notifier", "error", err.Error())
+diff --git a/pkg/services/sqlstore/dashboard_snapshot.go b/pkg/services/sqlstore/dashboard_snapshot.go
+index 2e2ea8a4783..d0af676a305 100644
+--- a/pkg/services/sqlstore/dashboard_snapshot.go
++++ b/pkg/services/sqlstore/dashboard_snapshot.go
+@@ -47,16 +47,18 @@ func CreateDashboardSnapshot(cmd *m.CreateDashboardSnapshotCommand) error {
+ 		}
+ 
+ 		snapshot := &m.DashboardSnapshot{
+-			Name:      cmd.Name,
+-			Key:       cmd.Key,
+-			DeleteKey: cmd.DeleteKey,
+-			OrgId:     cmd.OrgId,
+-			UserId:    cmd.UserId,
+-			External:  cmd.External,
+-			Dashboard: cmd.Dashboard,
+-			Expires:   expires,
+-			Created:   time.Now(),
+-			Updated:   time.Now(),
++			Name:              cmd.Name,
++			Key:               cmd.Key,
++			DeleteKey:         cmd.DeleteKey,
++			OrgId:             cmd.OrgId,
++			UserId:            cmd.UserId,
++			External:          cmd.External,
++			ExternalUrl:       cmd.ExternalUrl,
++			ExternalDeleteUrl: cmd.ExternalDeleteUrl,
++			Dashboard:         cmd.Dashboard,
++			Expires:           expires,
++			Created:           time.Now(),
++			Updated:           time.Now(),
+ 		}
+ 
+ 		_, err := sess.Insert(snapshot)
+diff --git a/pkg/services/sqlstore/datasource.go b/pkg/services/sqlstore/datasource.go
+index 7f70e5c25fc..ccab1106880 100644
+--- a/pkg/services/sqlstore/datasource.go
++++ b/pkg/services/sqlstore/datasource.go
+@@ -53,14 +53,14 @@ func GetDataSourceByName(query *m.GetDataSourceByNameQuery) error {
+ }
+ 
+ func GetDataSources(query *m.GetDataSourcesQuery) error {
+-	sess := x.Limit(1000, 0).Where("org_id=?", query.OrgId).Asc("name")
++	sess := x.Limit(5000, 0).Where("org_id=?", query.OrgId).Asc("name")
+ 
+ 	query.Result = make([]*m.DataSource, 0)
+ 	return sess.Find(&query.Result)
+ }
+ 
+ func GetAllDataSources(query *m.GetAllDataSourcesQuery) error {
+-	sess := x.Limit(1000, 0).Asc("name")
++	sess := x.Limit(5000, 0).Asc("name")
+ 
+ 	query.Result = make([]*m.DataSource, 0)
+ 	return sess.Find(&query.Result)
+diff --git a/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go b/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
+index b880497cd23..be0bc80134c 100644
+--- a/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
++++ b/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
+@@ -60,4 +60,8 @@ func addDashboardSnapshotMigrations(mg *Migrator) {
+ 		{Name: "external_url", Type: DB_NVarchar, Length: 255, Nullable: false},
+ 		{Name: "dashboard", Type: DB_MediumText, Nullable: false},
+ 	}))
++
++	mg.AddMigration("Add column external_delete_url to dashboard_snapshots table", NewAddColumnMigration(snapshotV5, &Column{
++		Name: "external_delete_url", Type: DB_NVarchar, Length: 255, Nullable: true,
++	}))
+ }
+diff --git a/pkg/services/sqlstore/user.go b/pkg/services/sqlstore/user.go
+index a3ccb93b30c..312877751c9 100644
+--- a/pkg/services/sqlstore/user.go
++++ b/pkg/services/sqlstore/user.go
+@@ -345,8 +345,12 @@ func GetUserOrgList(query *m.GetUserOrgListQuery) error {
+ 	return err
+ }
+ 
++func newSignedInUserCacheKey(orgID, userID int64) string {
++	return fmt.Sprintf("signed-in-user-%d-%d", userID, orgID)
++}
++
+ func (ss *SqlStore) GetSignedInUserWithCache(query *m.GetSignedInUserQuery) error {
+-	cacheKey := fmt.Sprintf("signed-in-user-%d-%d", query.UserId, query.OrgId)
++	cacheKey := newSignedInUserCacheKey(query.OrgId, query.UserId)
+ 	if cached, found := ss.CacheService.Get(cacheKey); found {
+ 		query.Result = cached.(*m.SignedInUser)
+ 		return nil
+@@ -357,6 +361,7 @@ func (ss *SqlStore) GetSignedInUserWithCache(query *m.GetSignedInUserQuery) erro
+ 		return err
+ 	}
+ 
++	cacheKey = newSignedInUserCacheKey(query.Result.OrgId, query.UserId)
+ 	ss.CacheService.Set(cacheKey, query.Result, time.Second*5)
+ 	return nil
+ }
+diff --git a/pkg/services/sqlstore/user_test.go b/pkg/services/sqlstore/user_test.go
+index 627f2ab1ca5..526c17a8256 100644
+--- a/pkg/services/sqlstore/user_test.go
++++ b/pkg/services/sqlstore/user_test.go
+@@ -13,7 +13,7 @@ import (
+ func TestUserDataAccess(t *testing.T) {
+ 
+ 	Convey("Testing DB", t, func() {
+-		InitTestDB(t)
++		ss := InitTestDB(t)
+ 
+ 		Convey("Creating a user", func() {
+ 			cmd := &m.CreateUserCommand{
+@@ -153,6 +153,27 @@ func TestUserDataAccess(t *testing.T) {
+ 						So(prefsQuery.Result.UserId, ShouldEqual, 0)
+ 					})
+ 				})
++
++				Convey("when retreiving signed in user for orgId=0 result should return active org id", func() {
++					ss.CacheService.Flush()
++
++					query := &m.GetSignedInUserQuery{OrgId: users[1].OrgId, UserId: users[1].Id}
++					err := ss.GetSignedInUserWithCache(query)
++					So(err, ShouldBeNil)
++					So(query.Result, ShouldNotBeNil)
++					So(query.OrgId, ShouldEqual, users[1].OrgId)
++					err = SetUsingOrg(&m.SetUsingOrgCommand{UserId: users[1].Id, OrgId: users[0].OrgId})
++					So(err, ShouldBeNil)
++					query = &m.GetSignedInUserQuery{OrgId: 0, UserId: users[1].Id}
++					err = ss.GetSignedInUserWithCache(query)
++					So(err, ShouldBeNil)
++					So(query.Result, ShouldNotBeNil)
++					So(query.Result.OrgId, ShouldEqual, users[0].OrgId)
++
++					cacheKey := newSignedInUserCacheKey(query.Result.OrgId, query.UserId)
++					_, found := ss.CacheService.Get(cacheKey)
++					So(found, ShouldBeTrue)
++				})
+ 			})
+ 		})
+ 
+diff --git a/pkg/setting/setting_oauth.go b/pkg/setting/setting_oauth.go
+index 93b1ab6f101..f0a3beccb44 100644
+--- a/pkg/setting/setting_oauth.go
++++ b/pkg/setting/setting_oauth.go
+@@ -1,20 +1,21 @@
+ package setting
+ 
+ type OAuthInfo struct {
+-	ClientId, ClientSecret string
+-	Scopes                 []string
+-	AuthUrl, TokenUrl      string
+-	Enabled                bool
+-	EmailAttributeName     string
+-	AllowedDomains         []string
+-	HostedDomain           string
+-	ApiUrl                 string
+-	AllowSignup            bool
+-	Name                   string
+-	TlsClientCert          string
+-	TlsClientKey           string
+-	TlsClientCa            string
+-	TlsSkipVerify          bool
++	ClientId, ClientSecret       string
++	Scopes                       []string
++	AuthUrl, TokenUrl            string
++	Enabled                      bool
++	EmailAttributeName           string
++	AllowedDomains               []string
++	HostedDomain                 string
++	ApiUrl                       string
++	AllowSignup                  bool
++	Name                         string
++	TlsClientCert                string
++	TlsClientKey                 string
++	TlsClientCa                  string
++	TlsSkipVerify                bool
++	SendClientCredentialsViaPost bool
+ }
+ 
+ type OAuther struct {
+diff --git a/pkg/social/social.go b/pkg/social/social.go
+index 8918507f3b9..60099a028d6 100644
+--- a/pkg/social/social.go
++++ b/pkg/social/social.go
+@@ -63,28 +63,34 @@ func NewOAuthService() {
+ 	for _, name := range allOauthes {
+ 		sec := setting.Raw.Section("auth." + name)
+ 		info := &setting.OAuthInfo{
+-			ClientId:           sec.Key("client_id").String(),
+-			ClientSecret:       sec.Key("client_secret").String(),
+-			Scopes:             util.SplitString(sec.Key("scopes").String()),
+-			AuthUrl:            sec.Key("auth_url").String(),
+-			TokenUrl:           sec.Key("token_url").String(),
+-			ApiUrl:             sec.Key("api_url").String(),
+-			Enabled:            sec.Key("enabled").MustBool(),
+-			EmailAttributeName: sec.Key("email_attribute_name").String(),
+-			AllowedDomains:     util.SplitString(sec.Key("allowed_domains").String()),
+-			HostedDomain:       sec.Key("hosted_domain").String(),
+-			AllowSignup:        sec.Key("allow_sign_up").MustBool(),
+-			Name:               sec.Key("name").MustString(name),
+-			TlsClientCert:      sec.Key("tls_client_cert").String(),
+-			TlsClientKey:       sec.Key("tls_client_key").String(),
+-			TlsClientCa:        sec.Key("tls_client_ca").String(),
+-			TlsSkipVerify:      sec.Key("tls_skip_verify_insecure").MustBool(),
++			ClientId:                     sec.Key("client_id").String(),
++			ClientSecret:                 sec.Key("client_secret").String(),
++			Scopes:                       util.SplitString(sec.Key("scopes").String()),
++			AuthUrl:                      sec.Key("auth_url").String(),
++			TokenUrl:                     sec.Key("token_url").String(),
++			ApiUrl:                       sec.Key("api_url").String(),
++			Enabled:                      sec.Key("enabled").MustBool(),
++			EmailAttributeName:           sec.Key("email_attribute_name").String(),
++			AllowedDomains:               util.SplitString(sec.Key("allowed_domains").String()),
++			HostedDomain:                 sec.Key("hosted_domain").String(),
++			AllowSignup:                  sec.Key("allow_sign_up").MustBool(),
++			Name:                         sec.Key("name").MustString(name),
++			TlsClientCert:                sec.Key("tls_client_cert").String(),
++			TlsClientKey:                 sec.Key("tls_client_key").String(),
++			TlsClientCa:                  sec.Key("tls_client_ca").String(),
++			TlsSkipVerify:                sec.Key("tls_skip_verify_insecure").MustBool(),
++			SendClientCredentialsViaPost: sec.Key("send_client_credentials_via_post").MustBool(),
+ 		}
+ 
+ 		if !info.Enabled {
+ 			continue
+ 		}
+ 
++		// handle the clients that do not properly support Basic auth headers and require passing client_id/client_secret via POST payload
++		if info.SendClientCredentialsViaPost {
++			oauth2.RegisterBrokenAuthHeaderProvider(info.TokenUrl)
++		}
++
+ 		if name == "grafananet" {
+ 			name = grafanaCom
+ 		}
+diff --git a/public/app/core/components/PluginHelp/PluginHelp.tsx b/public/app/core/components/PluginHelp/PluginHelp.tsx
+new file mode 100644
+index 00000000000..c37498afc45
+--- /dev/null
++++ b/public/app/core/components/PluginHelp/PluginHelp.tsx
+@@ -0,0 +1,83 @@
++import React, { PureComponent } from 'react';
++import Remarkable from 'remarkable';
++import { getBackendSrv } from '../../services/backend_srv';
++
++interface Props {
++  plugin: {
++    name: string;
++    id: string;
++  };
++  type: string;
++}
++
++interface State {
++  isError: boolean;
++  isLoading: boolean;
++  help: string;
++}
++
++export class PluginHelp extends PureComponent<Props, State> {
++  state = {
++    isError: false,
++    isLoading: false,
++    help: '',
++  };
++
++  componentDidMount(): void {
++    this.loadHelp();
++  }
++
++  constructPlaceholderInfo() {
++    return 'No plugin help or readme markdown file was found';
++  }
++
++  loadHelp = () => {
++    const { plugin, type } = this.props;
++    this.setState({ isLoading: true });
++
++    getBackendSrv()
++      .get(`/api/plugins/${plugin.id}/markdown/${type}`)
++      .then(response => {
++        const markdown = new Remarkable();
++        const helpHtml = markdown.render(response);
++
++        if (response === '' && type === 'help') {
++          this.setState({
++            isError: false,
++            isLoading: false,
++            help: this.constructPlaceholderInfo(),
++          });
++        } else {
++          this.setState({
++            isError: false,
++            isLoading: false,
++            help: helpHtml,
++          });
++        }
++      })
++      .catch(() => {
++        this.setState({
++          isError: true,
++          isLoading: false,
++        });
++      });
++  };
++
++  render() {
++    const { type } = this.props;
++    const { isError, isLoading, help } = this.state;
++
++    if (isLoading) {
++      return <h2>Loading help...</h2>;
++    }
++
++    if (isError) {
++      return <h3>'Error occurred when loading help'</h3>;
++    }
++
++    if (type === 'panel_help' && help === '') {
++    }
++
++    return <div className="markdown-html" dangerouslySetInnerHTML={{ __html: help }} />;
++  }
++}
+diff --git a/public/app/core/components/code_editor/code_editor.ts b/public/app/core/components/code_editor/code_editor.ts
+index 20a8384ee33..ca9023e8657 100644
+--- a/public/app/core/components/code_editor/code_editor.ts
++++ b/public/app/core/components/code_editor/code_editor.ts
+@@ -50,7 +50,7 @@ const DEFAULT_THEME_LIGHT = 'ace/theme/textmate';
+ const DEFAULT_MODE = 'text';
+ const DEFAULT_MAX_LINES = 10;
+ const DEFAULT_TAB_SIZE = 2;
+-const DEFAULT_BEHAVIOURS = true;
++const DEFAULT_BEHAVIORS = true;
+ const DEFAULT_SNIPPETS = true;
+ 
+ const editorTemplate = `<div></div>`;
+@@ -61,7 +61,7 @@ function link(scope, elem, attrs) {
+   const maxLines = attrs.maxLines || DEFAULT_MAX_LINES;
+   const showGutter = attrs.showGutter !== undefined;
+   const tabSize = attrs.tabSize || DEFAULT_TAB_SIZE;
+-  const behavioursEnabled = attrs.behavioursEnabled ? attrs.behavioursEnabled === 'true' : DEFAULT_BEHAVIOURS;
++  const behavioursEnabled = attrs.behavioursEnabled ? attrs.behavioursEnabled === 'true' : DEFAULT_BEHAVIORS;
+   const snippetsEnabled = attrs.snippetsEnabled ? attrs.snippetsEnabled === 'true' : DEFAULT_SNIPPETS;
+ 
+   // Initialize editor
+diff --git a/public/app/core/components/json_explorer/helpers.ts b/public/app/core/components/json_explorer/helpers.ts
+index c039d818281..65e7502a810 100644
+--- a/public/app/core/components/json_explorer/helpers.ts
++++ b/public/app/core/components/json_explorer/helpers.ts
+@@ -1,5 +1,5 @@
+ // Based on work https://github.com/mohsen1/json-formatter-js
+-// Licence MIT, Copyright (c) 2015 Mohsen Azimi
++// License MIT, Copyright (c) 2015 Mohsen Azimi
+ 
+ /*
+  * Escapes `"` characters from string
+diff --git a/public/app/core/components/json_explorer/json_explorer.ts b/public/app/core/components/json_explorer/json_explorer.ts
+index 9a344d3195b..228154f9884 100644
+--- a/public/app/core/components/json_explorer/json_explorer.ts
++++ b/public/app/core/components/json_explorer/json_explorer.ts
+@@ -1,5 +1,5 @@
+ // Based on work https://github.com/mohsen1/json-formatter-js
+-// Licence MIT, Copyright (c) 2015 Mohsen Azimi
++// License MIT, Copyright (c) 2015 Mohsen Azimi
+ 
+ import { isObject, getObjectName, getType, getValuePreview, cssClass, createElement } from './helpers';
+ 
+diff --git a/public/app/core/components/sidemenu/BottomNavLinks.test.tsx b/public/app/core/components/sidemenu/BottomNavLinks.test.tsx
+index 8eaed4ca264..b52e5311dc5 100644
+--- a/public/app/core/components/sidemenu/BottomNavLinks.test.tsx
++++ b/public/app/core/components/sidemenu/BottomNavLinks.test.tsx
+@@ -36,7 +36,7 @@ describe('Render', () => {
+     expect(wrapper).toMatchSnapshot();
+   });
+ 
+-  it('should render organisation switcher', () => {
++  it('should render organization switcher', () => {
+     const wrapper = setup({
+       link: {
+         showOrgSwitcher: true,
+diff --git a/public/app/core/components/sidemenu/__snapshots__/BottomNavLinks.test.tsx.snap b/public/app/core/components/sidemenu/__snapshots__/BottomNavLinks.test.tsx.snap
+index f3181b617ad..ae8c9c753aa 100644
+--- a/public/app/core/components/sidemenu/__snapshots__/BottomNavLinks.test.tsx.snap
++++ b/public/app/core/components/sidemenu/__snapshots__/BottomNavLinks.test.tsx.snap
+@@ -73,7 +73,7 @@ exports[`Render should render component 1`] = `
+ </div>
+ `;
+ 
+-exports[`Render should render organisation switcher 1`] = `
++exports[`Render should render organization switcher 1`] = `
+ <div
+   className="sidemenu-item dropdown dropup"
+ >
+diff --git a/public/app/core/services/backend_srv.ts b/public/app/core/services/backend_srv.ts
+index 144567efeb9..854169ad4b0 100644
+--- a/public/app/core/services/backend_srv.ts
++++ b/public/app/core/services/backend_srv.ts
+@@ -5,7 +5,7 @@ import { DashboardModel } from 'app/features/dashboard/dashboard_model';
+ 
+ export class BackendSrv {
+   private inFlightRequests = {};
+-  private HTTP_REQUEST_CANCELLED = -1;
++  private HTTP_REQUEST_CANCELED = -1;
+   private noBackendCache: boolean;
+ 
+   /** @ngInject */
+@@ -178,7 +178,7 @@ export class BackendSrv {
+         return response;
+       })
+       .catch(err => {
+-        if (err.status === this.HTTP_REQUEST_CANCELLED) {
++        if (err.status === this.HTTP_REQUEST_CANCELED) {
+           throw { err, cancelled: true };
+         }
+ 
+diff --git a/public/app/core/services/search_srv.ts b/public/app/core/services/search_srv.ts
+index aa5e146530b..22d33921ebd 100644
+--- a/public/app/core/services/search_srv.ts
++++ b/public/app/core/services/search_srv.ts
+@@ -31,7 +31,7 @@ export class SearchSrv {
+   }
+ 
+   private queryForRecentDashboards() {
+-    const dashIds = _.take(impressionSrv.getDashboardOpened(), 5);
++    const dashIds = _.take(impressionSrv.getDashboardOpened(), 30);
+     if (dashIds.length === 0) {
+       return Promise.resolve([]);
+     }
+@@ -70,7 +70,7 @@ export class SearchSrv {
+       return Promise.resolve();
+     }
+ 
+-    return this.backendSrv.search({ starred: true, limit: 5 }).then(result => {
++    return this.backendSrv.search({ starred: true, limit: 30 }).then(result => {
+       if (result.length > 0) {
+         sections['starred'] = {
+           title: 'Starred',
+diff --git a/public/app/core/services/timer.ts b/public/app/core/services/timer.ts
+index 8052b3f2e2c..8234b6288d4 100644
+--- a/public/app/core/services/timer.ts
++++ b/public/app/core/services/timer.ts
+@@ -2,7 +2,7 @@ import _ from 'lodash';
+ import coreModule from 'app/core/core_module';
+ 
+ // This service really just tracks a list of $timeout promises to give us a
+-// method for cancelling them all when we need to
++// method for canceling them all when we need to
+ export class Timer {
+   timers = [];
+ 
+diff --git a/public/app/core/specs/file_export.test.ts b/public/app/core/specs/file_export.test.ts
+index 52ec4ccea19..98f5a5be742 100644
+--- a/public/app/core/specs/file_export.test.ts
++++ b/public/app/core/specs/file_export.test.ts
+@@ -73,6 +73,7 @@ describe('file_export', () => {
+         ],
+         rows: [
+           [123, 'some_string', 1.234, true],
++          [1000, 'some_string', 1.234567891, true],
+           [0o765, 'some string with " in the middle', 1e-2, false],
+           [0o765, 'some string with "" in the middle', 1e-2, false],
+           [0o765, 'some string with """ in the middle', 1e-2, false],
+@@ -89,6 +90,7 @@ describe('file_export', () => {
+       const expectedText =
+         '"integer_value";"string_value";"float_value";"boolean_value"\r\n' +
+         '123;"some_string";1.234;true\r\n' +
++        '1000;"some_string";1.234567891;true\r\n' +
+         '501;"some string with "" in the middle";0.01;false\r\n' +
+         '501;"some string with """" in the middle";0.01;false\r\n' +
+         '501;"some string with """""" in the middle";0.01;false\r\n' +
+diff --git a/public/app/core/table_model.ts b/public/app/core/table_model.ts
+index fd99db69249..fa7170bed13 100644
+--- a/public/app/core/table_model.ts
++++ b/public/app/core/table_model.ts
+@@ -40,7 +40,7 @@ export default class TableModel {
+     this.rows.sort((a, b) => {
+       a = a[options.col];
+       b = b[options.col];
+-      // Sort null or undefined seperately from comparable values
++      // Sort null or undefined separately from comparable values
+       return +(a == null) - +(b == null) || +(a > b) || -(a < b);
+     });
+ 
+diff --git a/public/app/core/utils/file_export.ts b/public/app/core/utils/file_export.ts
+index 4fbdea0f953..1f999da72a5 100644
+--- a/public/app/core/utils/file_export.ts
++++ b/public/app/core/utils/file_export.ts
+@@ -41,10 +41,8 @@ function formatSpecialHeader(useExcelHeader) {
+ function formatRow(row, addEndRowDelimiter = true) {
+   let text = '';
+   for (let i = 0; i < row.length; i += 1) {
+-    if (isBoolean(row[i]) || isNullOrUndefined(row[i])) {
++    if (isBoolean(row[i]) || isNumber(row[i]) || isNullOrUndefined(row[i])) {
+       text += row[i];
+-    } else if (isNumber(row[i])) {
+-      text += row[i].toLocaleString();
+     } else {
+       text += `${QUOTE}${csvEscaped(htmlUnescaped(htmlDecoded(row[i])))}${QUOTE}`;
+     }
+diff --git a/public/app/core/utils/kbn.ts b/public/app/core/utils/kbn.ts
+index 30fdf2bac6f..b8539ea5013 100644
+--- a/public/app/core/utils/kbn.ts
++++ b/public/app/core/utils/kbn.ts
+@@ -484,6 +484,14 @@ kbn.valueFormats.Mbits = kbn.formatBuilders.decimalSIPrefix('bps', 2);
+ kbn.valueFormats.GBs = kbn.formatBuilders.decimalSIPrefix('Bs', 3);
+ kbn.valueFormats.Gbits = kbn.formatBuilders.decimalSIPrefix('bps', 3);
+ 
++// Floating Point Operations per Second
++kbn.valueFormats.flops = kbn.formatBuilders.decimalSIPrefix('FLOP/s');
++kbn.valueFormats.mflops = kbn.formatBuilders.decimalSIPrefix('FLOP/s', 2);
++kbn.valueFormats.gflops = kbn.formatBuilders.decimalSIPrefix('FLOP/s', 3);
++kbn.valueFormats.tflops = kbn.formatBuilders.decimalSIPrefix('FLOP/s', 4);
++kbn.valueFormats.pflops = kbn.formatBuilders.decimalSIPrefix('FLOP/s', 5);
++kbn.valueFormats.eflops = kbn.formatBuilders.decimalSIPrefix('FLOP/s', 6);
++
+ // Hash Rate
+ kbn.valueFormats.Hs = kbn.formatBuilders.decimalSIPrefix('H/s');
+ kbn.valueFormats.KHs = kbn.formatBuilders.decimalSIPrefix('H/s', 1);
+@@ -1019,6 +1027,17 @@ kbn.getUnitFormats = () => {
+         { text: 'exahashes/sec', value: 'EHs' },
+       ],
+     },
++    {
++      text: 'computation throughput',
++      submenu: [
++        { text: 'FLOP/s', value: 'flops' },
++        { text: 'MFLOP/s', value: 'mflops' },
++        { text: 'GFLOP/s', value: 'gflops' },
++        { text: 'TFLOP/s', value: 'tflops' },
++        { text: 'PFLOP/s', value: 'pflops' },
++        { text: 'EFLOP/s', value: 'eflops' },
++      ],
++    },
+     {
+       text: 'throughput',
+       submenu: [
+@@ -1085,7 +1104,7 @@ kbn.getUnitFormats = () => {
+         { text: 'Watt (W)', value: 'watt' },
+         { text: 'Kilowatt (kW)', value: 'kwatt' },
+         { text: 'Milliwatt (mW)', value: 'mwatt' },
+-        { text: 'Watt per square metre (W/m²)', value: 'Wm2' },
++        { text: 'Watt per square meter (W/m²)', value: 'Wm2' },
+         { text: 'Volt-ampere (VA)', value: 'voltamp' },
+         { text: 'Kilovolt-ampere (kVA)', value: 'kvoltamp' },
+         { text: 'Volt-ampere reactive (var)', value: 'voltampreact' },
+@@ -1182,14 +1201,14 @@ kbn.getUnitFormats = () => {
+       submenu: [
+         { text: 'parts-per-million (ppm)', value: 'ppm' },
+         { text: 'parts-per-billion (ppb)', value: 'conppb' },
+-        { text: 'nanogram per cubic metre (ng/m³)', value: 'conngm3' },
+-        { text: 'nanogram per normal cubic metre (ng/Nm³)', value: 'conngNm3' },
+-        { text: 'microgram per cubic metre (μg/m³)', value: 'conμgm3' },
+-        { text: 'microgram per normal cubic metre (μg/Nm³)', value: 'conμgNm3' },
+-        { text: 'milligram per cubic metre (mg/m³)', value: 'conmgm3' },
+-        { text: 'milligram per normal cubic metre (mg/Nm³)', value: 'conmgNm3' },
+-        { text: 'gram per cubic metre (g/m³)', value: 'congm3' },
+-        { text: 'gram per normal cubic metre (g/Nm³)', value: 'congNm3' },
++        { text: 'nanogram per cubic meter (ng/m³)', value: 'conngm3' },
++        { text: 'nanogram per normal cubic meter (ng/Nm³)', value: 'conngNm3' },
++        { text: 'microgram per cubic meter (μg/m³)', value: 'conμgm3' },
++        { text: 'microgram per normal cubic meter (μg/Nm³)', value: 'conμgNm3' },
++        { text: 'milligram per cubic meter (mg/m³)', value: 'conmgm3' },
++        { text: 'milligram per normal cubic meter (mg/Nm³)', value: 'conmgNm3' },
++        { text: 'gram per cubic meter (g/m³)', value: 'congm3' },
++        { text: 'gram per normal cubic meter (g/Nm³)', value: 'congNm3' },
+       ],
+     },
+   ];
+diff --git a/public/app/features/dashboard/dashgrid/DashboardPanel.tsx b/public/app/features/dashboard/dashgrid/DashboardPanel.tsx
+index 6ee83d6e5b9..481dd2d5e19 100644
+--- a/public/app/features/dashboard/dashgrid/DashboardPanel.tsx
++++ b/public/app/features/dashboard/dashgrid/DashboardPanel.tsx
+@@ -14,6 +14,7 @@ import { PanelEditor } from './PanelEditor';
+ import { PanelModel } from '../panel_model';
+ import { DashboardModel } from '../dashboard_model';
+ import { PanelPlugin } from 'app/types';
++import { PanelResizer } from './PanelResizer';
+ 
+ export interface Props {
+   panel: PanelModel;
+@@ -158,10 +159,21 @@ export class DashboardPanel extends PureComponent<Props, State> {
+ 
+     return (
+       <div className={containerClass}>
+-        <div className={panelWrapperClass} onMouseEnter={this.onMouseEnter} onMouseLeave={this.onMouseLeave}>
+-          {plugin.exports.Panel && this.renderReactPanel()}
+-          {plugin.exports.PanelCtrl && this.renderAngularPanel()}
+-        </div>
++        <PanelResizer
++          isEditing={!!isEditing}
++          panel={panel}
++          render={(panelHeight: number | 'inherit') => (
++            <div
++              className={panelWrapperClass}
++              onMouseEnter={this.onMouseEnter}
++              onMouseLeave={this.onMouseLeave}
++              style={{ height: panelHeight }}
++            >
++              {plugin.exports.Panel && this.renderReactPanel()}
++              {plugin.exports.PanelCtrl && this.renderAngularPanel()}
++            </div>
++          )}
++        />
+         {panel.isEditing && (
+           <PanelEditor
+             panel={panel}
+diff --git a/public/app/features/dashboard/dashgrid/PanelResizer.tsx b/public/app/features/dashboard/dashgrid/PanelResizer.tsx
+new file mode 100644
+index 00000000000..7d52076b54b
+--- /dev/null
++++ b/public/app/features/dashboard/dashgrid/PanelResizer.tsx
+@@ -0,0 +1,81 @@
++﻿import React, { PureComponent } from 'react';
++import { throttle } from 'lodash';
++import Draggable from 'react-draggable';
++
++import { PanelModel } from '../panel_model';
++
++interface Props {
++  isEditing: boolean;
++  render: (height: number | 'inherit') => JSX.Element;
++  panel: PanelModel;
++}
++
++interface State {
++  editorHeight: number;
++}
++
++export class PanelResizer extends PureComponent<Props, State> {
++  initialHeight: number = Math.floor(document.documentElement.scrollHeight * 0.4);
++  prevEditorHeight: number;
++  throttledChangeHeight: (height: number) => void;
++  throttledResizeDone: () => void;
++
++  constructor(props) {
++    super(props);
++    const { panel } = this.props;
++
++    this.state = {
++      editorHeight: this.initialHeight,
++    };
++
++    this.throttledChangeHeight = throttle(this.changeHeight, 20, { trailing: true });
++    this.throttledResizeDone = throttle(() => {
++      panel.resizeDone();
++    }, 50);
++  }
++
++  get largestHeight() {
++    return document.documentElement.scrollHeight * 0.9;
++  }
++  get smallestHeight() {
++    return 100;
++  }
++
++  changeHeight = height => {
++    const sh = this.smallestHeight;
++    const lh = this.largestHeight;
++    height = height < sh ? sh : height;
++    height = height > lh ? lh : height;
++
++    this.prevEditorHeight = this.state.editorHeight;
++    this.setState({
++      editorHeight: height,
++    });
++  };
++
++  onDrag = (evt, data) => {
++    const newHeight = this.state.editorHeight + data.y;
++    this.throttledChangeHeight(newHeight);
++    this.throttledResizeDone();
++  };
++
++  render() {
++    const { render, isEditing } = this.props;
++    const { editorHeight } = this.state;
++
++    return (
++      <>
++        {render(isEditing ? editorHeight : 'inherit')}
++        {isEditing && (
++          <div className="panel-editor-container__resizer">
++            <Draggable axis="y" grid={[100, 1]} onDrag={this.onDrag} position={{ x: 0, y: 0 }}>
++              <div className="panel-editor-resizer">
++                <div className="panel-editor-resizer__handle" />
++              </div>
++            </Draggable>
++          </div>
++        )}
++      </>
++    );
++  }
++}
+diff --git a/public/app/features/dashboard/dashgrid/QueriesTab.tsx b/public/app/features/dashboard/dashgrid/QueriesTab.tsx
+index 8513f061b74..9ad0bb3cadd 100644
+--- a/public/app/features/dashboard/dashgrid/QueriesTab.tsx
++++ b/public/app/features/dashboard/dashgrid/QueriesTab.tsx
+@@ -1,6 +1,5 @@
+ // Libraries
+ import React, { SFC, PureComponent } from 'react';
+-import Remarkable from 'remarkable';
+ import _ from 'lodash';
+ 
+ // Components
+@@ -22,6 +21,7 @@ import config from 'app/core/config';
+ import { PanelModel } from '../panel_model';
+ import { DashboardModel } from '../dashboard_model';
+ import { DataSourceSelectItem, DataQuery } from 'app/types';
++import { PluginHelp } from 'app/core/components/PluginHelp/PluginHelp';
+ 
+ interface Props {
+   panel: PanelModel;
+@@ -128,43 +128,13 @@ export class QueriesTab extends PureComponent<Props, State> {
+     });
+   };
+ 
+-  loadHelp = () => {
+-    const { currentDS } = this.state;
+-    const hasHelp = currentDS.meta.hasQueryHelp;
+-
+-    if (hasHelp) {
+-      this.setState({
+-        helpContent: <h3>Loading help...</h3>,
+-        isLoadingHelp: true,
+-      });
+-
+-      this.backendSrv
+-        .get(`/api/plugins/${currentDS.meta.id}/markdown/query_help`)
+-        .then(res => {
+-          const md = new Remarkable();
+-          const helpHtml = md.render(res);
+-          this.setState({
+-            helpContent: <div className="markdown-html" dangerouslySetInnerHTML={{ __html: helpHtml }} />,
+-            isLoadingHelp: false,
+-          });
+-        })
+-        .catch(() => {
+-          this.setState({
+-            helpContent: <h3>'Error occured when loading help'</h3>,
+-            isLoadingHelp: false,
+-          });
+-        });
+-    }
+-  };
+-
+   renderQueryInspector = () => {
+     const { panel } = this.props;
+     return <QueryInspector panel={panel} LoadingPlaceholder={LoadingPlaceholder} />;
+   };
+ 
+   renderHelp = () => {
+-    const { helpContent, isLoadingHelp } = this.state;
+-    return isLoadingHelp ? <LoadingPlaceholder text="Loading help..." /> : helpContent;
++    return <PluginHelp plugin={this.state.currentDS.meta} type="query_help" />;
+   };
+ 
+   onAddQuery = (query?: Partial<DataQuery>) => {
+@@ -233,7 +203,6 @@ export class QueriesTab extends PureComponent<Props, State> {
+   render() {
+     const { panel } = this.props;
+     const { currentDS, isAddingMixed } = this.state;
+-    const { hasQueryHelp } = currentDS.meta;
+ 
+     const queryInspector = {
+       title: 'Query Inspector',
+@@ -243,8 +212,6 @@ export class QueriesTab extends PureComponent<Props, State> {
+     const dsHelp = {
+       heading: 'Help',
+       icon: 'fa fa-question',
+-      disabled: !hasQueryHelp,
+-      onClick: this.loadHelp,
+       render: this.renderHelp,
+     };
+ 
+diff --git a/public/app/features/dashboard/dashgrid/QueryOptions.tsx b/public/app/features/dashboard/dashgrid/QueryOptions.tsx
+index c6d5fecb6d4..dd084418c40 100644
+--- a/public/app/features/dashboard/dashgrid/QueryOptions.tsx
++++ b/public/app/features/dashboard/dashgrid/QueryOptions.tsx
+@@ -38,7 +38,33 @@ interface Props {
+   datasource: DataSourceSelectItem;
+ }
+ 
+-export class QueryOptions extends PureComponent<Props> {
++interface State {
++  relativeTime: string;
++  timeShift: string;
++}
++
++export class QueryOptions extends PureComponent<Props, State> {
++  constructor(props) {
++    super(props);
++
++    this.state = {
++      relativeTime: props.panel.timeFrom || '',
++      timeShift: props.panel.timeShift || '',
++    };
++  }
++
++  onRelativeTimeChange = event => {
++    this.setState({
++      relativeTime: event.target.value,
++    });
++  };
++
++  onTimeShiftChange = event => {
++    this.setState({
++      timeShift: event.target.value,
++    });
++  };
++
+   onOverrideTime = (evt, status: InputStatus) => {
+     const { value } = evt.target;
+     const { panel } = this.props;
+@@ -128,8 +154,10 @@ export class QueryOptions extends PureComponent<Props> {
+     });
+   }
+ 
+-  render = () => {
++  render() {
+     const hideTimeOverride = this.props.panel.hideTimeOverride;
++    const { relativeTime, timeShift } = this.state;
++
+     return (
+       <div className="gf-form-inline">
+         {this.renderOptions()}
+@@ -140,9 +168,11 @@ export class QueryOptions extends PureComponent<Props> {
+             type="text"
+             className="width-6"
+             placeholder="1h"
++            onChange={this.onRelativeTimeChange}
+             onBlur={this.onOverrideTime}
+             validationEvents={timeRangeValidationEvents}
+             hideErrorMessage={true}
++            value={relativeTime}
+           />
+         </div>
+ 
+@@ -152,9 +182,11 @@ export class QueryOptions extends PureComponent<Props> {
+             type="text"
+             className="width-6"
+             placeholder="1h"
++            onChange={this.onTimeShiftChange}
+             onBlur={this.onTimeShift}
+             validationEvents={timeRangeValidationEvents}
+             hideErrorMessage={true}
++            value={timeShift}
+           />
+         </div>
+ 
+@@ -163,5 +195,5 @@ export class QueryOptions extends PureComponent<Props> {
+         </div>
+       </div>
+     );
+-  };
++  }
+ }
+diff --git a/public/app/features/dashboard/dashgrid/VisualizationTab.tsx b/public/app/features/dashboard/dashgrid/VisualizationTab.tsx
+index 0e31d7cdafc..42d9bf6a6eb 100644
+--- a/public/app/features/dashboard/dashgrid/VisualizationTab.tsx
++++ b/public/app/features/dashboard/dashgrid/VisualizationTab.tsx
+@@ -7,6 +7,7 @@ import { getAngularLoader, AngularComponent } from 'app/core/services/AngularLoa
+ // Components
+ import { EditorTabBody } from './EditorTabBody';
+ import { VizTypePicker } from './VizTypePicker';
++import { PluginHelp } from 'app/core/components/PluginHelp/PluginHelp';
+ import { FadeIn } from 'app/core/components/Animations/FadeIn';
+ import { PanelOptionSection } from './PanelOptionSection';
+ 
+@@ -105,6 +106,7 @@ export class VisualizationTab extends PureComponent<Props, State> {
+     }
+ 
+     const panelCtrl = scope.$$childHead.ctrl;
++    panelCtrl.initEditMode();
+ 
+     let template = '';
+     for (let i = 0; i < panelCtrl.editorTabs.length; i++) {
+@@ -198,12 +200,20 @@ export class VisualizationTab extends PureComponent<Props, State> {
+     }
+   };
+ 
++  renderHelp = () => <PluginHelp plugin={this.props.plugin} type="help" />;
++
+   render() {
+     const { plugin } = this.props;
+     const { isVizPickerOpen, searchQuery } = this.state;
+ 
++    const pluginHelp = {
++      heading: 'Help',
++      icon: 'fa fa-question',
++      render: this.renderHelp,
++    };
++
+     return (
+-      <EditorTabBody heading="Visualization" renderToolbar={this.renderToolbar}>
++      <EditorTabBody heading="Visualization" renderToolbar={this.renderToolbar} toolbarItems={[pluginHelp]}>
+         <>
+           <FadeIn in={isVizPickerOpen} duration={200} unmountOnExit={true}>
+             <VizTypePicker
+diff --git a/public/app/features/dashboard/share_snapshot_ctrl.ts b/public/app/features/dashboard/share_snapshot_ctrl.ts
+index ac09d63054d..7dcf0469e77 100644
+--- a/public/app/features/dashboard/share_snapshot_ctrl.ts
++++ b/public/app/features/dashboard/share_snapshot_ctrl.ts
+@@ -27,7 +27,6 @@ export class ShareSnapshotCtrl {
+ 
+     $scope.init = () => {
+       backendSrv.get('/api/snapshot/shared-options').then(options => {
+-        $scope.externalUrl = options['externalSnapshotURL'];
+         $scope.sharingButtonText = options['externalSnapshotName'];
+         $scope.externalEnabled = options['externalEnabled'];
+       });
+@@ -61,30 +60,14 @@ export class ShareSnapshotCtrl {
+         dashboard: dash,
+         name: dash.title,
+         expires: $scope.snapshot.expires,
++        external: external,
+       };
+ 
+-      const postUrl = external ? $scope.externalUrl + $scope.apiUrl : $scope.apiUrl;
+-
+-      backendSrv.post(postUrl, cmdData).then(
++      backendSrv.post($scope.apiUrl, cmdData).then(
+         results => {
+           $scope.loading = false;
+-
+-          if (external) {
+-            $scope.deleteUrl = results.deleteUrl;
+-            $scope.snapshotUrl = results.url;
+-            $scope.saveExternalSnapshotRef(cmdData, results);
+-          } else {
+-            const url = $location.url();
+-            let baseUrl = $location.absUrl();
+-
+-            if (url !== '/') {
+-              baseUrl = baseUrl.replace(url, '') + '/';
+-            }
+-
+-            $scope.snapshotUrl = baseUrl + 'dashboard/snapshot/' + results.key;
+-            $scope.deleteUrl = baseUrl + 'api/snapshots-delete/' + results.deleteKey;
+-          }
+-
++          $scope.deleteUrl = results.deleteUrl;
++          $scope.snapshotUrl = results.url;
+           $scope.step = 2;
+         },
+         () => {
+@@ -161,14 +144,6 @@ export class ShareSnapshotCtrl {
+         $scope.step = 3;
+       });
+     };
+-
+-    $scope.saveExternalSnapshotRef = (cmdData, results) => {
+-      // save external in local instance as well
+-      cmdData.external = true;
+-      cmdData.key = results.key;
+-      cmdData.deleteKey = results.deleteKey;
+-      backendSrv.post('/api/snapshots/', cmdData);
+-    };
+   }
+ }
+ 
+diff --git a/public/app/features/dashboard/state/actions.ts b/public/app/features/dashboard/state/actions.ts
+index bc35ff31ff0..4dcf0a925b7 100644
+--- a/public/app/features/dashboard/state/actions.ts
++++ b/public/app/features/dashboard/state/actions.ts
+@@ -67,7 +67,7 @@ export function updateDashboardPermission(
+ 
+       const updated = toUpdateItem(item);
+ 
+-      // if this is the item we want to update, update it's permisssion
++      // if this is the item we want to update, update it's permission
+       if (itemToUpdate === item) {
+         updated.permission = level;
+       }
+diff --git a/public/app/features/dashboard/timepicker/timepicker.html b/public/app/features/dashboard/timepicker/timepicker.html
+index 3e38881d480..168d2036a7f 100644
+--- a/public/app/features/dashboard/timepicker/timepicker.html
++++ b/public/app/features/dashboard/timepicker/timepicker.html
+@@ -24,60 +24,67 @@
+ </div>
+ 
+ <div ng-if="ctrl.isOpen" class="gf-timepicker-dropdown">
+-  <form name="timeForm" class="gf-timepicker-absolute-section">
+-    <h3 class="section-heading">Custom range</h3>
+-
+-    <label class="small">From:</label>
+-    <div class="gf-form-inline">
+-      <div class="gf-form max-width-28">
+-        <input type="text" class="gf-form-input input-large" ng-model="ctrl.editTimeRaw.from" input-datetime>
+-      </div>
+-      <div class="gf-form">
+-        <button class="btn gf-form-btn btn-primary" type="button" ng-click="openFromPicker=!openFromPicker">
+-          <i class="fa fa-calendar"></i>
+-        </button>
+-      </div>
++  <div class="popover-box">
++    <div class="popover-box__header">
++      <span class="popover-box__title">Quick ranges</span>
+     </div>
+-
+-    <div ng-if="openFromPicker">
+-      <datepicker ng-model="ctrl.absolute.fromJs" class="gf-timepicker-component" show-weeks="false" starting-day="ctrl.firstDayOfWeek" ng-change="ctrl.absoluteFromChanged()"></datepicker>
++    <div class="popover-box__body gf-timepicker-relative-section">
++      <ul ng-repeat="group in ctrl.timeOptions">
++        <li bindonce ng-repeat='option in group' ng-class="{active: option.active}">
++          <a ng-click="ctrl.setRelativeFilter(option)" bo-text="option.display"></a>
++        </li>
++      </ul>
+     </div>
++  </div>
+ 
+-
+-    <label class="small">To:</label>
+-    <div class="gf-form-inline">
+-      <div class="gf-form max-width-28">
+-        <input type="text" class="gf-form-input input-large" ng-model="ctrl.editTimeRaw.to" input-datetime>
++  <div class="popover-box">
++    <div class="popover-box__header">
++      <span class="popover-box__title">Custom range</span>
++    </div>
++    <form name="timeForm" class="popover-box__body gf-timepicker-absolute-section">
++      <label class="small">From:</label>
++      <div class="gf-form-inline">
++        <div class="gf-form max-width-28">
++          <input type="text" class="gf-form-input input-large" ng-model="ctrl.editTimeRaw.from" input-datetime>
++        </div>
++        <div class="gf-form">
++          <button class="btn gf-form-btn btn-primary" type="button" ng-click="openFromPicker=!openFromPicker">
++            <i class="fa fa-calendar"></i>
++          </button>
++        </div>
+       </div>
+-      <div class="gf-form">
+-        <button class="btn gf-form-btn btn-primary" type="button" ng-click="openToPicker=!openToPicker">
+-          <i class="fa fa-calendar"></i>
+-        </button>
++
++      <div ng-if="openFromPicker">
++        <datepicker ng-model="ctrl.absolute.fromJs" class="gf-timepicker-component" show-weeks="false" starting-day="ctrl.firstDayOfWeek" ng-change="ctrl.absoluteFromChanged()"></datepicker>
+       </div>
+-    </div>
+ 
+-    <div ng-if="openToPicker">
+-      <datepicker ng-model="ctrl.absolute.toJs" class="gf-timepicker-component" show-weeks="false" starting-day="ctrl.firstDayOfWeek" ng-change="ctrl.absoluteToChanged()"></datepicker>
+-    </div>
+ 
+-    <label class="small">Refreshing every:</label>
+-    <div class="gf-form-inline">
+-      <div class="gf-form max-width-28">
+-        <select ng-model="ctrl.refresh.value" class="gf-form-input input-medium" ng-options="f.value as f.text for f in ctrl.refresh.options"></select>
++      <label class="small">To:</label>
++      <div class="gf-form-inline">
++        <div class="gf-form max-width-28">
++          <input type="text" class="gf-form-input input-large" ng-model="ctrl.editTimeRaw.to" input-datetime>
++        </div>
++        <div class="gf-form">
++          <button class="btn gf-form-btn btn-primary" type="button" ng-click="openToPicker=!openToPicker">
++            <i class="fa fa-calendar"></i>
++          </button>
++        </div>
+       </div>
+-      <div class="gf-form">
+-        <button type="submit" class="btn gf-form-btn btn-secondary" ng-click="ctrl.applyCustom();" ng-disabled="!timeForm.$valid">Apply</button>
++
++      <div ng-if="openToPicker">
++        <datepicker ng-model="ctrl.absolute.toJs" class="gf-timepicker-component" show-weeks="false" starting-day="ctrl.firstDayOfWeek" ng-change="ctrl.absoluteToChanged()"></datepicker>
+       </div>
+-    </div>
+-  </form>
+ 
+-  <div class="gf-timepicker-relative-section">
+-    <h3 class="section-heading">Quick ranges</h3>
+-    <ul ng-repeat="group in ctrl.timeOptions">
+-      <li bindonce ng-repeat='option in group' ng-class="{active: option.active}">
+-        <a ng-click="ctrl.setRelativeFilter(option)" bo-text="option.display"></a>
+-      </li>
+-    </ul>
++      <label class="small">Refreshing every:</label>
++      <div class="gf-form-inline">
++        <div class="gf-form max-width-28">
++          <select ng-model="ctrl.refresh.value" class="gf-form-input input-medium" ng-options="f.value as f.text for f in ctrl.refresh.options"></select>
++        </div>
++        <div class="gf-form">
++          <button type="submit" class="btn gf-form-btn btn-secondary" ng-click="ctrl.applyCustom();" ng-disabled="!timeForm.$valid">Apply</button>
++        </div>
++      </div>
++    </form>
+   </div>
+ </div>
+ 
+diff --git a/public/app/features/datasources/settings/__snapshots__/DataSourceSettings.test.tsx.snap b/public/app/features/datasources/settings/__snapshots__/DataSourceSettings.test.tsx.snap
+index 9da5904d1ae..bcd8237ff39 100644
+--- a/public/app/features/datasources/settings/__snapshots__/DataSourceSettings.test.tsx.snap
++++ b/public/app/features/datasources/settings/__snapshots__/DataSourceSettings.test.tsx.snap
+@@ -61,7 +61,10 @@ exports[`Render should render alpha info text 1`] = `
+                 },
+                 "description": "pretty decent plugin",
+                 "links": Array [
+-                  "one link",
++                  Object {
++                    "name": "project",
++                    "url": "one link",
++                  },
+                 ],
+                 "logos": Object {
+                   "large": "large/logo",
+@@ -160,7 +163,10 @@ exports[`Render should render beta info text 1`] = `
+                 },
+                 "description": "pretty decent plugin",
+                 "links": Array [
+-                  "one link",
++                  Object {
++                    "name": "project",
++                    "url": "one link",
++                  },
+                 ],
+                 "logos": Object {
+                   "large": "large/logo",
+@@ -254,7 +260,10 @@ exports[`Render should render component 1`] = `
+                 },
+                 "description": "pretty decent plugin",
+                 "links": Array [
+-                  "one link",
++                  Object {
++                    "name": "project",
++                    "url": "one link",
++                  },
+                 ],
+                 "logos": Object {
+                   "large": "large/logo",
+@@ -353,7 +362,10 @@ exports[`Render should render is ready only message 1`] = `
+                 },
+                 "description": "pretty decent plugin",
+                 "links": Array [
+-                  "one link",
++                  Object {
++                    "name": "project",
++                    "url": "one link",
++                  },
+                 ],
+                 "logos": Object {
+                   "large": "large/logo",
+diff --git a/public/app/features/datasources/state/navModel.ts b/public/app/features/datasources/state/navModel.ts
+index 3f59812a522..19fc422e3b8 100644
+--- a/public/app/features/datasources/state/navModel.ts
++++ b/public/app/features/datasources/state/navModel.ts
+@@ -73,7 +73,7 @@ export function getDataSourceLoadingNav(pageName: string): NavModel {
+           url: '',
+         },
+         description: '',
+-        links: [''],
++        links: [{ name: '', url: '' }],
+         logos: {
+           large: '',
+           small: '',
+diff --git a/public/app/features/explore/Explore.tsx b/public/app/features/explore/Explore.tsx
+index d2a81864ed1..e8897c6926a 100644
+--- a/public/app/features/explore/Explore.tsx
++++ b/public/app/features/explore/Explore.tsx
+@@ -482,7 +482,7 @@ export class Explore extends React.PureComponent<ExploreProps, ExploreState> {
+           } else {
+             // Modify query only at index
+             nextQueries = initialQueries.map((query, i) => {
+-              // Synchronise all queries with local query cache to ensure consistency
++              // Synchronize all queries with local query cache to ensure consistency
+               // TODO still needed?
+               return i === index
+                 ? {
+diff --git a/public/app/features/explore/PlaceholdersBuffer.ts b/public/app/features/explore/PlaceholdersBuffer.ts
+index 9a0db18ef04..461331daab4 100644
+--- a/public/app/features/explore/PlaceholdersBuffer.ts
++++ b/public/app/features/explore/PlaceholdersBuffer.ts
+@@ -88,7 +88,7 @@ export default class PlaceholdersBuffer {
+       orders.push({ index: parts.length - 1, order });
+       textOffset += part.length + match.length;
+     }
+-    // Ensures string serialisation still works if no placeholders were parsed
++    // Ensures string serialization still works if no placeholders were parsed
+     // and also accounts for the remainder of text with placeholders
+     parts.push(text.slice(textOffset));
+     return {
+diff --git a/public/app/features/explore/TimePicker.tsx b/public/app/features/explore/TimePicker.tsx
+index e27909ff6f2..b99618d257a 100644
+--- a/public/app/features/explore/TimePicker.tsx
++++ b/public/app/features/explore/TimePicker.tsx
+@@ -232,61 +232,61 @@ export default class TimePicker extends PureComponent<TimePickerProps, TimePicke
+     const timeOptions = this.getTimeOptions();
+     return (
+       <div ref={this.dropdownRef} className="gf-timepicker-dropdown">
+-        <div className="gf-timepicker-absolute-section">
+-          <h3 className="section-heading">Custom range</h3>
+-
+-          <label className="small">From:</label>
+-          <div className="gf-form-inline">
+-            <div className="gf-form max-width-28">
+-              <input
+-                type="text"
+-                className="gf-form-input input-large timepicker-from"
+-                value={fromRaw}
+-                onChange={this.handleChangeFrom}
+-              />
+-            </div>
++        <div className="popover-box">
++          <div className="popover-box__header">
++            <span className="popover-box__title">Quick ranges</span>
++          </div>
++          <div className="popover-box__body gf-timepicker-relative-section">
++            {Object.keys(timeOptions).map(section => {
++              const group = timeOptions[section];
++              return (
++                <ul key={section}>
++                  {group.map(option => (
++                    <li className={option.active ? 'active' : ''} key={option.display}>
++                      <a onClick={() => this.handleClickRelativeOption(option)}>{option.display}</a>
++                    </li>
++                  ))}
++                </ul>
++              );
++            })}
+           </div>
++        </div>
+ 
+-          <label className="small">To:</label>
+-          <div className="gf-form-inline">
+-            <div className="gf-form max-width-28">
+-              <input
+-                type="text"
+-                className="gf-form-input input-large timepicker-to"
+-                value={toRaw}
+-                onChange={this.handleChangeTo}
+-              />
+-            </div>
++        <div className="popover-box">
++          <div className="popover-box__header">
++            <span className="popover-box__title">Custom range</span>
+           </div>
++          <div className="popover-box__body gf-timepicker-absolute-section">
++            <label className="small">From:</label>
++            <div className="gf-form-inline">
++              <div className="gf-form max-width-28">
++                <input
++                  type="text"
++                  className="gf-form-input input-large timepicker-from"
++                  value={fromRaw}
++                  onChange={this.handleChangeFrom}
++                />
++              </div>
++            </div>
+ 
+-          {/* <label className="small">Refreshing every:</label>
+-          <div className="gf-form-inline">
+-            <div className="gf-form max-width-28">
+-              <select className="gf-form-input input-medium" ng-options="f.value as f.text for f in ctrl.refresh.options"></select>
++            <label className="small">To:</label>
++            <div className="gf-form-inline">
++              <div className="gf-form max-width-28">
++                <input
++                  type="text"
++                  className="gf-form-input input-large timepicker-to"
++                  value={toRaw}
++                  onChange={this.handleChangeTo}
++                />
++              </div>
++            </div>
++            <div className="gf-form">
++              <button className="btn gf-form-btn btn-secondary" onClick={this.handleClickApply}>
++                Apply
++              </button>
+             </div>
+-          </div> */}
+-          <div className="gf-form">
+-            <button className="btn gf-form-btn btn-secondary" onClick={this.handleClickApply}>
+-              Apply
+-            </button>
+           </div>
+         </div>
+-
+-        <div className="gf-timepicker-relative-section">
+-          <h3 className="section-heading">Quick ranges</h3>
+-          {Object.keys(timeOptions).map(section => {
+-            const group = timeOptions[section];
+-            return (
+-              <ul key={section}>
+-                {group.map(option => (
+-                  <li className={option.active ? 'active' : ''} key={option.display}>
+-                    <a onClick={() => this.handleClickRelativeOption(option)}>{option.display}</a>
+-                  </li>
+-                ))}
+-              </ul>
+-            );
+-          })}
+-        </div>
+       </div>
+     );
+   }
+diff --git a/public/app/features/folders/state/actions.ts b/public/app/features/folders/state/actions.ts
+index cd02915e586..a7adc71e2d8 100644
+--- a/public/app/features/folders/state/actions.ts
++++ b/public/app/features/folders/state/actions.ts
+@@ -112,7 +112,7 @@ export function updateFolderPermission(itemToUpdate: DashboardAcl, level: Permis
+ 
+       const updated = toUpdateItem(item);
+ 
+-      // if this is the item we want to update, update it's permisssion
++      // if this is the item we want to update, update it's permission
+       if (itemToUpdate === item) {
+         updated.permission = level;
+       }
+diff --git a/public/app/features/manage-dashboards/SnapshotListCtrl.ts b/public/app/features/manage-dashboards/SnapshotListCtrl.ts
+index 2ff53e7aed5..4d6dc006d47 100644
+--- a/public/app/features/manage-dashboards/SnapshotListCtrl.ts
++++ b/public/app/features/manage-dashboards/SnapshotListCtrl.ts
+@@ -5,10 +5,14 @@ export class SnapshotListCtrl {
+   snapshots: any;
+ 
+   /** @ngInject */
+-  constructor(private $rootScope, private backendSrv, navModelSrv) {
++  constructor(private $rootScope, private backendSrv, navModelSrv, private $location) {
+     this.navModel = navModelSrv.getNav('dashboards', 'snapshots', 0);
+     this.backendSrv.get('/api/dashboard/snapshots').then(result => {
+-      this.snapshots = result;
++      const baseUrl = this.$location.absUrl().replace($location.url(), '');
++      this.snapshots = result.map(snapshot => ({
++        ...snapshot,
++        url: snapshot.externalUrl || `${baseUrl}/dashboard/snapshot/${snapshot.key}`,
++      }));
+     });
+   }
+ 
+diff --git a/public/app/features/manage-dashboards/partials/snapshot_list.html b/public/app/features/manage-dashboards/partials/snapshot_list.html
+index 8775b527ae1..f646194088d 100644
+--- a/public/app/features/manage-dashboards/partials/snapshot_list.html
++++ b/public/app/features/manage-dashboards/partials/snapshot_list.html
+@@ -6,17 +6,21 @@
+       <th><strong>Name</strong></th>
+       <th><strong>Snapshot url</strong></th>
+       <th style="width: 70px"></th>
++      <th style="width: 30px"></th>
+       <th style="width: 25px"></th>
+ 		</thead>
+ 		<tr ng-repeat="snapshot in ctrl.snapshots">
+       <td>
+-				<a href="dashboard/snapshot/{{snapshot.key}}">{{snapshot.name}}</a>
++        <a href="{{snapshot.url}}">{{snapshot.name}}</a>
+       </td>
+       <td >
+-        <a href="dashboard/snapshot/{{snapshot.key}}">dashboard/snapshot/{{snapshot.key}}</a>
++        <a href="{{snapshot.url}}">{{snapshot.url}}</a>
++      </td>
++      <td>
++        <span class="query-keyword" ng-if="snapshot.external">External</span>
+       </td>
+       <td class="text-center">
+-        <a href="dashboard/snapshot/{{snapshot.key}}" class="btn btn-inverse btn-mini">
++        <a href="{{snapshot.url}}" class="btn btn-inverse btn-mini">
+           <i class="fa fa-eye"></i>
+           View
+         </a>
+diff --git a/public/app/features/org/state/actions.ts b/public/app/features/org/state/actions.ts
+index aeec8297ea6..52793698a45 100644
+--- a/public/app/features/org/state/actions.ts
++++ b/public/app/features/org/state/actions.ts
+@@ -5,7 +5,7 @@ import { getBackendSrv } from 'app/core/services/backend_srv';
+ type ThunkResult<R> = ThunkAction<R, StoreState, undefined, any>;
+ 
+ export enum ActionTypes {
+-  LoadOrganization = 'LOAD_ORGANISATION',
++  LoadOrganization = 'LOAD_ORGANIZATION',
+   SetOrganizationName = 'SET_ORGANIZATION_NAME',
+ }
+ 
+@@ -19,9 +19,9 @@ interface SetOrganizationNameAction {
+   payload: string;
+ }
+ 
+-const organisationLoaded = (organisation: Organization) => ({
++const organizationLoaded = (organization: Organization) => ({
+   type: ActionTypes.LoadOrganization,
+-  payload: organisation,
++  payload: organization,
+ });
+ 
+ export const setOrganizationName = (orgName: string) => ({
+@@ -33,10 +33,10 @@ export type Action = LoadOrganizationAction | SetOrganizationNameAction;
+ 
+ export function loadOrganization(): ThunkResult<void> {
+   return async dispatch => {
+-    const organisationResponse = await getBackendSrv().get('/api/org');
+-    dispatch(organisationLoaded(organisationResponse));
++    const organizationResponse = await getBackendSrv().get('/api/org');
++    dispatch(organizationLoaded(organizationResponse));
+ 
+-    return organisationResponse;
++    return organizationResponse;
+   };
+ }
+ 
+diff --git a/public/app/features/panel/metrics_panel_ctrl.ts b/public/app/features/panel/metrics_panel_ctrl.ts
+index 6754d27bd64..5557b477b8f 100644
+--- a/public/app/features/panel/metrics_panel_ctrl.ts
++++ b/public/app/features/panel/metrics_panel_ctrl.ts
+@@ -30,8 +30,6 @@ class MetricsPanelCtrl extends PanelCtrl {
+   constructor($scope, $injector) {
+     super($scope, $injector);
+ 
+-    // make metrics tab the default
+-    this.editorTabIndex = 1;
+     this.$q = $injector.get('$q');
+     this.contextSrv = $injector.get('contextSrv');
+     this.datasourceSrv = $injector.get('datasourceSrv');
+@@ -90,7 +88,7 @@ class MetricsPanelCtrl extends PanelCtrl {
+       .then(this.issueQueries.bind(this))
+       .then(this.handleQueryResult.bind(this))
+       .catch(err => {
+-        // if cancelled  keep loading set to true
++        // if canceled  keep loading set to true
+         if (err.cancelled) {
+           console.log('Panel request cancelled', err);
+           return;
+diff --git a/public/app/features/panel/panel_ctrl.ts b/public/app/features/panel/panel_ctrl.ts
+index 86f80b114e3..2bd43ee2a29 100644
+--- a/public/app/features/panel/panel_ctrl.ts
++++ b/public/app/features/panel/panel_ctrl.ts
+@@ -18,7 +18,6 @@ export class PanelCtrl {
+   panel: any;
+   error: any;
+   dashboard: any;
+-  editorTabIndex: number;
+   pluginName: string;
+   pluginId: string;
+   editorTabs: any;
+@@ -39,7 +38,7 @@ export class PanelCtrl {
+     this.$location = $injector.get('$location');
+     this.$scope = $scope;
+     this.$timeout = $injector.get('$timeout');
+-    this.editorTabIndex = 0;
++    this.editorTabs = [];
+     this.events = this.panel.events;
+     this.timing = {};
+ 
+@@ -90,10 +89,10 @@ export class PanelCtrl {
+   }
+ 
+   initEditMode() {
+-    this.editorTabs = [];
+-
+-    this.editModeInitiated = true;
+-    this.events.emit('init-edit-mode', null);
++    if (!this.editModeInitiated) {
++      this.editModeInitiated = true;
++      this.events.emit('init-edit-mode', null);
++    }
+   }
+ 
+   addEditorTab(title, directiveFn, index?, icon?) {
+@@ -212,11 +211,6 @@ export class PanelCtrl {
+       this.containerHeight = $(window).height();
+     }
+ 
+-    // hacky solution
+-    if (this.panel.isEditing && !this.editModeInitiated) {
+-      this.initEditMode();
+-    }
+-
+     this.height = this.containerHeight - (PANEL_BORDER + PANEL_HEADER_HEIGHT);
+   }
+ 
+diff --git a/public/app/features/plugins/__mocks__/pluginMocks.ts b/public/app/features/plugins/__mocks__/pluginMocks.ts
+index 358adb112b3..b922840cb43 100644
+--- a/public/app/features/plugins/__mocks__/pluginMocks.ts
++++ b/public/app/features/plugins/__mocks__/pluginMocks.ts
+@@ -70,7 +70,7 @@ export const getMockPlugin = () => {
+         url: 'url/to/GrafanaLabs',
+       },
+       description: 'pretty decent plugin',
+-      links: ['one link'],
++      links: [{ name: 'project', url: 'one link' }],
+       logos: { small: 'small/logo', large: 'large/logo' },
+       screenshots: [{ path: `screenshot` }],
+       updated: '2018-09-26',
+diff --git a/public/app/features/templating/specs/variable_srv_init.test.ts b/public/app/features/templating/specs/variable_srv_init.test.ts
+index bda5b6aa577..0df6209bfdc 100644
+--- a/public/app/features/templating/specs/variable_srv_init.test.ts
++++ b/public/app/features/templating/specs/variable_srv_init.test.ts
+@@ -77,8 +77,8 @@ describe('VariableSrv init', function(this: any) {
+           {
+             name: 'apps',
+             type: type,
+-            current: { text: 'test', value: 'test' },
+-            options: [{ text: 'test', value: 'test' }],
++            current: { text: 'Test', value: 'test' },
++            options: [{ text: 'Test', value: 'test' }],
+           },
+         ];
+         scenario.urlParams['var-apps'] = 'new';
+@@ -161,11 +161,11 @@ describe('VariableSrv init', function(this: any) {
+           name: 'apps',
+           type: 'query',
+           multi: true,
+-          current: { text: 'val1', value: 'val1' },
++          current: { text: 'Val1', value: 'val1' },
+           options: [
+-            { text: 'val1', value: 'val1' },
+-            { text: 'val2', value: 'val2' },
+-            { text: 'val3', value: 'val3', selected: true },
++            { text: 'Val1', value: 'val1' },
++            { text: 'Val2', value: 'val2' },
++            { text: 'Val3', value: 'val3', selected: true },
+           ],
+         },
+       ];
+@@ -177,7 +177,7 @@ describe('VariableSrv init', function(this: any) {
+       expect(variable.current.value.length).toBe(2);
+       expect(variable.current.value[0]).toBe('val2');
+       expect(variable.current.value[1]).toBe('val1');
+-      expect(variable.current.text).toBe('val2 + val1');
++      expect(variable.current.text).toBe('Val2 + Val1');
+       expect(variable.options[0].selected).toBe(true);
+       expect(variable.options[1].selected).toBe(true);
+     });
+@@ -188,6 +188,30 @@ describe('VariableSrv init', function(this: any) {
+     });
+   });
+ 
++  describeInitScenario(
++    'when template variable is present in url multiple times and variables have no text',
++    scenario => {
++      scenario.setup(() => {
++        scenario.variables = [
++          {
++            name: 'apps',
++            type: 'query',
++            multi: true,
++          },
++        ];
++        scenario.urlParams['var-apps'] = ['val1', 'val2'];
++      });
++
++      it('should display concatenated values in text', () => {
++        const variable = ctx.variableSrv.variables[0];
++        expect(variable.current.value.length).toBe(2);
++        expect(variable.current.value[0]).toBe('val1');
++        expect(variable.current.value[1]).toBe('val2');
++        expect(variable.current.text).toBe('val1 + val2');
++      });
++    }
++  );
++
+   describeInitScenario('when template variable is present in url multiple times using key/values', scenario => {
+     scenario.setup(() => {
+       scenario.variables = [
+diff --git a/public/app/features/templating/variable_srv.ts b/public/app/features/templating/variable_srv.ts
+index a676f9c2848..bc0362f0678 100644
+--- a/public/app/features/templating/variable_srv.ts
++++ b/public/app/features/templating/variable_srv.ts
+@@ -237,8 +237,10 @@ export class VariableSrv {
+   setOptionAsCurrent(variable, option) {
+     variable.current = _.cloneDeep(option);
+ 
+-    if (_.isArray(variable.current.text)) {
++    if (_.isArray(variable.current.text) && variable.current.text.length > 0) {
+       variable.current.text = variable.current.text.join(' + ');
++    } else if (_.isArray(variable.current.value) && variable.current.value[0] !== '$__all') {
++      variable.current.text = variable.current.value.join(' + ');
+     }
+ 
+     this.selectOptionsForCurrentValue(variable);
+diff --git a/public/app/plugins/datasource/loki/result_transformer.test.ts b/public/app/plugins/datasource/loki/result_transformer.test.ts
+index 182292261a8..c23a370ab81 100644
+--- a/public/app/plugins/datasource/loki/result_transformer.test.ts
++++ b/public/app/plugins/datasource/loki/result_transformer.test.ts
+@@ -35,7 +35,7 @@ describe('getLoglevel()', () => {
+ });
+ 
+ describe('parseLabels()', () => {
+-  it('returns no labels on emtpy labels string', () => {
++  it('returns no labels on empty labels string', () => {
+     expect(parseLabels('')).toEqual({});
+     expect(parseLabels('{}')).toEqual({});
+   });
+@@ -46,7 +46,7 @@ describe('parseLabels()', () => {
+ });
+ 
+ describe('formatLabels()', () => {
+-  it('returns no labels on emtpy label set', () => {
++  it('returns no labels on empty label set', () => {
+     expect(formatLabels({})).toEqual('');
+     expect(formatLabels({}, 'foo')).toEqual('foo');
+   });
+diff --git a/public/app/plugins/panel/dashlist/module.ts b/public/app/plugins/panel/dashlist/module.ts
+index 1b260107587..ba6f1a8b4f4 100644
+--- a/public/app/plugins/panel/dashlist/module.ts
++++ b/public/app/plugins/panel/dashlist/module.ts
+@@ -60,7 +60,6 @@ class DashListCtrl extends PanelCtrl {
+   }
+ 
+   onInitEditMode() {
+-    this.editorTabIndex = 1;
+     this.modes = ['starred', 'search', 'recently viewed'];
+     this.addEditorTab('Options', 'public/app/plugins/panel/dashlist/editor.html');
+   }
+diff --git a/public/app/plugins/panel/graph/README.md b/public/app/plugins/panel/graph/README.md
+index 2dc8682f0e3..e1184beb8e7 100644
+--- a/public/app/plugins/panel/graph/README.md
++++ b/public/app/plugins/panel/graph/README.md
+@@ -1,7 +1,7 @@
+-# Graph Panel -  Native Plugin
++# Graph Panel
+ 
+-The Graph is the main graph panel and is **included** with Grafana. It provides a very rich set of graphing options.
++This is the main Graph panel and is **included** with Grafana. It provides a very rich set of graphing options.
+ 
+-Read more about it here:
++For full reference documentation:
+ 
+-[http://docs.grafana.org/reference/graph/](http://docs.grafana.org/reference/graph/)
+\ No newline at end of file
++[http://docs.grafana.org/reference/graph/](http://docs.grafana.org/reference/graph/)
+diff --git a/public/app/plugins/panel/graph/graph.ts b/public/app/plugins/panel/graph/graph.ts
+index ff248d68201..86a6fd1dfd2 100755
+--- a/public/app/plugins/panel/graph/graph.ts
++++ b/public/app/plugins/panel/graph/graph.ts
+@@ -737,7 +737,7 @@ class GraphElement {
+     if (min && max && ticks) {
+       const range = max - min;
+       const secPerTick = range / ticks / 1000;
+-      // Need have 10 milisecond margin on the day range
++      // Need have 10 millisecond margin on the day range
+       // As sometimes last 24 hour dashboard evaluates to more than 86400000
+       const oneDay = 86400010;
+       const oneYear = 31536000000;
+diff --git a/public/app/plugins/panel/graph/jquery.flot.events.ts b/public/app/plugins/panel/graph/jquery.flot.events.ts
+index ed2b2dab92a..a5d7f658ccf 100644
+--- a/public/app/plugins/panel/graph/jquery.flot.events.ts
++++ b/public/app/plugins/panel/graph/jquery.flot.events.ts
+@@ -54,7 +54,7 @@ export function createEditPopover(element, event, plot) {
+   const eventManager = plot.getOptions().events.manager;
+   if (eventManager.editorOpen) {
+     // update marker element to attach to (needed in case of legend on the right
+-    // when there is a double render pass and the inital marker element is removed)
++    // when there is a double render pass and the initial marker element is removed)
+     markerElementToAttachTo = element;
+     return;
+   }
+diff --git a/public/app/plugins/panel/pluginlist/module.ts b/public/app/plugins/panel/pluginlist/module.ts
+index eeac352f799..55ca160652d 100644
+--- a/public/app/plugins/panel/pluginlist/module.ts
++++ b/public/app/plugins/panel/pluginlist/module.ts
+@@ -29,7 +29,6 @@ class PluginListCtrl extends PanelCtrl {
+   }
+ 
+   onInitEditMode() {
+-    this.editorTabIndex = 1;
+     this.addEditorTab('Options', 'public/app/plugins/panel/pluginlist/editor.html');
+   }
+ 
+diff --git a/public/app/plugins/panel/text/module.ts b/public/app/plugins/panel/text/module.ts
+index 874691fab97..08ab4cd2b96 100644
+--- a/public/app/plugins/panel/text/module.ts
++++ b/public/app/plugins/panel/text/module.ts
+@@ -43,7 +43,6 @@ export class TextPanelCtrl extends PanelCtrl {
+ 
+   onInitEditMode() {
+     this.addEditorTab('Options', 'public/app/plugins/panel/text/editor.html');
+-    this.editorTabIndex = 1;
+ 
+     if (this.panel.mode === 'text') {
+       this.panel.mode = 'markdown';
+diff --git a/public/app/types/plugins.ts b/public/app/types/plugins.ts
+index bc33ec80409..a3519e5b5cc 100644
+--- a/public/app/types/plugins.ts
++++ b/public/app/types/plugins.ts
+@@ -57,13 +57,18 @@ export interface PluginInclude {
+   path: string;
+ }
+ 
++interface PluginMetaInfoLink {
++  name: string;
++  url: string;
++}
++
+ export interface PluginMetaInfo {
+   author: {
+     name: string;
+     url?: string;
+   };
+   description: string;
+-  links: string[];
++  links: PluginMetaInfoLink[];
+   logos: {
+     large: string;
+     small: string;
+diff --git a/public/dashboards/home.json b/public/dashboards/home.json
+index ff69bb6f856..55cf7242aa6 100644
+--- a/public/dashboards/home.json
++++ b/public/dashboards/home.json
+@@ -31,7 +31,7 @@
+       "folderId": 0,
+       "headings": true,
+       "id": 3,
+-      "limit": 4,
++      "limit": 30,
+       "links": [],
+       "query": "",
+       "recent": true,
+diff --git a/public/sass/_grafana.scss b/public/sass/_grafana.scss
+index bfb186c0b02..bc6b024f643 100644
+--- a/public/sass/_grafana.scss
++++ b/public/sass/_grafana.scss
+@@ -104,6 +104,7 @@
+ @import 'components/thresholds';
+ @import 'components/toggle_button_group';
+ @import 'components/value-mappings';
++@import 'components/popover-box';
+ 
+ // PAGES
+ @import 'pages/login';
+diff --git a/public/sass/_variables.dark.scss b/public/sass/_variables.dark.scss
+index cab0eb76dde..70db51a0fb2 100644
+--- a/public/sass/_variables.dark.scss
++++ b/public/sass/_variables.dark.scss
+@@ -400,3 +400,7 @@ $logs-color-unkown: $gray-2;
+ $button-toggle-group-btn-active-bg: linear-gradient(90deg, $orange, $red);
+ $button-toggle-group-btn-active-shadow: inset 0 0 4px $black;
+ $button-toggle-group-btn-seperator-border: 1px solid $page-bg;
++
++$vertical-resize-handle-bg: $dark-5;
++$vertical-resize-handle-dots: $gray-1;
++$vertical-resize-handle-dots-hover: $gray-2;
+diff --git a/public/sass/_variables.light.scss b/public/sass/_variables.light.scss
+index 16bb341ba27..6afd087a849 100644
+--- a/public/sass/_variables.light.scss
++++ b/public/sass/_variables.light.scss
+@@ -409,3 +409,7 @@ $logs-color-unkown: $gray-5;
+ $button-toggle-group-btn-active-bg: $brand-primary;
+ $button-toggle-group-btn-active-shadow: inset 0 0 4px $white;
+ $button-toggle-group-btn-seperator-border: 1px solid $gray-6;
++
++$vertical-resize-handle-bg: $gray-4;
++$vertical-resize-handle-dots: $gray-3;
++$vertical-resize-handle-dots-hover: $gray-2;
+diff --git a/public/sass/components/_panel_editor.scss b/public/sass/components/_panel_editor.scss
+index 9d0ad0703dc..871bc0a6747 100644
+--- a/public/sass/components/_panel_editor.scss
++++ b/public/sass/components/_panel_editor.scss
+@@ -84,46 +84,34 @@
+   }
+ }
+ 
+-.panel-editor-resizer {
+-  position: absolute;
+-  height: 2px;
+-  width: 100%;
+-  top: -23px;
+-  text-align: center;
+-  border-bottom: 2px dashed transparent;
+-
+-  &:hover {
+-    transition: border-color 0.2s ease-in 0.4s;
+-    transition-delay: 0.2s;
+-    border-color: $text-color-faint;
+-  }
++.panel-editor-container__resizer {
++  position: relative;
++  margin-top: -3px;
+ }
+ 
+ .panel-editor-resizer__handle {
+-  display: inline-block;
+-  width: 180px;
+   position: relative;
+-  border-radius: 2px;
+-  height: 7px;
+-  cursor: grabbing;
+-  background: $input-label-bg;
+-  top: -9px;
++  display: block;
++  background: $vertical-resize-handle-bg;
++  width: 150px;
++  margin-left: -75px;
++  height: 6px;
++  cursor: ns-resize;
++  border-radius: 3px;
++  margin: 0 auto;
+ 
+-  &:hover {
+-    transition: background 0.2s ease-in 0.4s;
+-    transition-delay: 0.2s;
+-    background: linear-gradient(90deg, $orange, $red);
+-    .panel-editor-resizer__handle-dots {
+-      transition: opacity 0.2s ease-in;
+-      opacity: 0;
+-    }
++  &::before {
++    content: ' ';
++    position: absolute;
++    left: 10px;
++    right: 10px;
++    top: 2px;
++    border-top: 2px dotted $vertical-resize-handle-dots;
+   }
+-}
+ 
+-.panel-editor-resizer__handle-dots {
+-  border-top: 2px dashed $text-color-faint;
+-  position: relative;
+-  top: 4px;
++  &:hover::before {
++    border-color: $vertical-resize-handle-dots-hover;
++  }
+ }
+ 
+ .viz-picker {
+@@ -149,7 +137,6 @@
+   display: flex;
+   margin-right: 10px;
+   margin-bottom: 10px;
+-  //border: 1px solid transparent;
+   align-items: center;
+   justify-content: center;
+   padding-bottom: 6px;
+diff --git a/public/sass/components/_panel_gettingstarted.scss b/public/sass/components/_panel_gettingstarted.scss
+index 1fb3eda1834..f46c4569589 100644
+--- a/public/sass/components/_panel_gettingstarted.scss
++++ b/public/sass/components/_panel_gettingstarted.scss
+@@ -1,4 +1,4 @@
+-// Colours
++// Colors
+ $progress-color-dark: $panel-bg !default;
+ $progress-color: $panel-bg !default;
+ $progress-color-light: $panel-bg !default;
+diff --git a/public/sass/components/_popover-box.scss b/public/sass/components/_popover-box.scss
+new file mode 100644
+index 00000000000..6f0b3fb4310
+--- /dev/null
++++ b/public/sass/components/_popover-box.scss
+@@ -0,0 +1,31 @@
++.popover-box {
++  background-color: $popover-bg;
++  color: $popover-color;
++  border: 1px solid $popover-border-color;
++  border-radius: $border-radius;
++  max-width: 500px;
++}
++
++.popover-box__header {
++  background-color: $popover-border-color;
++  padding: 6px 10px;
++  display: flex;
++}
++
++.popover-box__title {
++  font-weight: $font-weight-semi-bold;
++  padding-right: $spacer;
++  overflow: hidden;
++  display: inline-block;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++  flex-grow: 1;
++}
++
++.popover-box__body {
++  padding: 20px 10px 10px 10px;
++}
++
++.popover-box__close {
++  cursor: pointer;
++}
+diff --git a/public/sass/components/_thresholds.scss b/public/sass/components/_thresholds.scss
+index dbcc9951ff7..ff89a6b6ea6 100644
+--- a/public/sass/components/_thresholds.scss
++++ b/public/sass/components/_thresholds.scss
+@@ -66,9 +66,6 @@
+   padding: 5px 8px;
+ }
+ 
+-.threshold-row-base {
+-}
+-
+ .threshold-row-remove {
+   display: flex;
+   align-items: center;
+diff --git a/public/sass/components/_timepicker.scss b/public/sass/components/_timepicker.scss
+index 51a730926ba..f3a2079f749 100644
+--- a/public/sass/components/_timepicker.scss
++++ b/public/sass/components/_timepicker.scss
+@@ -13,23 +13,28 @@
+ }
+ 
+ .gf-timepicker-dropdown {
+-  position: absolute;
+-  top: $navbarHeight;
+-  right: 0;
+-  padding: 10px 20px;
+   background-color: $page-bg;
+   border-radius: 0 0 0 4px;
+   box-shadow: $search-shadow;
+   z-index: $zindex-dropdown;
+-}
++  display: flex;
++  flex-direction: column;
++  position: absolute;
++  right: 20px;
++  top: $navbarHeight;
++  width: 550px;
+ 
+-.gf-timepicker-absolute-section {
+-  width: 290px;
+-  float: left;
+-  padding: 0 10px;
+-  select {
+-    width: 183px;
+-    margin-bottom: 0;
++  .popover-box {
++    max-width: 100%;
++
++    &:first-child {
++      border-radius: $border-radius $border-radius 0 0;
++      border-bottom: 0;
++    }
++
++    &:last-child {
++      border-radius: 0 0 $border-radius $border-radius;
++    }
+   }
+ }
+ 
+@@ -48,9 +53,9 @@
+ }
+ 
+ .gf-timepicker-relative-section {
+-  padding: 0 20px 0 30px;
+   min-height: 237px;
+   float: left;
++
+   ul {
+     list-style: none;
+     float: left;

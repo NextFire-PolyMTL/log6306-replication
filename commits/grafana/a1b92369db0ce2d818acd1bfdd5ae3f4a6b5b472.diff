@@ -1,0 +1,2799 @@
+commit a1b92369db0ce2d818acd1bfdd5ae3f4a6b5b472 (from e731c248d7d7885d8f2e2d81bbce3dda4b35c31e)
+Merge: e731c248d7d ca25a253864
+Author: David Kaltschmidt <david.kaltschmidt@gmail.com>
+Date:   Mon May 14 12:11:14 2018 +0200
+
+    Merge remote-tracking branch 'origin/master' into prometheus_align_queries
+    
+    * origin/master: (21 commits)
+      docs: removes notes about beeing introduced in 5.0
+      lock caniuse-db version to resolve phantomjs rendering issue
+      Update dashboard_permissions.md
+      move database-specific code into dialects (#11884)
+      refactor: tracing service refactoring (#11907)
+      fix typo in getLdapAttrN (#11898)
+      docs: update installation instructions targeting v5.1.2 stable
+      changelog: add notes about closing #11862, #11656
+      Fix dependencies on Node v10
+      Update dashboard.md
+      changelog: add notes about closing #10338
+      Phantom render.js is incorrectly retrieving number of active panels (#11100)
+      singlestat: render time of last point based on dashboard timezone (#11425)
+      Fix for #10078: symbol "&" is not escaped (#10137)
+      Add alpha color channel support for graph bars (#10956)
+      interpolate 'field' again in Elasticsearch terms queries (#10026)
+      Templating : return __empty__ value when all value return nothing to prevent elasticsearch syntaxe error (#9701)
+      http_server: All files in public/build have now a huge max-age (#11536)
+      fix: ldap unit test
+      decrease length of auth_id column in user_auth table
+      ...
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5bdeeed9af1..146520d13a1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -11,6 +11,12 @@
+ * **InfluxDB**: Support SELECT queries in templating query, [#5013](https://github.com/grafana/grafana/issues/5013)
+ * **Dashboard**: JSON Model under dashboard settings can now be updated & changes saved, [#1429](https://github.com/grafana/grafana/issues/1429), thx [@jereksel](https://github.com/jereksel)
+ * **Security**: Fix XSS vulnerabilities in dashboard links [#11813](https://github.com/grafana/grafana/pull/11813)
++* **Singlestat**: Fix "time of last point" shows local time when dashboard timezone set to UTC [#10338](https://github.com/grafana/grafana/issues/10338)
++
++# 5.1.2 (2018-05-09)
++
++* **Database**: Fix MySql migration issue [#11862](https://github.com/grafana/grafana/issues/11862)
++* **Google Analytics**: Enable Google Analytics anonymizeIP setting for GDPR [#11656](https://github.com/grafana/grafana/pull/11656)
+ 
+ # 5.1.1 (2018-05-07)
+ 
+diff --git a/docker/blocks/mssql/build/setup.sql.template b/docker/blocks/mssql/build/setup.sql.template
+index 1746a18d241..5ff4e194df3 100644
+--- a/docker/blocks/mssql/build/setup.sql.template
++++ b/docker/blocks/mssql/build/setup.sql.template
+@@ -1,7 +1,19 @@
+ CREATE LOGIN %%USER%% WITH PASSWORD = '%%PWD%%'
+ GO
+ 
+-CREATE DATABASE %%DB%%;
++CREATE DATABASE %%DB%%
++ON
++( NAME = %%DB%%,
++    FILENAME = '/var/opt/mssql/data/%%DB%%.mdf',
++    SIZE = 500MB,
++    MAXSIZE = 1000MB,
++    FILEGROWTH = 100MB )
++LOG ON
++( NAME = %%DB%%_log,
++    FILENAME = '/var/opt/mssql/data/%%DB%%_log.ldf',
++    SIZE = 500MB,
++    MAXSIZE = 1000MB,
++    FILEGROWTH = 100MB );
+ GO
+ 
+ USE %%DB%%;
+diff --git a/docker/blocks/mssql/docker-compose.yaml b/docker/blocks/mssql/docker-compose.yaml
+index 538908fec72..a346fb791f7 100644
+--- a/docker/blocks/mssql/docker-compose.yaml
++++ b/docker/blocks/mssql/docker-compose.yaml
+@@ -4,7 +4,7 @@
+     environment:
+       ACCEPT_EULA: Y
+       MSSQL_SA_PASSWORD: Password!
+-      MSSQL_PID: Express
++      MSSQL_PID: Developer
+       MSSQL_DATABASE: grafana
+       MSSQL_USER: grafana
+       MSSQL_PASSWORD: Password!
+diff --git a/docs/sources/http_api/dashboard_permissions.md b/docs/sources/http_api/dashboard_permissions.md
+index 26aa1550d7c..b8f6b06928c 100644
+--- a/docs/sources/http_api/dashboard_permissions.md
++++ b/docs/sources/http_api/dashboard_permissions.md
+@@ -106,6 +106,7 @@ Accept: application/json
+ Content-Type: application/json
+ Authorization: Bearer eyJrIjoiT0tTcG1pUlY2RnVKZTFVaDFsNFZXdE9ZWmNrMkZYbk
+ 
++{
+   "items": [
+     {
+       "role": "Viewer",
+diff --git a/docs/sources/http_api/org.md b/docs/sources/http_api/org.md
+index b9a15450786..16721b1c89d 100644
+--- a/docs/sources/http_api/org.md
++++ b/docs/sources/http_api/org.md
+@@ -380,6 +380,8 @@ Authorization: Bearer eyJrIjoiT0tTcG1pUlY2RnVKZTFVaDFsNFZXdE9ZWmNrMkZYbk
+   "role":"Viewer"
+ }
+ ```
++Note: The api will only work when you pass the admin name and password
++to the request http url, like http://admin:admin@localhost:3000/api/orgs/1/users
+ 
+ **Example Response**:
+ 
+diff --git a/docs/sources/installation/configuration.md b/docs/sources/installation/configuration.md
+index baec76df5d9..2c2a359c7c5 100644
+--- a/docs/sources/installation/configuration.md
++++ b/docs/sources/installation/configuration.md
+@@ -93,8 +93,6 @@ Directory where grafana will automatically scan and look for plugins
+ 
+ ### provisioning
+ 
+-> This feature is available in 5.0+
+-
+ Folder that contains [provisioning](/administration/provisioning) config files that grafana will apply on startup. Dashboards will be reloaded when the json files changes
+ 
+ ## [server]
+@@ -717,7 +715,7 @@ Analytics ID here. By default this feature is disabled.
+ 
+ ## [dashboards]
+ 
+-### versions_to_keep (introduced in v5.0)
++### versions_to_keep
+ 
+ Number dashboard versions to keep (per dashboard). Default: 20, Minimum: 1.
+ 
+diff --git a/docs/sources/installation/debian.md b/docs/sources/installation/debian.md
+index 83d26351295..f0ad89a8e88 100644
+--- a/docs/sources/installation/debian.md
++++ b/docs/sources/installation/debian.md
+@@ -15,7 +15,7 @@ weight = 1
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for Debian-based Linux | [grafana_5.1.1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.1_amd64.deb)
++Stable for Debian-based Linux | [grafana_5.1.2_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.2_amd64.deb)
+ <!--
+ Beta for Debian-based Linux | [grafana_5.1.0-beta1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.0-beta1_amd64.deb)
+ -->
+@@ -27,9 +27,9 @@ installation.
+ 
+ 
+ ```bash
+-wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.1_amd64.deb
++wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.1.2_amd64.deb
+ sudo apt-get install -y adduser libfontconfig
+-sudo dpkg -i grafana_5.1.1_amd64.deb
++sudo dpkg -i grafana_5.1.2_amd64.deb
+ ```
+ 
+ <!-- ## Install Latest Beta
+diff --git a/docs/sources/installation/rpm.md b/docs/sources/installation/rpm.md
+index 71ef7433be1..2d36bf7e331 100644
+--- a/docs/sources/installation/rpm.md
++++ b/docs/sources/installation/rpm.md
+@@ -15,7 +15,7 @@ weight = 2
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm)
++Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.2 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.2-1.x86_64.rpm)
+ <!--
+ Latest Beta for CentOS / Fedora / OpenSuse / Redhat Linux | [5.1.0-beta1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.0-beta1.x86_64.rpm)
+ -->
+@@ -28,7 +28,7 @@ installation.
+ You can install Grafana using Yum directly.
+ 
+ ```bash
+-$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm
++$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.2-1.x86_64.rpm
+ ```
+ 
+ <!-- ## Install Beta
+@@ -42,15 +42,15 @@ Or install manually using `rpm`.
+ #### On CentOS / Fedora / Redhat:
+ 
+ ```bash
+-$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1-1.x86_64.rpm
++$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.2-1.x86_64.rpm
+ $ sudo yum install initscripts fontconfig
+-$ sudo rpm -Uvh grafana-5.1.1-1.x86_64.rpm
++$ sudo rpm -Uvh grafana-5.1.2-1.x86_64.rpm
+ ```
+ 
+ #### On OpenSuse:
+ 
+ ```bash
+-$ sudo rpm -i --nodeps grafana-5.1.1-1.x86_64.rpm
++$ sudo rpm -i --nodeps grafana-5.1.2-1.x86_64.rpm
+ ```
+ 
+ ## Install via YUM Repository
+diff --git a/docs/sources/installation/windows.md b/docs/sources/installation/windows.md
+index cea86812491..0c6eeef203e 100644
+--- a/docs/sources/installation/windows.md
++++ b/docs/sources/installation/windows.md
+@@ -12,7 +12,7 @@ weight = 3
+ 
+ Description | Download
+ ------------ | -------------
+-Latest stable package for Windows | [grafana-5.1.1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.1.windows-x64.zip)
++Latest stable package for Windows | [grafana-5.1.2.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.1.2.windows-x64.zip)
+ 
+ <!--
+ Latest beta package for Windows | [grafana.5.1.0-beta1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-beta5.windows-x64.zip)
+diff --git a/docs/sources/reference/dashboard.md b/docs/sources/reference/dashboard.md
+index 30581968743..6be12600da5 100644
+--- a/docs/sources/reference/dashboard.md
++++ b/docs/sources/reference/dashboard.md
+@@ -50,6 +50,7 @@ When a user creates a new dashboard, a new dashboard JSON object is initialized
+   "annotations": {
+     "list": []
+   },
++  "refresh": "5s",
+   "schemaVersion": 16,
+   "version": 0,
+   "links": []
+@@ -71,6 +72,7 @@ Each field in the dashboard JSON is explained below with its usage:
+ | **timepicker** | timepicker metadata, see [timepicker section](#timepicker) for details |
+ | **templating** | templating metadata, see [templating section](#templating) for details |
+ | **annotations** | annotations metadata, see [annotations section](#annotations) for details |
++| **refresh** | auto-refresh interval
+ | **schemaVersion** | version of the JSON schema (integer), incremented each time a Grafana update brings changes to said schema |
+ | **version** | version of the dashboard (integer), incremented each time the dashboard is updated |
+ | **panels** | panels array, see below for detail. |
+diff --git a/package.json b/package.json
+index 383e0e39ab5..06883a6c7ec 100644
+--- a/package.json
++++ b/package.json
+@@ -179,5 +179,8 @@
+     "tether": "^1.4.0",
+     "tether-drop": "https://github.com/torkelo/drop/tarball/master",
+     "tinycolor2": "^1.4.1"
++  },
++  "resolutions": {
++    "caniuse-db": "1.0.30000772"
+   }
+ }
+diff --git a/pkg/api/http_server.go b/pkg/api/http_server.go
+index f30e5602484..2afccb8f0d7 100644
+--- a/pkg/api/http_server.go
++++ b/pkg/api/http_server.go
+@@ -174,6 +174,7 @@ func (hs *HTTPServer) newMacaron() *macaron.Macaron {
+ 		hs.mapStatic(m, route.Directory, "", pluginRoute)
+ 	}
+ 
++	hs.mapStatic(m, setting.StaticRootPath, "build", "public/build")
+ 	hs.mapStatic(m, setting.StaticRootPath, "", "public")
+ 	hs.mapStatic(m, setting.StaticRootPath, "robots.txt", "robots.txt")
+ 
+@@ -241,6 +242,12 @@ func (hs *HTTPServer) mapStatic(m *macaron.Macaron, rootDir string, dir string,
+ 		c.Resp.Header().Set("Cache-Control", "public, max-age=3600")
+ 	}
+ 
++	if prefix == "public/build" {
++		headers = func(c *macaron.Context) {
++			c.Resp.Header().Set("Cache-Control", "public, max-age=31536000")
++		}
++	}
++
+ 	if setting.Env == setting.DEV {
+ 		headers = func(c *macaron.Context) {
+ 			c.Resp.Header().Set("Cache-Control", "max-age=0, must-revalidate, no-cache")
+diff --git a/pkg/cmd/grafana-server/server.go b/pkg/cmd/grafana-server/server.go
+index c715086a184..9209722527c 100644
+--- a/pkg/cmd/grafana-server/server.go
++++ b/pkg/cmd/grafana-server/server.go
+@@ -27,7 +27,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/setting"
+ 
+ 	"github.com/grafana/grafana/pkg/social"
+-	"github.com/grafana/grafana/pkg/tracing"
+ 
+ 	// self registering services
+ 	_ "github.com/grafana/grafana/pkg/extensions"
+@@ -38,6 +37,7 @@ import (
+ 	_ "github.com/grafana/grafana/pkg/services/notifications"
+ 	_ "github.com/grafana/grafana/pkg/services/provisioning"
+ 	_ "github.com/grafana/grafana/pkg/services/search"
++	_ "github.com/grafana/grafana/pkg/tracing"
+ )
+ 
+ func NewGrafanaServer() *GrafanaServerImpl {
+@@ -77,12 +77,6 @@ func (g *GrafanaServerImpl) Run() error {
+ 	login.Init()
+ 	social.NewOAuthService()
+ 
+-	tracingCloser, err := tracing.Init(g.cfg.Raw)
+-	if err != nil {
+-		return fmt.Errorf("Tracing settings is not valid. error: %v", err)
+-	}
+-	defer tracingCloser.Close()
+-
+ 	serviceGraph := inject.Graph{}
+ 	serviceGraph.Provide(&inject.Object{Value: bus.GetBus()})
+ 	serviceGraph.Provide(&inject.Object{Value: g.cfg})
+diff --git a/pkg/login/ldap.go b/pkg/login/ldap.go
+index 49b92648561..3c5001df3a4 100644
+--- a/pkg/login/ldap.go
++++ b/pkg/login/ldap.go
+@@ -349,7 +349,7 @@ func (a *ldapAuther) searchForUser(username string) (*LdapUserInfo, error) {
+ 
+ func getLdapAttrN(name string, result *ldap.SearchResult, n int) string {
+ 	if name == "DN" {
+-		return result.Entries[0].DN
++		return result.Entries[n].DN
+ 	}
+ 	for _, attr := range result.Entries[n].Attributes {
+ 		if attr.Name == name {
+diff --git a/pkg/login/ldap_test.go b/pkg/login/ldap_test.go
+index 22959cb7e7f..34932926406 100644
+--- a/pkg/login/ldap_test.go
++++ b/pkg/login/ldap_test.go
+@@ -62,7 +62,7 @@ func TestLdapAuther(t *testing.T) {
+ 
+ 			sc.userQueryReturns(user1)
+ 
+-			result, err := ldapAuther.GetGrafanaUserFor(&LdapUserInfo{MemberOf: []string{"CN=users"}})
++			result, err := ldapAuther.GetGrafanaUserFor(nil, &LdapUserInfo{MemberOf: []string{"CN=users"}})
+ 			So(err, ShouldBeNil)
+ 			So(result, ShouldEqual, user1)
+ 		})
+diff --git a/pkg/services/sqlstore/alert.go b/pkg/services/sqlstore/alert.go
+index e99367e4d6f..b0ca50eb67d 100644
+--- a/pkg/services/sqlstore/alert.go
++++ b/pkg/services/sqlstore/alert.go
+@@ -114,7 +114,7 @@ func HandleAlertsQuery(query *m.GetAlertsQuery) error {
+ 	builder.Write(" ORDER BY name ASC")
+ 
+ 	if query.Limit != 0 {
+-		builder.Write(" LIMIT ?", query.Limit)
++		builder.Write(dialect.Limit(query.Limit))
+ 	}
+ 
+ 	alerts := make([]*m.AlertListItemDTO, 0)
+diff --git a/pkg/services/sqlstore/alert_notification_test.go b/pkg/services/sqlstore/alert_notification_test.go
+index 761114978a8..2dbf9de5ca8 100644
+--- a/pkg/services/sqlstore/alert_notification_test.go
++++ b/pkg/services/sqlstore/alert_notification_test.go
+@@ -1,7 +1,6 @@
+ package sqlstore
+ 
+ import (
+-	"fmt"
+ 	"testing"
+ 
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+@@ -21,7 +20,6 @@ func TestAlertNotificationSQLAccess(t *testing.T) {
+ 			}
+ 
+ 			err := GetAlertNotifications(cmd)
+-			fmt.Printf("error %v", err)
+ 			So(err, ShouldBeNil)
+ 			So(cmd.Result, ShouldBeNil)
+ 		})
+diff --git a/pkg/services/sqlstore/annotation.go b/pkg/services/sqlstore/annotation.go
+index 1710679cea1..52da7a99516 100644
+--- a/pkg/services/sqlstore/annotation.go
++++ b/pkg/services/sqlstore/annotation.go
+@@ -50,7 +50,7 @@ func (r *SqlAnnotationRepo) ensureTagsExist(sess *DBSession, tags []*models.Tag)
+ 		var existingTag models.Tag
+ 
+ 		// check if it exists
+-		if exists, err := sess.Table("tag").Where("`key`=? AND `value`=?", tag.Key, tag.Value).Get(&existingTag); err != nil {
++		if exists, err := sess.Table("tag").Where(dialect.Quote("key")+"=? AND "+dialect.Quote("value")+"=?", tag.Key, tag.Value).Get(&existingTag); err != nil {
+ 			return nil, err
+ 		} else if exists {
+ 			tag.Id = existingTag.Id
+@@ -146,7 +146,7 @@ func (r *SqlAnnotationRepo) Find(query *annotations.ItemQuery) ([]*annotations.I
+ 	params = append(params, query.OrgId)
+ 
+ 	if query.AnnotationId != 0 {
+-		fmt.Print("annotation query")
++		// fmt.Print("annotation query")
+ 		sql.WriteString(` AND annotation.id = ?`)
+ 		params = append(params, query.AnnotationId)
+ 	}
+@@ -193,10 +193,10 @@ func (r *SqlAnnotationRepo) Find(query *annotations.ItemQuery) ([]*annotations.I
+ 		tags := models.ParseTagPairs(query.Tags)
+ 		for _, tag := range tags {
+ 			if tag.Value == "" {
+-				keyValueFilters = append(keyValueFilters, "(tag.key = ?)")
++				keyValueFilters = append(keyValueFilters, "(tag."+dialect.Quote("key")+" = ?)")
+ 				params = append(params, tag.Key)
+ 			} else {
+-				keyValueFilters = append(keyValueFilters, "(tag.key = ? AND tag.value = ?)")
++				keyValueFilters = append(keyValueFilters, "(tag."+dialect.Quote("key")+" = ? AND tag."+dialect.Quote("value")+" = ?)")
+ 				params = append(params, tag.Key, tag.Value)
+ 			}
+ 		}
+@@ -219,7 +219,7 @@ func (r *SqlAnnotationRepo) Find(query *annotations.ItemQuery) ([]*annotations.I
+ 		query.Limit = 100
+ 	}
+ 
+-	sql.WriteString(fmt.Sprintf(" ORDER BY epoch DESC LIMIT %v", query.Limit))
++	sql.WriteString(" ORDER BY epoch DESC" + dialect.Limit(query.Limit))
+ 
+ 	items := make([]*annotations.ItemDTO, 0)
+ 
+diff --git a/pkg/services/sqlstore/annotation_test.go b/pkg/services/sqlstore/annotation_test.go
+index 949ed8135ba..01a95c7db7b 100644
+--- a/pkg/services/sqlstore/annotation_test.go
++++ b/pkg/services/sqlstore/annotation_test.go
+@@ -10,12 +10,18 @@ import (
+ )
+ 
+ func TestSavingTags(t *testing.T) {
++	InitTestDB(t)
++
+ 	Convey("Testing annotation saving/loading", t, func() {
+-		InitTestDB(t)
+ 
+ 		repo := SqlAnnotationRepo{}
+ 
+ 		Convey("Can save tags", func() {
++			Reset(func() {
++				_, err := x.Exec("DELETE FROM annotation_tag WHERE 1=1")
++				So(err, ShouldBeNil)
++			})
++
+ 			tagPairs := []*models.Tag{
+ 				{Key: "outage"},
+ 				{Key: "type", Value: "outage"},
+@@ -31,12 +37,19 @@ func TestSavingTags(t *testing.T) {
+ }
+ 
+ func TestAnnotations(t *testing.T) {
+-	Convey("Testing annotation saving/loading", t, func() {
+-		InitTestDB(t)
++	InitTestDB(t)
+ 
++	Convey("Testing annotation saving/loading", t, func() {
+ 		repo := SqlAnnotationRepo{}
+ 
+ 		Convey("Can save annotation", func() {
++			Reset(func() {
++				_, err := x.Exec("DELETE FROM annotation WHERE 1=1")
++				So(err, ShouldBeNil)
++				_, err = x.Exec("DELETE FROM annotation_tag WHERE 1=1")
++				So(err, ShouldBeNil)
++			})
++
+ 			annotation := &annotations.Item{
+ 				OrgId:       1,
+ 				UserId:      1,
+diff --git a/pkg/services/sqlstore/dashboard_snapshot_test.go b/pkg/services/sqlstore/dashboard_snapshot_test.go
+index 2081cbf6194..d1f70082a38 100644
+--- a/pkg/services/sqlstore/dashboard_snapshot_test.go
++++ b/pkg/services/sqlstore/dashboard_snapshot_test.go
+@@ -110,42 +110,39 @@ func TestDashboardSnapshotDBAccess(t *testing.T) {
+ }
+ 
+ func TestDeleteExpiredSnapshots(t *testing.T) {
+-	Convey("Testing dashboard snapshots clean up", t, func() {
+-		x := InitTestDB(t)
++	x := InitTestDB(t)
+ 
++	Convey("Testing dashboard snapshots clean up", t, func() {
+ 		setting.SnapShotRemoveExpired = true
+ 
+-		notExpiredsnapshot := createTestSnapshot(x, "key1", 1000)
+-		createTestSnapshot(x, "key2", -1000)
+-		createTestSnapshot(x, "key3", -1000)
++		notExpiredsnapshot := createTestSnapshot(x, "key1", 1200)
++		createTestSnapshot(x, "key2", -1200)
++		createTestSnapshot(x, "key3", -1200)
+ 
+-		Convey("Clean up old dashboard snapshots", func() {
+-			err := DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
+-			So(err, ShouldBeNil)
++		err := DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
++		So(err, ShouldBeNil)
+ 
+-			query := m.GetDashboardSnapshotsQuery{
+-				OrgId:        1,
+-				SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
+-			}
+-			err = SearchDashboardSnapshots(&query)
+-			So(err, ShouldBeNil)
++		query := m.GetDashboardSnapshotsQuery{
++			OrgId:        1,
++			SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
++		}
++		err = SearchDashboardSnapshots(&query)
++		So(err, ShouldBeNil)
+ 
+-			So(len(query.Result), ShouldEqual, 1)
+-			So(query.Result[0].Key, ShouldEqual, notExpiredsnapshot.Key)
+-		})
++		So(len(query.Result), ShouldEqual, 1)
++		So(query.Result[0].Key, ShouldEqual, notExpiredsnapshot.Key)
+ 
+-		Convey("Don't delete anything if there are no expired snapshots", func() {
+-			err := DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
+-			So(err, ShouldBeNil)
++		err = DeleteExpiredSnapshots(&m.DeleteExpiredSnapshotsCommand{})
++		So(err, ShouldBeNil)
+ 
+-			query := m.GetDashboardSnapshotsQuery{
+-				OrgId:        1,
+-				SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
+-			}
+-			SearchDashboardSnapshots(&query)
++		query = m.GetDashboardSnapshotsQuery{
++			OrgId:        1,
++			SignedInUser: &m.SignedInUser{OrgRole: m.ROLE_ADMIN},
++		}
++		SearchDashboardSnapshots(&query)
+ 
+-			So(len(query.Result), ShouldEqual, 1)
+-		})
++		So(len(query.Result), ShouldEqual, 1)
++		So(query.Result[0].Key, ShouldEqual, notExpiredsnapshot.Key)
+ 	})
+ }
+ 
+@@ -164,9 +161,11 @@ func createTestSnapshot(x *xorm.Engine, key string, expires int64) *m.DashboardS
+ 	So(err, ShouldBeNil)
+ 
+ 	// Set expiry date manually - to be able to create expired snapshots
+-	expireDate := time.Now().Add(time.Second * time.Duration(expires))
+-	_, err = x.Exec("update dashboard_snapshot set expires = ? where "+dialect.Quote("key")+" = ?", expireDate, key)
+-	So(err, ShouldBeNil)
++	if expires < 0 {
++		expireDate := time.Now().Add(time.Second * time.Duration(expires))
++		_, err = x.Exec("UPDATE dashboard_snapshot SET expires = ? WHERE id = ?", expireDate, cmd.Result.Id)
++		So(err, ShouldBeNil)
++	}
+ 
+ 	return cmd.Result
+ }
+diff --git a/pkg/services/sqlstore/migrations/annotation_mig.go b/pkg/services/sqlstore/migrations/annotation_mig.go
+index 7fac0001e5b..d231d3283e2 100644
+--- a/pkg/services/sqlstore/migrations/annotation_mig.go
++++ b/pkg/services/sqlstore/migrations/annotation_mig.go
+@@ -86,10 +86,7 @@ func addAnnotationMig(mg *Migrator) {
+ 	// clear alert text
+ 	//
+ 	updateTextFieldSql := "UPDATE annotation SET TEXT = '' WHERE alert_id > 0"
+-	mg.AddMigration("Update alert annotations and set TEXT to empty", new(RawSqlMigration).
+-		Sqlite(updateTextFieldSql).
+-		Postgres(updateTextFieldSql).
+-		Mysql(updateTextFieldSql))
++	mg.AddMigration("Update alert annotations and set TEXT to empty", NewRawSqlMigration(updateTextFieldSql))
+ 
+ 	//
+ 	// Add a 'created' & 'updated' column
+@@ -111,8 +108,5 @@ func addAnnotationMig(mg *Migrator) {
+ 	// Convert epoch saved as seconds to miliseconds
+ 	//
+ 	updateEpochSql := "UPDATE annotation SET epoch = (epoch*1000) where epoch < 9999999999"
+-	mg.AddMigration("Convert existing annotations from seconds to milliseconds", new(RawSqlMigration).
+-		Sqlite(updateEpochSql).
+-		Postgres(updateEpochSql).
+-		Mysql(updateEpochSql))
++	mg.AddMigration("Convert existing annotations from seconds to milliseconds", NewRawSqlMigration(updateEpochSql))
+ }
+diff --git a/pkg/services/sqlstore/migrations/dashboard_acl.go b/pkg/services/sqlstore/migrations/dashboard_acl.go
+index cc3b813c12f..32e4aec6d4a 100644
+--- a/pkg/services/sqlstore/migrations/dashboard_acl.go
++++ b/pkg/services/sqlstore/migrations/dashboard_acl.go
+@@ -45,8 +45,5 @@ INSERT INTO dashboard_acl
+ 		(-1,-1, 2,'Editor','2017-06-20','2017-06-20')
+ 	`
+ 
+-	mg.AddMigration("save default acl rules in dashboard_acl table", new(RawSqlMigration).
+-		Sqlite(rawSQL).
+-		Postgres(rawSQL).
+-		Mysql(rawSQL))
++	mg.AddMigration("save default acl rules in dashboard_acl table", NewRawSqlMigration(rawSQL))
+ }
+diff --git a/pkg/services/sqlstore/migrations/dashboard_mig.go b/pkg/services/sqlstore/migrations/dashboard_mig.go
+index 296950ee497..170498c4bd9 100644
+--- a/pkg/services/sqlstore/migrations/dashboard_mig.go
++++ b/pkg/services/sqlstore/migrations/dashboard_mig.go
+@@ -90,9 +90,7 @@ func addDashboardMigration(mg *Migrator) {
+ 	mg.AddMigration("drop table dashboard_v1", NewDropTableMigration("dashboard_v1"))
+ 
+ 	// change column type of dashboard.data
+-	mg.AddMigration("alter dashboard.data to mediumtext v1", new(RawSqlMigration).
+-		Sqlite("SELECT 0 WHERE 0;").
+-		Postgres("SELECT 0;").
++	mg.AddMigration("alter dashboard.data to mediumtext v1", NewRawSqlMigration("").
+ 		Mysql("ALTER TABLE dashboard MODIFY data MEDIUMTEXT;"))
+ 
+ 	// add column to store updater of a dashboard
+@@ -157,7 +155,7 @@ func addDashboardMigration(mg *Migrator) {
+ 		Name: "uid", Type: DB_NVarchar, Length: 40, Nullable: true,
+ 	}))
+ 
+-	mg.AddMigration("Update uid column values in dashboard", new(RawSqlMigration).
++	mg.AddMigration("Update uid column values in dashboard", NewRawSqlMigration("").
+ 		Sqlite("UPDATE dashboard SET uid=printf('%09d',id) WHERE uid IS NULL;").
+ 		Postgres("UPDATE dashboard SET uid=lpad('' || id,9,'0') WHERE uid IS NULL;").
+ 		Mysql("UPDATE dashboard SET uid=lpad(id,9,'0') WHERE uid IS NULL;"))
+diff --git a/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go b/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
+index 1a72bcba929..b880497cd23 100644
+--- a/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
++++ b/pkg/services/sqlstore/migrations/dashboard_snapshot_mig.go
+@@ -50,9 +50,7 @@ func addDashboardSnapshotMigrations(mg *Migrator) {
+ 	addTableIndicesMigrations(mg, "v5", snapshotV5)
+ 
+ 	// change column type of dashboard
+-	mg.AddMigration("alter dashboard_snapshot to mediumtext v2", new(RawSqlMigration).
+-		Sqlite("SELECT 0 WHERE 0;").
+-		Postgres("SELECT 0;").
++	mg.AddMigration("alter dashboard_snapshot to mediumtext v2", NewRawSqlMigration("").
+ 		Mysql("ALTER TABLE dashboard_snapshot MODIFY dashboard MEDIUMTEXT;"))
+ 
+ 	mg.AddMigration("Update dashboard_snapshot table charset", NewTableCharsetMigration("dashboard_snapshot", []*Column{
+diff --git a/pkg/services/sqlstore/migrations/dashboard_version_mig.go b/pkg/services/sqlstore/migrations/dashboard_version_mig.go
+index 601161a6c89..8a38f885de3 100644
+--- a/pkg/services/sqlstore/migrations/dashboard_version_mig.go
++++ b/pkg/services/sqlstore/migrations/dashboard_version_mig.go
+@@ -28,10 +28,7 @@ func addDashboardVersionMigration(mg *Migrator) {
+ 
+ 	// before new dashboards where created with version 0, now they are always inserted with version 1
+ 	const setVersionTo1WhereZeroSQL = `UPDATE dashboard SET version = 1 WHERE version = 0`
+-	mg.AddMigration("Set dashboard version to 1 where 0", new(RawSqlMigration).
+-		Sqlite(setVersionTo1WhereZeroSQL).
+-		Postgres(setVersionTo1WhereZeroSQL).
+-		Mysql(setVersionTo1WhereZeroSQL))
++	mg.AddMigration("Set dashboard version to 1 where 0", NewRawSqlMigration(setVersionTo1WhereZeroSQL))
+ 
+ 	const rawSQL = `INSERT INTO dashboard_version
+ (
+@@ -54,14 +51,9 @@ SELECT
+ 	'',
+ 	dashboard.data
+ FROM dashboard;`
+-	mg.AddMigration("save existing dashboard data in dashboard_version table v1", new(RawSqlMigration).
+-		Sqlite(rawSQL).
+-		Postgres(rawSQL).
+-		Mysql(rawSQL))
++	mg.AddMigration("save existing dashboard data in dashboard_version table v1", NewRawSqlMigration(rawSQL))
+ 
+ 	// change column type of dashboard_version.data
+-	mg.AddMigration("alter dashboard_version.data to mediumtext v1", new(RawSqlMigration).
+-		Sqlite("SELECT 0 WHERE 0;").
+-		Postgres("SELECT 0;").
++	mg.AddMigration("alter dashboard_version.data to mediumtext v1", NewRawSqlMigration("").
+ 		Mysql("ALTER TABLE dashboard_version MODIFY data MEDIUMTEXT;"))
+ }
+diff --git a/pkg/services/sqlstore/migrations/datasource_mig.go b/pkg/services/sqlstore/migrations/datasource_mig.go
+index 919881adaba..9011429e398 100644
+--- a/pkg/services/sqlstore/migrations/datasource_mig.go
++++ b/pkg/services/sqlstore/migrations/datasource_mig.go
+@@ -122,10 +122,7 @@ func addDataSourceMigration(mg *Migrator) {
+ 	}))
+ 
+ 	const setVersionToOneWhereZero = `UPDATE data_source SET version = 1 WHERE version = 0`
+-	mg.AddMigration("Update initial version to 1", new(RawSqlMigration).
+-		Sqlite(setVersionToOneWhereZero).
+-		Postgres(setVersionToOneWhereZero).
+-		Mysql(setVersionToOneWhereZero))
++	mg.AddMigration("Update initial version to 1", NewRawSqlMigration(setVersionToOneWhereZero))
+ 
+ 	mg.AddMigration("Add read_only data column", NewAddColumnMigration(tableV2, &Column{
+ 		Name: "read_only", Type: DB_Bool, Nullable: true,
+diff --git a/pkg/services/sqlstore/migrations/migrations_test.go b/pkg/services/sqlstore/migrations/migrations_test.go
+index 53b398124af..c36eee55da9 100644
+--- a/pkg/services/sqlstore/migrations/migrations_test.go
++++ b/pkg/services/sqlstore/migrations/migrations_test.go
+@@ -25,7 +25,7 @@ func TestMigrations(t *testing.T) {
+ 			x, err := xorm.NewEngine(testDB.DriverName, testDB.ConnStr)
+ 			So(err, ShouldBeNil)
+ 
+-			sqlutil.CleanDB(x)
++			NewDialect(x).CleanDB()
+ 
+ 			_, err = x.SQL(sql).Get(&r)
+ 			So(err, ShouldNotBeNil)
+diff --git a/pkg/services/sqlstore/migrations/org_mig.go b/pkg/services/sqlstore/migrations/org_mig.go
+index cf9b19f6f5b..f74b78cf1b3 100644
+--- a/pkg/services/sqlstore/migrations/org_mig.go
++++ b/pkg/services/sqlstore/migrations/org_mig.go
+@@ -85,8 +85,5 @@ func addOrgMigrations(mg *Migrator) {
+ 	}))
+ 
+ 	const migrateReadOnlyViewersToViewers = `UPDATE org_user SET role = 'Viewer' WHERE role = 'Read Only Editor'`
+-	mg.AddMigration("Migrate all Read Only Viewers to Viewers", new(RawSqlMigration).
+-		Sqlite(migrateReadOnlyViewersToViewers).
+-		Postgres(migrateReadOnlyViewersToViewers).
+-		Mysql(migrateReadOnlyViewersToViewers))
++	mg.AddMigration("Migrate all Read Only Viewers to Viewers", NewRawSqlMigration(migrateReadOnlyViewersToViewers))
+ }
+diff --git a/pkg/services/sqlstore/migrations/user_auth_mig.go b/pkg/services/sqlstore/migrations/user_auth_mig.go
+index be4d112f6f6..2771035b47f 100644
+--- a/pkg/services/sqlstore/migrations/user_auth_mig.go
++++ b/pkg/services/sqlstore/migrations/user_auth_mig.go
+@@ -22,8 +22,7 @@ func addUserAuthMigrations(mg *Migrator) {
+ 	// add indices
+ 	addTableIndicesMigrations(mg, "v1", userAuthV1)
+ 
+-	mg.AddMigration("alter user_auth.auth_id to length 255", new(RawSqlMigration).
+-		Sqlite("SELECT 0 WHERE 0;").
+-		Postgres("ALTER TABLE user_auth ALTER COLUMN auth_id TYPE VARCHAR(255);").
+-		Mysql("ALTER TABLE user_auth MODIFY auth_id VARCHAR(255);"))
++	mg.AddMigration("alter user_auth.auth_id to length 190", NewRawSqlMigration("").
++		Postgres("ALTER TABLE user_auth ALTER COLUMN auth_id TYPE VARCHAR(190);").
++		Mysql("ALTER TABLE user_auth MODIFY auth_id VARCHAR(190);"))
+ }
+diff --git a/pkg/services/sqlstore/migrator/column.go b/pkg/services/sqlstore/migrator/column.go
+index 11d6a1b8b08..28cef60a94d 100644
+--- a/pkg/services/sqlstore/migrator/column.go
++++ b/pkg/services/sqlstore/migrator/column.go
+@@ -15,48 +15,9 @@ type Column struct {
+ }
+ 
+ func (col *Column) String(d Dialect) string {
+-	sql := d.QuoteStr() + col.Name + d.QuoteStr() + " "
+-
+-	sql += d.SqlType(col) + " "
+-
+-	if col.IsPrimaryKey {
+-		sql += "PRIMARY KEY "
+-		if col.IsAutoIncrement {
+-			sql += d.AutoIncrStr() + " "
+-		}
+-	}
+-
+-	if d.ShowCreateNull() {
+-		if col.Nullable {
+-			sql += "NULL "
+-		} else {
+-			sql += "NOT NULL "
+-		}
+-	}
+-
+-	if col.Default != "" {
+-		sql += "DEFAULT " + col.Default + " "
+-	}
+-
+-	return sql
++	return d.ColString(col)
+ }
+ 
+ func (col *Column) StringNoPk(d Dialect) string {
+-	sql := d.QuoteStr() + col.Name + d.QuoteStr() + " "
+-
+-	sql += d.SqlType(col) + " "
+-
+-	if d.ShowCreateNull() {
+-		if col.Nullable {
+-			sql += "NULL "
+-		} else {
+-			sql += "NOT NULL "
+-		}
+-	}
+-
+-	if col.Default != "" {
+-		sql += "DEFAULT " + d.Default(col) + " "
+-	}
+-
+-	return sql
++	return d.ColStringNoPk(col)
+ }
+diff --git a/pkg/services/sqlstore/migrator/dialect.go b/pkg/services/sqlstore/migrator/dialect.go
+index dadc7248844..427d102b280 100644
+--- a/pkg/services/sqlstore/migrator/dialect.go
++++ b/pkg/services/sqlstore/migrator/dialect.go
+@@ -3,11 +3,12 @@ package migrator
+ import (
+ 	"fmt"
+ 	"strings"
++
++	"github.com/go-xorm/xorm"
+ )
+ 
+ type Dialect interface {
+ 	DriverName() string
+-	QuoteStr() string
+ 	Quote(string) string
+ 	AndStr() string
+ 	AutoIncrStr() string
+@@ -31,16 +32,29 @@ type Dialect interface {
+ 	TableCheckSql(tableName string) (string, []interface{})
+ 	RenameTable(oldName string, newName string) string
+ 	UpdateTableSql(tableName string, columns []*Column) string
++
++	ColString(*Column) string
++	ColStringNoPk(*Column) string
++
++	Limit(limit int64) string
++	LimitOffset(limit int64, offset int64) string
++
++	PreInsertId(table string, sess *xorm.Session) error
++	PostInsertId(table string, sess *xorm.Session) error
++
++	CleanDB() error
++	NoOpSql() string
+ }
+ 
+-func NewDialect(name string) Dialect {
++func NewDialect(engine *xorm.Engine) Dialect {
++	name := engine.DriverName()
+ 	switch name {
+ 	case MYSQL:
+-		return NewMysqlDialect()
++		return NewMysqlDialect(engine)
+ 	case SQLITE:
+-		return NewSqlite3Dialect()
++		return NewSqlite3Dialect(engine)
+ 	case POSTGRES:
+-		return NewPostgresDialect()
++		return NewPostgresDialect(engine)
+ 	}
+ 
+ 	panic("Unsupported database type: " + name)
+@@ -48,6 +62,7 @@ func NewDialect(name string) Dialect {
+ 
+ type BaseDialect struct {
+ 	dialect    Dialect
++	engine     *xorm.Engine
+ 	driverName string
+ }
+ 
+@@ -100,9 +115,12 @@ func (b *BaseDialect) CreateTableSql(table *Table) string {
+ 	}
+ 
+ 	if len(pkList) > 1 {
+-		sql += "PRIMARY KEY ( "
+-		sql += b.dialect.Quote(strings.Join(pkList, b.dialect.Quote(",")))
+-		sql += " ), "
++		quotedCols := []string{}
++		for _, col := range pkList {
++			quotedCols = append(quotedCols, b.dialect.Quote(col))
++		}
++
++		sql += "PRIMARY KEY ( " + strings.Join(quotedCols, ",") + " ), "
+ 	}
+ 
+ 	sql = sql[:len(sql)-2] + ")"
+@@ -127,9 +145,12 @@ func (db *BaseDialect) CreateIndexSql(tableName string, index *Index) string {
+ 
+ 	idxName := index.XName(tableName)
+ 
+-	return fmt.Sprintf("CREATE%s INDEX %v ON %v (%v);", unique,
+-		quote(idxName), quote(tableName),
+-		quote(strings.Join(index.Cols, quote(","))))
++	quotedCols := []string{}
++	for _, col := range index.Cols {
++		quotedCols = append(quotedCols, db.dialect.Quote(col))
++	}
++
++	return fmt.Sprintf("CREATE%s INDEX %v ON %v (%v);", unique, quote(idxName), quote(tableName), strings.Join(quotedCols, ","))
+ }
+ 
+ func (db *BaseDialect) QuoteColList(cols []string) string {
+@@ -168,3 +189,74 @@ func (db *BaseDialect) DropIndexSql(tableName string, index *Index) string {
+ func (db *BaseDialect) UpdateTableSql(tableName string, columns []*Column) string {
+ 	return "-- NOT REQUIRED"
+ }
++
++func (db *BaseDialect) ColString(col *Column) string {
++	sql := db.dialect.Quote(col.Name) + " "
++
++	sql += db.dialect.SqlType(col) + " "
++
++	if col.IsPrimaryKey {
++		sql += "PRIMARY KEY "
++		if col.IsAutoIncrement {
++			sql += db.dialect.AutoIncrStr() + " "
++		}
++	}
++
++	if db.dialect.ShowCreateNull() {
++		if col.Nullable {
++			sql += "NULL "
++		} else {
++			sql += "NOT NULL "
++		}
++	}
++
++	if col.Default != "" {
++		sql += "DEFAULT " + db.dialect.Default(col) + " "
++	}
++
++	return sql
++}
++
++func (db *BaseDialect) ColStringNoPk(col *Column) string {
++	sql := db.dialect.Quote(col.Name) + " "
++
++	sql += db.dialect.SqlType(col) + " "
++
++	if db.dialect.ShowCreateNull() {
++		if col.Nullable {
++			sql += "NULL "
++		} else {
++			sql += "NOT NULL "
++		}
++	}
++
++	if col.Default != "" {
++		sql += "DEFAULT " + db.dialect.Default(col) + " "
++	}
++
++	return sql
++}
++
++func (db *BaseDialect) Limit(limit int64) string {
++	return fmt.Sprintf(" LIMIT %d", limit)
++}
++
++func (db *BaseDialect) LimitOffset(limit int64, offset int64) string {
++	return fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
++}
++
++func (db *BaseDialect) PreInsertId(table string, sess *xorm.Session) error {
++	return nil
++}
++
++func (db *BaseDialect) PostInsertId(table string, sess *xorm.Session) error {
++	return nil
++}
++
++func (db *BaseDialect) CleanDB() error {
++	return nil
++}
++
++func (db *BaseDialect) NoOpSql() string {
++	return "SELECT 0;"
++}
+diff --git a/pkg/services/sqlstore/migrator/migrations.go b/pkg/services/sqlstore/migrator/migrations.go
+index 4e6402a14e5..fd71cc3d290 100644
+--- a/pkg/services/sqlstore/migrator/migrations.go
++++ b/pkg/services/sqlstore/migrator/migrations.go
+@@ -24,37 +24,58 @@ func (m *MigrationBase) GetCondition() MigrationCondition {
+ type RawSqlMigration struct {
+ 	MigrationBase
+ 
+-	sqlite   string
+-	mysql    string
+-	postgres string
++	sql map[string]string
++}
++
++func NewRawSqlMigration(sql string) *RawSqlMigration {
++	m := &RawSqlMigration{}
++	if sql != "" {
++		m.Default(sql)
++	}
++	return m
+ }
+ 
+ func (m *RawSqlMigration) Sql(dialect Dialect) string {
+-	switch dialect.DriverName() {
+-	case MYSQL:
+-		return m.mysql
+-	case SQLITE:
+-		return m.sqlite
+-	case POSTGRES:
+-		return m.postgres
++	if m.sql != nil {
++		if val := m.sql[dialect.DriverName()]; val != "" {
++			return val
++		}
++
++		if val := m.sql["default"]; val != "" {
++			return val
++		}
+ 	}
+ 
+-	panic("db type not supported")
++	return dialect.NoOpSql()
+ }
+ 
+-func (m *RawSqlMigration) Sqlite(sql string) *RawSqlMigration {
+-	m.sqlite = sql
++func (m *RawSqlMigration) Set(dialect string, sql string) *RawSqlMigration {
++	if m.sql == nil {
++		m.sql = make(map[string]string)
++	}
++
++	m.sql[dialect] = sql
+ 	return m
+ }
+ 
++func (m *RawSqlMigration) Default(sql string) *RawSqlMigration {
++	return m.Set("default", sql)
++}
++
++func (m *RawSqlMigration) Sqlite(sql string) *RawSqlMigration {
++	return m.Set(SQLITE, sql)
++}
++
+ func (m *RawSqlMigration) Mysql(sql string) *RawSqlMigration {
+-	m.mysql = sql
+-	return m
++	return m.Set(MYSQL, sql)
+ }
+ 
+ func (m *RawSqlMigration) Postgres(sql string) *RawSqlMigration {
+-	m.postgres = sql
+-	return m
++	return m.Set(POSTGRES, sql)
++}
++
++func (m *RawSqlMigration) Mssql(sql string) *RawSqlMigration {
++	return m.Set(MSSQL, sql)
+ }
+ 
+ type AddColumnMigration struct {
+diff --git a/pkg/services/sqlstore/migrator/migrator.go b/pkg/services/sqlstore/migrator/migrator.go
+index cd00cb16712..a55163bd780 100644
+--- a/pkg/services/sqlstore/migrator/migrator.go
++++ b/pkg/services/sqlstore/migrator/migrator.go
+@@ -31,7 +31,7 @@ func NewMigrator(engine *xorm.Engine) *Migrator {
+ 	mg.x = engine
+ 	mg.Logger = log.New("migrator")
+ 	mg.migrations = make([]Migration, 0)
+-	mg.dialect = NewDialect(mg.x.DriverName())
++	mg.dialect = NewDialect(mg.x)
+ 	return mg
+ }
+ 
+diff --git a/pkg/services/sqlstore/migrator/mysql_dialect.go b/pkg/services/sqlstore/migrator/mysql_dialect.go
+index 300224135f0..1ed16871c15 100644
+--- a/pkg/services/sqlstore/migrator/mysql_dialect.go
++++ b/pkg/services/sqlstore/migrator/mysql_dialect.go
+@@ -1,17 +1,21 @@
+ package migrator
+ 
+ import (
++	"fmt"
+ 	"strconv"
+ 	"strings"
++
++	"github.com/go-xorm/xorm"
+ )
+ 
+ type Mysql struct {
+ 	BaseDialect
+ }
+ 
+-func NewMysqlDialect() *Mysql {
++func NewMysqlDialect(engine *xorm.Engine) *Mysql {
+ 	d := Mysql{}
+ 	d.BaseDialect.dialect = &d
++	d.BaseDialect.engine = engine
+ 	d.BaseDialect.driverName = MYSQL
+ 	return &d
+ }
+@@ -24,10 +28,6 @@ func (db *Mysql) Quote(name string) string {
+ 	return "`" + name + "`"
+ }
+ 
+-func (db *Mysql) QuoteStr() string {
+-	return "`"
+-}
+-
+ func (db *Mysql) AutoIncrStr() string {
+ 	return "AUTO_INCREMENT"
+ }
+@@ -105,3 +105,23 @@ func (db *Mysql) UpdateTableSql(tableName string, columns []*Column) string {
+ 
+ 	return "ALTER TABLE " + db.Quote(tableName) + " " + strings.Join(statements, ", ") + ";"
+ }
++
++func (db *Mysql) CleanDB() error {
++	tables, _ := db.engine.DBMetas()
++	sess := db.engine.NewSession()
++	defer sess.Close()
++
++	for _, table := range tables {
++		if _, err := sess.Exec("set foreign_key_checks = 0"); err != nil {
++			return fmt.Errorf("failed to disable foreign key checks")
++		}
++		if _, err := sess.Exec("drop table " + table.Name + " ;"); err != nil {
++			return fmt.Errorf("failed to delete table: %v, err: %v", table.Name, err)
++		}
++		if _, err := sess.Exec("set foreign_key_checks = 1"); err != nil {
++			return fmt.Errorf("failed to disable foreign key checks")
++		}
++	}
++
++	return nil
++}
+diff --git a/pkg/services/sqlstore/migrator/postgres_dialect.go b/pkg/services/sqlstore/migrator/postgres_dialect.go
+index e167aa33122..eae9ad3ca3f 100644
+--- a/pkg/services/sqlstore/migrator/postgres_dialect.go
++++ b/pkg/services/sqlstore/migrator/postgres_dialect.go
+@@ -4,15 +4,18 @@ import (
+ 	"fmt"
+ 	"strconv"
+ 	"strings"
++
++	"github.com/go-xorm/xorm"
+ )
+ 
+ type Postgres struct {
+ 	BaseDialect
+ }
+ 
+-func NewPostgresDialect() *Postgres {
++func NewPostgresDialect(engine *xorm.Engine) *Postgres {
+ 	d := Postgres{}
+ 	d.BaseDialect.dialect = &d
++	d.BaseDialect.engine = engine
+ 	d.BaseDialect.driverName = POSTGRES
+ 	return &d
+ }
+@@ -25,10 +28,6 @@ func (db *Postgres) Quote(name string) string {
+ 	return "\"" + name + "\""
+ }
+ 
+-func (db *Postgres) QuoteStr() string {
+-	return "\""
+-}
+-
+ func (b *Postgres) LikeStr() string {
+ 	return "ILIKE"
+ }
+@@ -117,8 +116,23 @@ func (db *Postgres) UpdateTableSql(tableName string, columns []*Column) string {
+ 	var statements = []string{}
+ 
+ 	for _, col := range columns {
+-		statements = append(statements, "ALTER "+db.QuoteStr()+col.Name+db.QuoteStr()+" TYPE "+db.SqlType(col))
++		statements = append(statements, "ALTER "+db.Quote(col.Name)+" TYPE "+db.SqlType(col))
+ 	}
+ 
+ 	return "ALTER TABLE " + db.Quote(tableName) + " " + strings.Join(statements, ", ") + ";"
+ }
++
++func (db *Postgres) CleanDB() error {
++	sess := db.engine.NewSession()
++	defer sess.Close()
++
++	if _, err := sess.Exec("DROP SCHEMA public CASCADE;"); err != nil {
++		return fmt.Errorf("Failed to drop schema public")
++	}
++
++	if _, err := sess.Exec("CREATE SCHEMA public;"); err != nil {
++		return fmt.Errorf("Failed to create schema public")
++	}
++
++	return nil
++}
+diff --git a/pkg/services/sqlstore/migrator/sqlite_dialect.go b/pkg/services/sqlstore/migrator/sqlite_dialect.go
+index 1a31cee4f5e..01082b95c88 100644
+--- a/pkg/services/sqlstore/migrator/sqlite_dialect.go
++++ b/pkg/services/sqlstore/migrator/sqlite_dialect.go
+@@ -1,14 +1,19 @@
+ package migrator
+ 
+-import "fmt"
++import (
++	"fmt"
++
++	"github.com/go-xorm/xorm"
++)
+ 
+ type Sqlite3 struct {
+ 	BaseDialect
+ }
+ 
+-func NewSqlite3Dialect() *Sqlite3 {
++func NewSqlite3Dialect(engine *xorm.Engine) *Sqlite3 {
+ 	d := Sqlite3{}
+ 	d.BaseDialect.dialect = &d
++	d.BaseDialect.engine = engine
+ 	d.BaseDialect.driverName = SQLITE
+ 	return &d
+ }
+@@ -21,10 +26,6 @@ func (db *Sqlite3) Quote(name string) string {
+ 	return "`" + name + "`"
+ }
+ 
+-func (db *Sqlite3) QuoteStr() string {
+-	return "`"
+-}
+-
+ func (db *Sqlite3) AutoIncrStr() string {
+ 	return "AUTOINCREMENT"
+ }
+@@ -77,3 +78,7 @@ func (db *Sqlite3) DropIndexSql(tableName string, index *Index) string {
+ 	idxName := index.XName(tableName)
+ 	return fmt.Sprintf("DROP INDEX %v", quote(idxName))
+ }
++
++func (db *Sqlite3) CleanDB() error {
++	return nil
++}
+diff --git a/pkg/services/sqlstore/migrator/types.go b/pkg/services/sqlstore/migrator/types.go
+index 62ec74e7b9f..26c46889daf 100644
+--- a/pkg/services/sqlstore/migrator/types.go
++++ b/pkg/services/sqlstore/migrator/types.go
+@@ -9,6 +9,7 @@ const (
+ 	POSTGRES = "postgres"
+ 	SQLITE   = "sqlite3"
+ 	MYSQL    = "mysql"
++	MSSQL    = "mssql"
+ )
+ 
+ type Migration interface {
+diff --git a/pkg/services/sqlstore/playlist.go b/pkg/services/sqlstore/playlist.go
+index 7b726880b9e..99519fe762f 100644
+--- a/pkg/services/sqlstore/playlist.go
++++ b/pkg/services/sqlstore/playlist.go
+@@ -64,7 +64,7 @@ func UpdatePlaylist(cmd *m.UpdatePlaylistCommand) error {
+ 		Interval: playlist.Interval,
+ 	}
+ 
+-	_, err := x.ID(cmd.Id).Cols("id", "name", "interval").Update(&playlist)
++	_, err := x.ID(cmd.Id).Cols("name", "interval").Update(&playlist)
+ 
+ 	if err != nil {
+ 		return err
+diff --git a/pkg/services/sqlstore/search_builder.go b/pkg/services/sqlstore/search_builder.go
+index ddfbfbfc551..7817c4635c9 100644
+--- a/pkg/services/sqlstore/search_builder.go
++++ b/pkg/services/sqlstore/search_builder.go
+@@ -92,7 +92,7 @@ func (sb *SearchBuilder) ToSql() (string, []interface{}) {
+ 		LEFT OUTER JOIN dashboard folder on folder.id = dashboard.folder_id
+ 		LEFT OUTER JOIN dashboard_tag on dashboard.id = dashboard_tag.dashboard_id`)
+ 
+-	sb.sql.WriteString(" ORDER BY dashboard.title ASC LIMIT 5000")
++	sb.sql.WriteString(" ORDER BY dashboard.title ASC" + dialect.Limit(5000))
+ 
+ 	return sb.sql.String(), sb.params
+ }
+@@ -135,12 +135,11 @@ func (sb *SearchBuilder) buildTagQuery() {
+ 	// this ends the inner select (tag filtered part)
+ 	sb.sql.WriteString(`
+ 		GROUP BY dashboard.id HAVING COUNT(dashboard.id) >= ?
+-		LIMIT ?) as ids
++		ORDER BY dashboard.id` + dialect.Limit(int64(sb.limit)) + `) as ids
+ 		INNER JOIN dashboard on ids.id = dashboard.id
+ 	`)
+ 
+ 	sb.params = append(sb.params, len(sb.tags))
+-	sb.params = append(sb.params, sb.limit)
+ }
+ 
+ func (sb *SearchBuilder) buildMainQuery() {
+@@ -153,8 +152,7 @@ func (sb *SearchBuilder) buildMainQuery() {
+ 	sb.sql.WriteString(` WHERE `)
+ 	sb.buildSearchWhereClause()
+ 
+-	sb.sql.WriteString(` LIMIT ?) as ids INNER JOIN dashboard on ids.id = dashboard.id `)
+-	sb.params = append(sb.params, sb.limit)
++	sb.sql.WriteString(` ORDER BY dashboard.title` + dialect.Limit(int64(sb.limit)) + `) as ids INNER JOIN dashboard on ids.id = dashboard.id `)
+ }
+ 
+ func (sb *SearchBuilder) buildSearchWhereClause() {
+diff --git a/pkg/services/sqlstore/search_builder_test.go b/pkg/services/sqlstore/search_builder_test.go
+index e8b02c445ec..e7ec3eedac6 100644
+--- a/pkg/services/sqlstore/search_builder_test.go
++++ b/pkg/services/sqlstore/search_builder_test.go
+@@ -4,13 +4,10 @@ import (
+ 	"testing"
+ 
+ 	m "github.com/grafana/grafana/pkg/models"
+-	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
+ 	. "github.com/smartystreets/goconvey/convey"
+ )
+ 
+ func TestSearchBuilder(t *testing.T) {
+-	dialect = migrator.NewDialect("sqlite3")
+-
+ 	Convey("Testing building a search", t, func() {
+ 		signedInUser := &m.SignedInUser{
+ 			OrgId:  1,
+@@ -23,7 +20,7 @@ func TestSearchBuilder(t *testing.T) {
+ 			sql, params := sb.IsStarred().WithTitle("test").ToSql()
+ 			So(sql, ShouldStartWith, "SELECT")
+ 			So(sql, ShouldContainSubstring, "INNER JOIN dashboard on ids.id = dashboard.id")
+-			So(sql, ShouldEndWith, "ORDER BY dashboard.title ASC LIMIT 5000")
++			So(sql, ShouldContainSubstring, "ORDER BY dashboard.title ASC")
+ 			So(len(params), ShouldBeGreaterThan, 0)
+ 		})
+ 
+@@ -31,7 +28,7 @@ func TestSearchBuilder(t *testing.T) {
+ 			sql, params := sb.WithTags([]string{"tag1", "tag2"}).ToSql()
+ 			So(sql, ShouldStartWith, "SELECT")
+ 			So(sql, ShouldContainSubstring, "LEFT OUTER JOIN dashboard_tag")
+-			So(sql, ShouldEndWith, "ORDER BY dashboard.title ASC LIMIT 5000")
++			So(sql, ShouldContainSubstring, "ORDER BY dashboard.title ASC")
+ 			So(len(params), ShouldBeGreaterThan, 0)
+ 		})
+ 	})
+diff --git a/pkg/services/sqlstore/shared.go b/pkg/services/sqlstore/shared.go
+index 0f4aeb969c6..9a24a513aad 100644
+--- a/pkg/services/sqlstore/shared.go
++++ b/pkg/services/sqlstore/shared.go
+@@ -1,6 +1,7 @@
+ package sqlstore
+ 
+ import (
++	"reflect"
+ 	"time"
+ 
+ 	"github.com/go-xorm/xorm"
+@@ -67,3 +68,23 @@ func inTransactionWithRetry(callback dbTransactionFunc, retry int) error {
+ 
+ 	return nil
+ }
++
++func (sess *DBSession) InsertId(bean interface{}) (int64, error) {
++	table := sess.DB().Mapper.Obj2Table(getTypeName(bean))
++
++	dialect.PreInsertId(table, sess.Session)
++
++	id, err := sess.Session.InsertOne(bean)
++
++	dialect.PostInsertId(table, sess.Session)
++
++	return id, err
++}
++
++func getTypeName(bean interface{}) (res string) {
++	t := reflect.TypeOf(bean)
++	for t.Kind() == reflect.Ptr {
++		t = t.Elem()
++	}
++	return t.Name()
++}
+diff --git a/pkg/services/sqlstore/sqlstore.go b/pkg/services/sqlstore/sqlstore.go
+index cac0c54226c..b1b4b89d716 100644
+--- a/pkg/services/sqlstore/sqlstore.go
++++ b/pkg/services/sqlstore/sqlstore.go
+@@ -20,7 +20,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/setting"
+ 
+ 	"github.com/go-sql-driver/mysql"
+-	_ "github.com/go-sql-driver/mysql"
+ 	"github.com/go-xorm/xorm"
+ 	_ "github.com/lib/pq"
+ 	_ "github.com/mattn/go-sqlite3"
+@@ -97,7 +96,7 @@ func NewEngine() *xorm.Engine {
+ 
+ func SetEngine(engine *xorm.Engine) (err error) {
+ 	x = engine
+-	dialect = migrator.NewDialect(x.DriverName())
++	dialect = migrator.NewDialect(x)
+ 
+ 	migrator := migrator.NewMigrator(x)
+ 	migrations.AddMigrations(migrator)
+@@ -116,7 +115,7 @@ func getEngine() (*xorm.Engine, error) {
+ 
+ 	cnnstr := ""
+ 	switch DbCfg.Type {
+-	case "mysql":
++	case migrator.MYSQL:
+ 		protocol := "tcp"
+ 		if strings.HasPrefix(DbCfg.Host, "/") {
+ 			protocol = "unix"
+@@ -133,7 +132,7 @@ func getEngine() (*xorm.Engine, error) {
+ 			mysql.RegisterTLSConfig("custom", tlsCert)
+ 			cnnstr += "&tls=custom"
+ 		}
+-	case "postgres":
++	case migrator.POSTGRES:
+ 		var host, port = "127.0.0.1", "5432"
+ 		fields := strings.Split(DbCfg.Host, ":")
+ 		if len(fields) > 0 && len(strings.TrimSpace(fields[0])) > 0 {
+@@ -153,7 +152,7 @@ func getEngine() (*xorm.Engine, error) {
+ 			strings.Replace(DbCfg.ClientKeyPath, `'`, `\'`, -1),
+ 			strings.Replace(DbCfg.CaCertPath, `'`, `\'`, -1),
+ 		)
+-	case "sqlite3":
++	case migrator.SQLITE:
+ 		if !filepath.IsAbs(DbCfg.Path) {
+ 			DbCfg.Path = filepath.Join(setting.DataPath, DbCfg.Path)
+ 		}
+@@ -230,16 +229,10 @@ func LoadConfig() {
+ 	DbCfg.Path = sec.Key("path").MustString("data/grafana.db")
+ }
+ 
+-var (
+-	dbSqlite   = "sqlite"
+-	dbMySql    = "mysql"
+-	dbPostgres = "postgres"
+-)
+-
+ func InitTestDB(t *testing.T) *xorm.Engine {
+-	selectedDb := dbSqlite
+-	// selectedDb := dbMySql
+-	// selectedDb := dbPostgres
++	selectedDb := migrator.SQLITE
++	// selectedDb := migrator.MYSQL
++	// selectedDb := migrator.POSTGRES
+ 
+ 	var x *xorm.Engine
+ 	var err error
+@@ -250,9 +243,9 @@ func InitTestDB(t *testing.T) *xorm.Engine {
+ 	}
+ 
+ 	switch strings.ToLower(selectedDb) {
+-	case dbMySql:
++	case migrator.MYSQL:
+ 		x, err = xorm.NewEngine(sqlutil.TestDB_Mysql.DriverName, sqlutil.TestDB_Mysql.ConnStr)
+-	case dbPostgres:
++	case migrator.POSTGRES:
+ 		x, err = xorm.NewEngine(sqlutil.TestDB_Postgres.DriverName, sqlutil.TestDB_Postgres.ConnStr)
+ 	default:
+ 		x, err = xorm.NewEngine(sqlutil.TestDB_Sqlite3.DriverName, sqlutil.TestDB_Sqlite3.ConnStr)
+@@ -261,24 +254,29 @@ func InitTestDB(t *testing.T) *xorm.Engine {
+ 	x.DatabaseTZ = time.UTC
+ 	x.TZLocation = time.UTC
+ 
+-	// x.ShowSQL()
+-
+ 	if err != nil {
+ 		t.Fatalf("Failed to init test database: %v", err)
+ 	}
+ 
+-	sqlutil.CleanDB(x)
++	dialect = migrator.NewDialect(x)
++
++	err = dialect.CleanDB()
++	if err != nil {
++		t.Fatalf("Failed to clean test db %v", err)
++	}
+ 
+ 	if err := SetEngine(x); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 
++	// x.ShowSQL()
++
+ 	return x
+ }
+ 
+ func IsTestDbMySql() bool {
+ 	if db, present := os.LookupEnv("GRAFANA_TEST_DB"); present {
+-		return db == dbMySql
++		return db == migrator.MYSQL
+ 	}
+ 
+ 	return false
+@@ -286,7 +284,7 @@ func IsTestDbMySql() bool {
+ 
+ func IsTestDbPostgres() bool {
+ 	if db, present := os.LookupEnv("GRAFANA_TEST_DB"); present {
+-		return db == dbPostgres
++		return db == migrator.POSTGRES
+ 	}
+ 
+ 	return false
+diff --git a/pkg/services/sqlstore/sqlutil/sqlutil.go b/pkg/services/sqlstore/sqlutil/sqlutil.go
+index 46306ac8e0d..f73985fb1ba 100644
+--- a/pkg/services/sqlstore/sqlutil/sqlutil.go
++++ b/pkg/services/sqlstore/sqlutil/sqlutil.go
+@@ -1,11 +1,5 @@
+ package sqlutil
+ 
+-import (
+-	"fmt"
+-
+-	"github.com/go-xorm/xorm"
+-)
+-
+ type TestDB struct {
+ 	DriverName string
+ 	ConnStr    string
+@@ -15,34 +9,3 @@ var TestDB_Sqlite3 = TestDB{DriverName: "sqlite3", ConnStr: ":memory:"}
+ var TestDB_Mysql = TestDB{DriverName: "mysql", ConnStr: "grafana:password@tcp(localhost:3306)/grafana_tests?collation=utf8mb4_unicode_ci"}
+ var TestDB_Postgres = TestDB{DriverName: "postgres", ConnStr: "user=grafanatest password=grafanatest host=localhost port=5432 dbname=grafanatest sslmode=disable"}
+ var TestDB_Mssql = TestDB{DriverName: "mssql", ConnStr: "server=localhost;port=1433;database=grafanatest;user id=grafana;password=Password!"}
+-
+-func CleanDB(x *xorm.Engine) {
+-	if x.DriverName() == "postgres" {
+-		sess := x.NewSession()
+-		defer sess.Close()
+-
+-		if _, err := sess.Exec("DROP SCHEMA public CASCADE;"); err != nil {
+-			panic("Failed to drop schema public")
+-		}
+-
+-		if _, err := sess.Exec("CREATE SCHEMA public;"); err != nil {
+-			panic("Failed to create schema public")
+-		}
+-	} else if x.DriverName() == "mysql" {
+-		tables, _ := x.DBMetas()
+-		sess := x.NewSession()
+-		defer sess.Close()
+-
+-		for _, table := range tables {
+-			if _, err := sess.Exec("set foreign_key_checks = 0"); err != nil {
+-				panic("failed to disable foreign key checks")
+-			}
+-			if _, err := sess.Exec("drop table " + table.Name + " ;"); err != nil {
+-				panic(fmt.Sprintf("failed to delete table: %v, err: %v", table.Name, err))
+-			}
+-			if _, err := sess.Exec("set foreign_key_checks = 1"); err != nil {
+-				panic("failed to disable foreign key checks")
+-			}
+-		}
+-	}
+-}
+diff --git a/pkg/services/sqlstore/team.go b/pkg/services/sqlstore/team.go
+index b3ff4c81e7c..7d53d114235 100644
+--- a/pkg/services/sqlstore/team.go
++++ b/pkg/services/sqlstore/team.go
+@@ -161,9 +161,8 @@ func SearchTeams(query *m.SearchTeamsQuery) error {
+ 	sql.WriteString(` order by team.name asc`)
+ 
+ 	if query.Limit != 0 {
+-		sql.WriteString(` limit ? offset ?`)
+ 		offset := query.Limit * (query.Page - 1)
+-		params = append(params, query.Limit, offset)
++		sql.WriteString(dialect.LimitOffset(int64(query.Limit), int64(offset)))
+ 	}
+ 
+ 	if err := x.Sql(sql.String(), params...).Find(&query.Result.Teams); err != nil {
+diff --git a/pkg/services/sqlstore/user.go b/pkg/services/sqlstore/user.go
+index f19019d28a4..e7aa8da837a 100644
+--- a/pkg/services/sqlstore/user.go
++++ b/pkg/services/sqlstore/user.go
+@@ -60,8 +60,14 @@ func getOrgIdForNewUser(cmd *m.CreateUserCommand, sess *DBSession) (int64, error
+ 	org.Created = time.Now()
+ 	org.Updated = time.Now()
+ 
+-	if _, err := sess.Insert(&org); err != nil {
+-		return 0, err
++	if org.Id != 0 {
++		if _, err := sess.InsertId(&org); err != nil {
++			return 0, err
++		}
++	} else {
++		if _, err := sess.InsertOne(&org); err != nil {
++			return 0, err
++		}
+ 	}
+ 
+ 	sess.publishAfterCommit(&events.OrgCreated{
+diff --git a/pkg/tracing/tracing.go b/pkg/tracing/tracing.go
+index 79b01f70c9b..61f45af3635 100644
+--- a/pkg/tracing/tracing.go
++++ b/pkg/tracing/tracing.go
+@@ -1,68 +1,71 @@
+ package tracing
+ 
+ import (
++	"context"
+ 	"io"
+ 	"strings"
+ 
+ 	"github.com/grafana/grafana/pkg/log"
++	"github.com/grafana/grafana/pkg/registry"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 
+ 	opentracing "github.com/opentracing/opentracing-go"
+ 	jaegercfg "github.com/uber/jaeger-client-go/config"
+-	ini "gopkg.in/ini.v1"
+ )
+ 
+-var (
+-	logger log.Logger = log.New("tracing")
+-)
+-
+-type TracingSettings struct {
+-	Enabled      bool
+-	Address      string
+-	CustomTags   map[string]string
+-	SamplerType  string
+-	SamplerParam float64
++func init() {
++	registry.RegisterService(&TracingService{})
+ }
+ 
+-func Init(file *ini.File) (io.Closer, error) {
+-	settings := parseSettings(file)
+-	return internalInit(settings)
++type TracingService struct {
++	enabled      bool
++	address      string
++	customTags   map[string]string
++	samplerType  string
++	samplerParam float64
++	log          log.Logger
++	closer       io.Closer
++
++	Cfg *setting.Cfg `inject:""`
+ }
+ 
+-func parseSettings(file *ini.File) *TracingSettings {
+-	settings := &TracingSettings{}
++func (ts *TracingService) Init() error {
++	ts.log = log.New("tracing")
++	ts.parseSettings()
+ 
+-	var section, err = setting.Raw.GetSection("tracing.jaeger")
+-	if err != nil {
+-		return settings
++	if ts.enabled {
++		ts.initGlobalTracer()
+ 	}
+ 
+-	settings.Address = section.Key("address").MustString("")
+-	if settings.Address != "" {
+-		settings.Enabled = true
++	return nil
++}
++
++func (ts *TracingService) parseSettings() {
++	var section, err = ts.Cfg.Raw.GetSection("tracing.jaeger")
++	if err != nil {
++		return
+ 	}
+ 
+-	settings.CustomTags = splitTagSettings(section.Key("always_included_tag").MustString(""))
+-	settings.SamplerType = section.Key("sampler_type").MustString("")
+-	settings.SamplerParam = section.Key("sampler_param").MustFloat64(1)
++	ts.address = section.Key("address").MustString("")
++	if ts.address != "" {
++		ts.enabled = true
++	}
+ 
+-	return settings
++	ts.customTags = splitTagSettings(section.Key("always_included_tag").MustString(""))
++	ts.samplerType = section.Key("sampler_type").MustString("")
++	ts.samplerParam = section.Key("sampler_param").MustFloat64(1)
+ }
+ 
+-func internalInit(settings *TracingSettings) (io.Closer, error) {
+-	if !settings.Enabled {
+-		return &nullCloser{}, nil
+-	}
+-
++func (ts *TracingService) initGlobalTracer() error {
+ 	cfg := jaegercfg.Configuration{
+-		Disabled: !settings.Enabled,
++		Disabled: !ts.enabled,
+ 		Sampler: &jaegercfg.SamplerConfig{
+-			Type:  settings.SamplerType,
+-			Param: settings.SamplerParam,
++			Type:  ts.samplerType,
++			Param: ts.samplerParam,
+ 		},
+ 		Reporter: &jaegercfg.ReporterConfig{
+ 			LogSpans:           false,
+-			LocalAgentHostPort: settings.Address,
++			LocalAgentHostPort: ts.address,
+ 		},
+ 	}
+ 
+@@ -71,18 +74,31 @@ func internalInit(settings *TracingSettings) (io.Closer, error) {
+ 	options := []jaegercfg.Option{}
+ 	options = append(options, jaegercfg.Logger(jLogger))
+ 
+-	for tag, value := range settings.CustomTags {
++	for tag, value := range ts.customTags {
+ 		options = append(options, jaegercfg.Tag(tag, value))
+ 	}
+ 
+ 	tracer, closer, err := cfg.New("grafana", options...)
+ 	if err != nil {
+-		return nil, err
++		return err
+ 	}
+ 
+ 	opentracing.InitGlobalTracer(tracer)
+-	logger.Info("Initializing Jaeger tracer", "address", settings.Address)
+-	return closer, nil
++
++	ts.closer = closer
++
++	return nil
++}
++
++func (ts *TracingService) Run(ctx context.Context) error {
++	<-ctx.Done()
++
++	if ts.closer != nil {
++		ts.log.Info("Closing tracing")
++		ts.closer.Close()
++	}
++
++	return nil
+ }
+ 
+ func splitTagSettings(input string) map[string]string {
+@@ -110,7 +126,3 @@ func (jlw *jaegerLogWrapper) Error(msg string) {
+ func (jlw *jaegerLogWrapper) Infof(msg string, args ...interface{}) {
+ 	jlw.logger.Info(msg, args)
+ }
+-
+-type nullCloser struct{}
+-
+-func (*nullCloser) Close() error { return nil }
+diff --git a/public/app/core/specs/kbn.jest.ts b/public/app/core/specs/kbn.jest.ts
+index 9fad1f30694..68945068043 100644
+--- a/public/app/core/specs/kbn.jest.ts
++++ b/public/app/core/specs/kbn.jest.ts
+@@ -101,38 +101,88 @@ describeValueFormat('d', 245, 100, 0, '35 week');
+ describeValueFormat('d', 2456, 10, 0, '6.73 year');
+ 
+ describe('date time formats', function() {
++  const epoch = 1505634997920;
++  const utcTime = moment.utc(epoch);
++  const browserTime = moment(epoch);
++
+   it('should format as iso date', function() {
+-    var str = kbn.valueFormats.dateTimeAsIso(1505634997920, 1);
+-    expect(str).toBe(moment(1505634997920).format('YYYY-MM-DD HH:mm:ss'));
++    var expected = browserTime.format('YYYY-MM-DD HH:mm:ss');
++    var actual = kbn.valueFormats.dateTimeAsIso(epoch);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as iso date (in UTC)', function() {
++    var expected = utcTime.format('YYYY-MM-DD HH:mm:ss');
++    var actual = kbn.valueFormats.dateTimeAsIso(epoch, true);
++    expect(actual).toBe(expected);
+   });
+ 
+   it('should format as iso date and skip date when today', function() {
+     var now = moment();
+-    var str = kbn.valueFormats.dateTimeAsIso(now.valueOf(), 1);
+-    expect(str).toBe(now.format('HH:mm:ss'));
++    var expected = now.format('HH:mm:ss');
++    var actual = kbn.valueFormats.dateTimeAsIso(now.valueOf(), false);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as iso date (in UTC) and skip date when today', function() {
++    var now = moment.utc();
++    var expected = now.format('HH:mm:ss');
++    var actual = kbn.valueFormats.dateTimeAsIso(now.valueOf(), true);
++    expect(actual).toBe(expected);
+   });
+ 
+   it('should format as US date', function() {
+-    var str = kbn.valueFormats.dateTimeAsUS(1505634997920, 1);
+-    expect(str).toBe(moment(1505634997920).format('MM/DD/YYYY h:mm:ss a'));
++    var expected = browserTime.format('MM/DD/YYYY h:mm:ss a');
++    var actual = kbn.valueFormats.dateTimeAsUS(epoch, false);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as US date (in UTC)', function() {
++    var expected = utcTime.format('MM/DD/YYYY h:mm:ss a');
++    var actual = kbn.valueFormats.dateTimeAsUS(epoch, true);
++    expect(actual).toBe(expected);
+   });
+ 
+   it('should format as US date and skip date when today', function() {
+     var now = moment();
+-    var str = kbn.valueFormats.dateTimeAsUS(now.valueOf(), 1);
+-    expect(str).toBe(now.format('h:mm:ss a'));
++    var expected = now.format('h:mm:ss a');
++    var actual = kbn.valueFormats.dateTimeAsUS(now.valueOf(), false);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as US date (in UTC) and skip date when today', function() {
++    var now = moment.utc();
++    var expected = now.format('h:mm:ss a');
++    var actual = kbn.valueFormats.dateTimeAsUS(now.valueOf(), true);
++    expect(actual).toBe(expected);
+   });
+ 
+   it('should format as from now with days', function() {
+     var daysAgo = moment().add(-7, 'd');
+-    var str = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), 1);
+-    expect(str).toBe('7 days ago');
++    var expected = '7 days ago';
++    var actual = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), false);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as from now with days (in UTC)', function() {
++    var daysAgo = moment.utc().add(-7, 'd');
++    var expected = '7 days ago';
++    var actual = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), true);
++    expect(actual).toBe(expected);
+   });
+ 
+   it('should format as from now with minutes', function() {
+     var daysAgo = moment().add(-2, 'm');
+-    var str = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), 1);
+-    expect(str).toBe('2 minutes ago');
++    var expected = '2 minutes ago';
++    var actual = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), false);
++    expect(actual).toBe(expected);
++  });
++
++  it('should format as from now with minutes (in UTC)', function() {
++    var daysAgo = moment.utc().add(-2, 'm');
++    var expected = '2 minutes ago';
++    var actual = kbn.valueFormats.dateTimeFromNow(daysAgo.valueOf(), true);
++    expect(actual).toBe(expected);
+   });
+ });
+ 
+diff --git a/public/app/core/specs/time_series.jest.ts b/public/app/core/specs/time_series.jest.ts
+index 5043953071a..6214c687add 100644
+--- a/public/app/core/specs/time_series.jest.ts
++++ b/public/app/core/specs/time_series.jest.ts
+@@ -281,6 +281,20 @@ describe('TimeSeries', function() {
+         expect(series.zindex).toBe(2);
+       });
+     });
++
++    describe('override color', function() {
++      beforeEach(function() {
++        series.applySeriesOverrides([{ alias: 'test', color: '#112233' }]);
++      });
++
++      it('should set color', function() {
++        expect(series.color).toBe('#112233');
++      });
++
++      it('should set bars.fillColor', function() {
++        expect(series.bars.fillColor).toBe('#112233');
++      });
++    });
+   });
+ 
+   describe('value formatter', function() {
+diff --git a/public/app/core/time_series2.ts b/public/app/core/time_series2.ts
+index 3e02b1ec939..4da64850e59 100644
+--- a/public/app/core/time_series2.ts
++++ b/public/app/core/time_series2.ts
+@@ -99,6 +99,7 @@ export default class TimeSeries {
+     this.alias = opts.alias;
+     this.aliasEscaped = _.escape(opts.alias);
+     this.color = opts.color;
++    this.bars = { fillColor: opts.color };
+     this.valueFormater = kbn.valueFormats.none;
+     this.stats = {};
+     this.legend = true;
+@@ -112,11 +113,11 @@ export default class TimeSeries {
+       dashLength: [],
+     };
+     this.points = {};
+-    this.bars = {};
+     this.yaxis = 1;
+     this.zindex = 0;
+     this.nullPointMode = null;
+     delete this.stack;
++    delete this.bars.show;
+ 
+     for (var i = 0; i < overrides.length; i++) {
+       var override = overrides[i];
+@@ -168,7 +169,7 @@ export default class TimeSeries {
+         this.fillBelowTo = override.fillBelowTo;
+       }
+       if (override.color !== void 0) {
+-        this.color = override.color;
++        this.setColor(override.color);
+       }
+       if (override.transform !== void 0) {
+         this.transform = override.transform;
+@@ -346,4 +347,9 @@ export default class TimeSeries {
+ 
+     return false;
+   }
++
++  setColor(color) {
++    this.color = color;
++    this.bars.fillColor = color;
++  }
+ }
+diff --git a/public/app/core/utils/kbn.ts b/public/app/core/utils/kbn.ts
+index f4ee7af3383..f1c782846fc 100644
+--- a/public/app/core/utils/kbn.ts
++++ b/public/app/core/utils/kbn.ts
+@@ -816,8 +816,8 @@ kbn.valueFormats.timeticks = function(size, decimals, scaledDecimals) {
+   return kbn.valueFormats.s(size / 100, decimals, scaledDecimals);
+ };
+ 
+-kbn.valueFormats.dateTimeAsIso = function(epoch) {
+-  var time = moment(epoch);
++kbn.valueFormats.dateTimeAsIso = function(epoch, isUtc) {
++  var time = isUtc ? moment.utc(epoch) : moment(epoch);
+ 
+   if (moment().isSame(epoch, 'day')) {
+     return time.format('HH:mm:ss');
+@@ -825,8 +825,8 @@ kbn.valueFormats.dateTimeAsIso = function(epoch) {
+   return time.format('YYYY-MM-DD HH:mm:ss');
+ };
+ 
+-kbn.valueFormats.dateTimeAsUS = function(epoch) {
+-  var time = moment(epoch);
++kbn.valueFormats.dateTimeAsUS = function(epoch, isUtc) {
++  var time = isUtc ? moment.utc(epoch) : moment(epoch);
+ 
+   if (moment().isSame(epoch, 'day')) {
+     return time.format('h:mm:ss a');
+@@ -834,8 +834,9 @@ kbn.valueFormats.dateTimeAsUS = function(epoch) {
+   return time.format('MM/DD/YYYY h:mm:ss a');
+ };
+ 
+-kbn.valueFormats.dateTimeFromNow = function(epoch) {
+-  return moment(epoch).fromNow();
++kbn.valueFormats.dateTimeFromNow = function(epoch, isUtc) {
++  var time = isUtc ? moment.utc(epoch) : moment(epoch);
++  return time.fromNow();
+ };
+ 
+ ///// FORMAT MENU /////
+diff --git a/public/app/features/templating/template_srv.ts b/public/app/features/templating/template_srv.ts
+index e7c1dc7f102..99a9f53d547 100644
+--- a/public/app/features/templating/template_srv.ts
++++ b/public/app/features/templating/template_srv.ts
+@@ -74,6 +74,9 @@ export class TemplateSrv {
+     if (typeof value === 'string') {
+       return luceneEscape(value);
+     }
++    if (value instanceof Array && value.length === 0) {
++        return '__empty__';
++    }
+     var quotedValues = _.map(value, function(val) {
+       return '"' + luceneEscape(val) + '"';
+     });
+diff --git a/public/app/plugins/datasource/elasticsearch/datasource.ts b/public/app/plugins/datasource/elasticsearch/datasource.ts
+index 7476a36405b..e3eccfb8029 100644
+--- a/public/app/plugins/datasource/elasticsearch/datasource.ts
++++ b/public/app/plugins/datasource/elasticsearch/datasource.ts
+@@ -395,6 +395,7 @@ export class ElasticDatasource {
+     }
+ 
+     if (query.find === 'terms') {
++      query.field = this.templateSrv.replace(query.field, {}, 'lucene');
+       query.query = this.templateSrv.replace(query.query || '*', {}, 'lucene');
+       return this.getTerms(query);
+     }
+diff --git a/public/app/plugins/panel/graph/module.ts b/public/app/plugins/panel/graph/module.ts
+index 6cebbe65ab8..ef82fb395a5 100644
+--- a/public/app/plugins/panel/graph/module.ts
++++ b/public/app/plugins/panel/graph/module.ts
+@@ -235,7 +235,7 @@ class GraphCtrl extends MetricsPanelCtrl {
+   }
+ 
+   changeSeriesColor(series, color) {
+-    series.color = color;
++    series.setColor(color);
+     this.panel.aliasColors[series.alias] = series.color;
+     this.render();
+   }
+diff --git a/public/app/plugins/panel/singlestat/module.ts b/public/app/plugins/panel/singlestat/module.ts
+index 28d3f308d68..b1996d8ffc9 100644
+--- a/public/app/plugins/panel/singlestat/module.ts
++++ b/public/app/plugins/panel/singlestat/module.ts
+@@ -308,7 +308,7 @@ class SingleStatCtrl extends MetricsPanelCtrl {
+         let formatFunc = kbn.valueFormats[this.panel.format];
+         data.value = lastPoint[1];
+         data.valueRounded = data.value;
+-        data.valueFormatted = formatFunc(data.value, 0, 0);
++        data.valueFormatted = formatFunc(data.value, this.dashboard.isTimezoneUtc());
+       } else {
+         data.value = this.series[0].stats[this.panel.valueName];
+         data.flotpairs = this.series[0].flotpairs;
+diff --git a/public/app/plugins/panel/singlestat/specs/singlestat_specs.ts b/public/app/plugins/panel/singlestat/specs/singlestat_specs.ts
+index f80465052f9..217ec5ee04c 100644
+--- a/public/app/plugins/panel/singlestat/specs/singlestat_specs.ts
++++ b/public/app/plugins/panel/singlestat/specs/singlestat_specs.ts
+@@ -82,6 +82,19 @@ describe('SingleStatCtrl', function() {
+     });
+   });
+ 
++  singleStatScenario('showing last iso time instead of value (in UTC)', function(ctx) {
++    ctx.setup(function() {
++      ctx.data = [{ target: 'test.cpu1', datapoints: [[10, 12], [20, 1505634997920]] }];
++      ctx.ctrl.panel.valueName = 'last_time';
++      ctx.ctrl.panel.format = 'dateTimeAsIso';
++      ctx.setIsUtc(true);
++    });
++
++    it('should set formatted value', function() {
++      expect(ctx.data.valueFormatted).to.be(moment.utc(1505634997920).format('YYYY-MM-DD HH:mm:ss'));
++    });
++  });
++
+   singleStatScenario('showing last us time instead of value', function(ctx) {
+     ctx.setup(function() {
+       ctx.data = [{ target: 'test.cpu1', datapoints: [[10, 12], [20, 1505634997920]] }];
+@@ -99,6 +112,19 @@ describe('SingleStatCtrl', function() {
+     });
+   });
+ 
++  singleStatScenario('showing last us time instead of value (in UTC)', function(ctx) {
++    ctx.setup(function() {
++      ctx.data = [{ target: 'test.cpu1', datapoints: [[10, 12], [20, 1505634997920]] }];
++      ctx.ctrl.panel.valueName = 'last_time';
++      ctx.ctrl.panel.format = 'dateTimeAsUS';
++      ctx.setIsUtc(true);
++    });
++
++    it('should set formatted value', function() {
++      expect(ctx.data.valueFormatted).to.be(moment.utc(1505634997920).format('MM/DD/YYYY h:mm:ss a'));
++    });
++  });
++
+   singleStatScenario('showing last time from now instead of value', function(ctx) {
+     beforeEach(() => {
+       clock = sinon.useFakeTimers(epoch);
+@@ -124,6 +150,27 @@ describe('SingleStatCtrl', function() {
+     });
+   });
+ 
++  singleStatScenario('showing last time from now instead of value (in UTC)', function(ctx) {
++    beforeEach(() => {
++      clock = sinon.useFakeTimers(epoch);
++    });
++
++    ctx.setup(function() {
++      ctx.data = [{ target: 'test.cpu1', datapoints: [[10, 12], [20, 1505634997920]] }];
++      ctx.ctrl.panel.valueName = 'last_time';
++      ctx.ctrl.panel.format = 'dateTimeFromNow';
++      ctx.setIsUtc(true);
++    });
++
++    it('should set formatted value', function() {
++      expect(ctx.data.valueFormatted).to.be('2 days ago');
++    });
++
++    afterEach(() => {
++      clock.restore();
++    });
++  });
++
+   singleStatScenario('MainValue should use same number for decimals as displayed when checking thresholds', function(
+     ctx
+   ) {
+diff --git a/public/app/plugins/panel/table/renderer.ts b/public/app/plugins/panel/table/renderer.ts
+index 78f224d723f..f6950dada52 100644
+--- a/public/app/plugins/panel/table/renderer.ts
++++ b/public/app/plugins/panel/table/renderer.ts
+@@ -247,7 +247,7 @@ export class TableRenderer {
+       var scopedVars = this.renderRowVariables(rowIndex);
+       scopedVars['__cell'] = { value: value };
+ 
+-      var cellLink = this.templateSrv.replace(column.style.linkUrl, scopedVars);
++      var cellLink = this.templateSrv.replace(column.style.linkUrl, scopedVars, encodeURIComponent);
+       var cellLinkTooltip = this.templateSrv.replace(column.style.linkTooltip, scopedVars);
+       var cellTarget = column.style.linkTargetBlank ? '_blank' : '';
+ 
+diff --git a/public/test/specs/helpers.ts b/public/test/specs/helpers.ts
+index ab7fbb5698b..276d9867ec4 100644
+--- a/public/test/specs/helpers.ts
++++ b/public/test/specs/helpers.ts
+@@ -23,6 +23,7 @@ export function ControllerTestContext() {
+       };
+     },
+   };
++  this.isUtc = false;
+ 
+   this.providePhase = function(mocks) {
+     return angularMocks.module(function($provide) {
+@@ -46,6 +47,10 @@ export function ControllerTestContext() {
+       self.$q = $q;
+       self.panel = new PanelModel({ type: 'test' });
+       self.dashboard = { meta: {} };
++      self.isUtc = false;
++      self.dashboard.isTimezoneUtc = function() {
++        return self.isUtc;
++      };
+ 
+       $rootScope.appEvent = sinon.spy();
+       $rootScope.onAppEvent = sinon.spy();
+@@ -93,6 +98,10 @@ export function ControllerTestContext() {
+       });
+     });
+   };
++
++  this.setIsUtc = function(isUtc = false) {
++    self.isUtc = isUtc;
++  };
+ }
+ 
+ export function ServiceTestContext() {
+diff --git a/tools/phantomjs/render.js b/tools/phantomjs/render.js
+index 77527585589..5e2e8f781ea 100644
+--- a/tools/phantomjs/render.js
++++ b/tools/phantomjs/render.js
+@@ -57,7 +57,7 @@
+ 
+           var rootScope = body.injector().get('$rootScope');
+           if (!rootScope) {return false;}
+-          var panels = angular.element('div.panel:visible').length;
++          var panels = angular.element('plugin-component').length;
+           return rootScope.panelsRendered >= panels;
+         });
+ 
+diff --git a/yarn.lock b/yarn.lock
+index f23d44867f5..8d742b34ba1 100644
+--- a/yarn.lock
++++ b/yarn.lock
+@@ -1655,9 +1655,9 @@ caniuse-api@^1.5.2:
+     lodash.memoize "^4.1.2"
+     lodash.uniq "^4.5.0"
+ 
+-caniuse-db@^1.0.30000529, caniuse-db@^1.0.30000634, caniuse-db@^1.0.30000639:
+-  version "1.0.30000830"
+-  resolved "https://registry.yarnpkg.com/caniuse-db/-/caniuse-db-1.0.30000830.tgz#6e45255b345649fd15ff59072da1e12bb3de2f13"
++caniuse-db@1.0.30000772, caniuse-db@^1.0.30000529, caniuse-db@^1.0.30000634, caniuse-db@^1.0.30000639:
++  version "1.0.30000772"
++  resolved "https://registry.yarnpkg.com/caniuse-db/-/caniuse-db-1.0.30000772.tgz#51aae891768286eade4a3d8319ea76d6a01b512b"
+ 
+ capture-stack-trace@^1.0.0:
+   version "1.0.0"
+@@ -11048,8 +11048,8 @@ unzip-response@^2.0.1:
+   resolved "https://registry.yarnpkg.com/unzip-response/-/unzip-response-2.0.1.tgz#d2f0f737d16b0615e72a6935ed04214572d56f97"
+ 
+ upath@^1.0.0:
+-  version "1.0.4"
+-  resolved "https://registry.yarnpkg.com/upath/-/upath-1.0.4.tgz#ee2321ba0a786c50973db043a50b7bcba822361d"
++  version "1.0.5"
++  resolved "https://registry.yarnpkg.com/upath/-/upath-1.0.5.tgz#02cab9ecebe95bbec6d5fc2566325725ab6d1a73"
+ 
+ update-notifier@^2.3.0:
+   version "2.5.0"
+
+commit a1b92369db0ce2d818acd1bfdd5ae3f4a6b5b472 (from ca25a2538642d3195d76d81238398d88cb61f77c)
+Merge: e731c248d7d ca25a253864
+Author: David Kaltschmidt <david.kaltschmidt@gmail.com>
+Date:   Mon May 14 12:11:14 2018 +0200
+
+    Merge remote-tracking branch 'origin/master' into prometheus_align_queries
+    
+    * origin/master: (21 commits)
+      docs: removes notes about beeing introduced in 5.0
+      lock caniuse-db version to resolve phantomjs rendering issue
+      Update dashboard_permissions.md
+      move database-specific code into dialects (#11884)
+      refactor: tracing service refactoring (#11907)
+      fix typo in getLdapAttrN (#11898)
+      docs: update installation instructions targeting v5.1.2 stable
+      changelog: add notes about closing #11862, #11656
+      Fix dependencies on Node v10
+      Update dashboard.md
+      changelog: add notes about closing #10338
+      Phantom render.js is incorrectly retrieving number of active panels (#11100)
+      singlestat: render time of last point based on dashboard timezone (#11425)
+      Fix for #10078: symbol "&" is not escaped (#10137)
+      Add alpha color channel support for graph bars (#10956)
+      interpolate 'field' again in Elasticsearch terms queries (#10026)
+      Templating : return __empty__ value when all value return nothing to prevent elasticsearch syntaxe error (#9701)
+      http_server: All files in public/build have now a huge max-age (#11536)
+      fix: ldap unit test
+      decrease length of auth_id column in user_auth table
+      ...
+
+diff --git a/public/app/plugins/datasource/prometheus/datasource.ts b/public/app/plugins/datasource/prometheus/datasource.ts
+index 1820cb1306d..df1fc6053fb 100644
+--- a/public/app/plugins/datasource/prometheus/datasource.ts
++++ b/public/app/plugins/datasource/prometheus/datasource.ts
+@@ -107,10 +107,18 @@ export class PrometheusDatasource {
+     return this.templateSrv.variableExists(target.expr);
+   }
+ 
++  clampRange(start, end, step) {
++    const clampedEnd = Math.ceil(end / step) * step;
++    const clampedRange = Math.floor((end - start) / step) * step;
++    return {
++      end: clampedEnd,
++      start: clampedEnd - clampedRange,
++    };
++  }
++
+   query(options) {
+     var start = this.getPrometheusTime(options.range.from, false);
+     var end = this.getPrometheusTime(options.range.to, true);
+-    var range = Math.ceil(end - start);
+ 
+     var queries = [];
+     var activeTargets = [];
+@@ -123,7 +131,7 @@ export class PrometheusDatasource {
+       }
+ 
+       activeTargets.push(target);
+-      queries.push(this.createQuery(target, options, range));
++      queries.push(this.createQuery(target, options, start, end));
+     }
+ 
+     // No valid targets, return the empty result to save a round trip.
+@@ -133,7 +141,7 @@ export class PrometheusDatasource {
+ 
+     var allQueryPromise = _.map(queries, query => {
+       if (!query.instant) {
+-        return this.performTimeSeriesQuery(query, start, end);
++        return this.performTimeSeriesQuery(query, query.start, query.end);
+       } else {
+         return this.performInstantQuery(query, end);
+       }
+@@ -147,7 +155,8 @@ export class PrometheusDatasource {
+           throw response.error;
+         }
+ 
+-        let transformerOptions = {
++        // Keeping original start/end for transformers
++        const transformerOptions = {
+           format: activeTargets[index].format,
+           step: queries[index].step,
+           legendFormat: activeTargets[index].legendFormat,
+@@ -165,9 +174,10 @@ export class PrometheusDatasource {
+     });
+   }
+ 
+-  createQuery(target, options, range) {
++  createQuery(target, options, start, end) {
+     var query: any = {};
+     query.instant = target.instant;
++    var range = Math.ceil(end - start);
+ 
+     var interval = kbn.interval_to_seconds(options.interval);
+     // Minimum interval ("Min step"), if specified for the query. or same as interval otherwise
+@@ -191,6 +201,12 @@ export class PrometheusDatasource {
+     // Only replace vars in expression after having (possibly) updated interval vars
+     query.expr = this.templateSrv.replace(target.expr, scopedVars, this.interpolateQueryExpr);
+     query.requestId = options.panelId + target.refId;
++
++    // Align query interval with step
++    const adjusted = this.clampRange(start, end, query.step);
++    query.start = adjusted.start;
++    query.end = adjusted.end;
++
+     return query;
+   }
+ 
+@@ -270,22 +286,18 @@ export class PrometheusDatasource {
+       return this.$q.when([]);
+     }
+ 
+-    var interpolated = this.templateSrv.replace(expr, {}, this.interpolateQueryExpr);
+-
+-    var step = '60s';
+-    if (annotation.step) {
+-      step = this.templateSrv.replace(annotation.step);
+-    }
+-
++    var step = annotation.step || '60s';
+     var start = this.getPrometheusTime(options.range.from, false);
+     var end = this.getPrometheusTime(options.range.to, true);
+-    var query = {
+-      expr: interpolated,
+-      step: this.adjustInterval(kbn.interval_to_seconds(step), 0, Math.ceil(end - start), 1) + 's',
++    // Unsetting min interval
++    const queryOptions = {
++      ...options,
++      interval: '0s',
+     };
++    const query = this.createQuery({ expr, interval: step }, queryOptions, start, end);
+ 
+     var self = this;
+-    return this.performTimeSeriesQuery(query, start, end).then(function(results) {
++    return this.performTimeSeriesQuery(query, query.start, query.end).then(function(results) {
+       var eventList = [];
+       tagKeys = tagKeys.split(',');
+ 
+diff --git a/public/app/plugins/datasource/prometheus/partials/query.editor.html b/public/app/plugins/datasource/prometheus/partials/query.editor.html
+index 68791d96c19..11a857f37e7 100644
+--- a/public/app/plugins/datasource/prometheus/partials/query.editor.html
++++ b/public/app/plugins/datasource/prometheus/partials/query.editor.html
+@@ -14,8 +14,8 @@
+         data-min-length=0 data-items=1000 ng-model-onblur ng-change="ctrl.refreshMetricData()">
+       </input>
+       <info-popover mode="right-absolute">
+-        Controls the name of the time series, using name or pattern. For example <span ng-non-bindable>{{hostname}}</span> will be replaced with label value for
+-        the label hostname.
++        Controls the name of the time series, using name or pattern. For example
++        <span ng-non-bindable>{{hostname}}</span> will be replaced with label value for the label hostname.
+       </info-popover>
+     </div>
+ 
+@@ -25,7 +25,8 @@
+         placeholder="{{ctrl.panelCtrl.interval}}" data-min-length=0 data-items=100 ng-model-onblur ng-change="ctrl.refreshMetricData()"
+       />
+       <info-popover mode="right-absolute">
+-        Leave blank for auto handling based on time range and panel width
++        Leave blank for auto handling based on time range and panel width. Note that the actual dates used in the query will be adjusted
++        to a multiple of the interval step.
+       </info-popover>
+     </div>
+ 
+@@ -57,4 +58,4 @@
+       <div class="gf-form-label gf-form-label--grow"></div>
+     </div>
+   </div>
+-</query-editor-row>
++</query-editor-row>
+\ No newline at end of file
+diff --git a/public/app/plugins/datasource/prometheus/specs/datasource_specs.ts b/public/app/plugins/datasource/prometheus/specs/datasource_specs.ts
+index 35048416de6..ef51ff69206 100644
+--- a/public/app/plugins/datasource/prometheus/specs/datasource_specs.ts
++++ b/public/app/plugins/datasource/prometheus/specs/datasource_specs.ts
+@@ -4,6 +4,12 @@ import $ from 'jquery';
+ import helpers from 'test/specs/helpers';
+ import { PrometheusDatasource } from '../datasource';
+ 
++const SECOND = 1000;
++const MINUTE = 60 * SECOND;
++const HOUR = 60 * MINUTE;
++
++const time = ({ hours = 0, seconds = 0, minutes = 0 }) => moment(hours * HOUR + minutes * MINUTE + seconds * SECOND);
++
+ describe('PrometheusDatasource', function() {
+   var ctx = new helpers.ServiceTestContext();
+   var instanceSettings = {
+@@ -29,18 +35,16 @@ describe('PrometheusDatasource', function() {
+       $httpBackend.when('GET', /\.html$/).respond('');
+     })
+   );
+-
+   describe('When querying prometheus with one target using query editor target spec', function() {
+     var results;
+-    var urlExpected =
+-      'proxied/api/v1/query_range?query=' +
+-      encodeURIComponent('test{job="testjob"}') +
+-      '&start=1443438675&end=1443460275&step=60';
+     var query = {
+-      range: { from: moment(1443438674760), to: moment(1443460274760) },
++      range: { from: time({ seconds: 63 }), to: time({ seconds: 183 }) },
+       targets: [{ expr: 'test{job="testjob"}', format: 'time_series' }],
+       interval: '60s',
+     };
++    // Interval alignment with step
++    var urlExpected =
++      'proxied/api/v1/query_range?query=' + encodeURIComponent('test{job="testjob"}') + '&start=120&end=240&step=60';
+     var response = {
+       status: 'success',
+       data: {
+@@ -48,7 +52,7 @@ describe('PrometheusDatasource', function() {
+         result: [
+           {
+             metric: { __name__: 'test', job: 'testjob' },
+-            values: [[1443454528, '3846']],
++            values: [[60, '3846']],
+           },
+         ],
+       },
+@@ -70,8 +74,8 @@ describe('PrometheusDatasource', function() {
+   });
+   describe('When querying prometheus with one target which return multiple series', function() {
+     var results;
+-    var start = 1443438675;
+-    var end = 1443460275;
++    var start = 60;
++    var end = 360;
+     var step = 60;
+     var urlExpected =
+       'proxied/api/v1/query_range?query=' +
+@@ -83,7 +87,7 @@ describe('PrometheusDatasource', function() {
+       '&step=' +
+       step;
+     var query = {
+-      range: { from: moment(1443438674760), to: moment(1443460274760) },
++      range: { from: time({ seconds: start }), to: time({ seconds: end }) },
+       targets: [{ expr: 'test{job="testjob"}', format: 'time_series' }],
+       interval: '60s',
+     };
+@@ -139,9 +143,9 @@ describe('PrometheusDatasource', function() {
+   });
+   describe('When querying prometheus with one target and instant = true', function() {
+     var results;
+-    var urlExpected = 'proxied/api/v1/query?query=' + encodeURIComponent('test{job="testjob"}') + '&time=1443460275';
++    var urlExpected = 'proxied/api/v1/query?query=' + encodeURIComponent('test{job="testjob"}') + '&time=123';
+     var query = {
+-      range: { from: moment(1443438674760), to: moment(1443460274760) },
++      range: { from: time({ seconds: 63 }), to: time({ seconds: 123 }) },
+       targets: [{ expr: 'test{job="testjob"}', format: 'time_series', instant: true }],
+       interval: '60s',
+     };
+@@ -152,7 +156,7 @@ describe('PrometheusDatasource', function() {
+         result: [
+           {
+             metric: { __name__: 'test', job: 'testjob' },
+-            value: [1443454528, '3846'],
++            value: [123, '3846'],
+           },
+         ],
+       },
+@@ -177,7 +181,7 @@ describe('PrometheusDatasource', function() {
+     var urlExpected =
+       'proxied/api/v1/query_range?query=' +
+       encodeURIComponent('ALERTS{alertstate="firing"}') +
+-      '&start=1443438675&end=1443460275&step=60s';
++      '&start=120&end=180&step=60';
+     var options = {
+       annotation: {
+         expr: 'ALERTS{alertstate="firing"}',
+@@ -186,8 +190,8 @@ describe('PrometheusDatasource', function() {
+         textFormat: '{{instance}}',
+       },
+       range: {
+-        from: moment(1443438674760),
+-        to: moment(1443460274760),
++        from: time({ seconds: 63 }),
++        to: time({ seconds: 123 }),
+       },
+     };
+     var response = {
+@@ -203,7 +207,7 @@ describe('PrometheusDatasource', function() {
+               instance: 'testinstance',
+               job: 'testjob',
+             },
+-            values: [[1443454528, '1']],
++            values: [[123, '1']],
+           },
+         ],
+       },
+@@ -221,15 +225,15 @@ describe('PrometheusDatasource', function() {
+       expect(results[0].tags).to.contain('testjob');
+       expect(results[0].title).to.be('InstanceDown');
+       expect(results[0].text).to.be('testinstance');
+-      expect(results[0].time).to.be(1443454528 * 1000);
++      expect(results[0].time).to.be(123 * 1000);
+     });
+   });
+ 
+   describe('When resultFormat is table and instant = true', function() {
+     var results;
+-    var urlExpected = 'proxied/api/v1/query?query=' + encodeURIComponent('test{job="testjob"}') + '&time=1443460275';
++    var urlExpected = 'proxied/api/v1/query?query=' + encodeURIComponent('test{job="testjob"}') + '&time=123';
+     var query = {
+-      range: { from: moment(1443438674760), to: moment(1443460274760) },
++      range: { from: time({ seconds: 63 }), to: time({ seconds: 123 }) },
+       targets: [{ expr: 'test{job="testjob"}', format: 'time_series', instant: true }],
+       interval: '60s',
+     };
+@@ -240,7 +244,7 @@ describe('PrometheusDatasource', function() {
+         result: [
+           {
+             metric: { __name__: 'test', job: 'testjob' },
+-            value: [1443454528, '3846'],
++            value: [123, '3846'],
+           },
+         ],
+       },
+@@ -270,8 +274,8 @@ describe('PrometheusDatasource', function() {
+ 
+     it('should be min interval when greater than auto interval', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -280,7 +284,7 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '5s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=10';
++      var urlExpected = 'proxied/api/v1/query_range?query=test&start=60&end=420&step=10';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -288,12 +292,12 @@ describe('PrometheusDatasource', function() {
+ 
+     it('step should never go below 1', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1508318768202), to: moment(1508318770118) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [{ expr: 'test' }],
+         interval: '100ms',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test&start=1508318769&end=1508318771&step=1';
++      var urlExpected = 'proxied/api/v1/query_range?query=test&start=60&end=420&step=1';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -301,8 +305,8 @@ describe('PrometheusDatasource', function() {
+ 
+     it('should be auto interval when greater than min interval', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -311,7 +315,7 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '10s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=10';
++      var urlExpected = 'proxied/api/v1/query_range?query=test&start=60&end=420&step=10';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -319,19 +323,21 @@ describe('PrometheusDatasource', function() {
+     it('should result in querying fewer than 11000 data points', function() {
+       var query = {
+         // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        range: { from: time({ hours: 1 }), to: time({ hours: 7 }) },
+         targets: [{ expr: 'test' }],
+         interval: '1s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=2';
++      var end = 7 * 60 * 60;
++      var start = 60 * 60;
++      var urlExpected = 'proxied/api/v1/query_range?query=test&start=' + start + '&end=' + end + '&step=2';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+     });
+     it('should not apply min interval when interval * intervalFactor greater', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -341,15 +347,16 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '5s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=50';
++      // times get rounded up to interval
++      var urlExpected = 'proxied/api/v1/query_range?query=test&start=100&end=450&step=50';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+     });
+     it('should apply min interval when interval * intervalFactor smaller', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -359,15 +366,15 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '5s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=15';
++      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=60&end=420&step=15';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+     });
+     it('should apply intervalFactor to auto interval when greater', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -377,7 +384,8 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '10s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1443460275&step=100';
++      // times get rounded up to interval
++      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=200&end=500&step=100';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -385,7 +393,7 @@ describe('PrometheusDatasource', function() {
+     it('should not not be affected by the 11000 data points limit when large enough', function() {
+       var query = {
+         // 1 week range
+-        range: { from: moment(1443438674760), to: moment(1444043474760) },
++        range: { from: time({}), to: time({ hours: 7 * 24 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -394,7 +402,9 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '10s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1444043475&step=100';
++      var end = 7 * 24 * 60 * 60;
++      var start = 0;
++      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=' + start + '&end=' + end + '&step=100';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -402,7 +412,7 @@ describe('PrometheusDatasource', function() {
+     it('should be determined by the 11000 data points limit when too small', function() {
+       var query = {
+         // 1 week range
+-        range: { from: moment(1443438674760), to: moment(1444043474760) },
++        range: { from: time({}), to: time({ hours: 7 * 24 }) },
+         targets: [
+           {
+             expr: 'test',
+@@ -411,12 +421,15 @@ describe('PrometheusDatasource', function() {
+         ],
+         interval: '5s',
+       };
+-      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=1443438675&end=1444043475&step=60';
++      var end = 7 * 24 * 60 * 60;
++      var start = 0;
++      var urlExpected = 'proxied/api/v1/query_range?query=test' + '&start=' + start + '&end=' + end + '&step=60';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+     });
+   });
++
+   describe('The __interval and __interval_ms template variables', function() {
+     var response = {
+       status: 'success',
+@@ -428,8 +441,8 @@ describe('PrometheusDatasource', function() {
+ 
+     it('should be unchanged when auto interval is greater than min interval', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -443,9 +456,7 @@ describe('PrometheusDatasource', function() {
+         },
+       };
+       var urlExpected =
+-        'proxied/api/v1/query_range?query=' +
+-        encodeURIComponent('rate(test[10s])') +
+-        '&start=1443438675&end=1443460275&step=10';
++        'proxied/api/v1/query_range?query=' + encodeURIComponent('rate(test[10s])') + '&start=60&end=420&step=10';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -457,8 +468,8 @@ describe('PrometheusDatasource', function() {
+     });
+     it('should be min interval when it is greater than auto interval', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -472,9 +483,7 @@ describe('PrometheusDatasource', function() {
+         },
+       };
+       var urlExpected =
+-        'proxied/api/v1/query_range?query=' +
+-        encodeURIComponent('rate(test[10s])') +
+-        '&start=1443438675&end=1443460275&step=10';
++        'proxied/api/v1/query_range?query=' + encodeURIComponent('rate(test[10s])') + '&start=60&end=420&step=10';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -486,8 +495,8 @@ describe('PrometheusDatasource', function() {
+     });
+     it('should account for intervalFactor', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -502,9 +511,7 @@ describe('PrometheusDatasource', function() {
+         },
+       };
+       var urlExpected =
+-        'proxied/api/v1/query_range?query=' +
+-        encodeURIComponent('rate(test[100s])') +
+-        '&start=1443438675&end=1443460275&step=100';
++        'proxied/api/v1/query_range?query=' + encodeURIComponent('rate(test[100s])') + '&start=200&end=500&step=100';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -516,8 +523,8 @@ describe('PrometheusDatasource', function() {
+     });
+     it('should be interval * intervalFactor when greater than min interval', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -532,9 +539,7 @@ describe('PrometheusDatasource', function() {
+         },
+       };
+       var urlExpected =
+-        'proxied/api/v1/query_range?query=' +
+-        encodeURIComponent('rate(test[50s])') +
+-        '&start=1443438675&end=1443460275&step=50';
++        'proxied/api/v1/query_range?query=' + encodeURIComponent('rate(test[50s])') + '&start=100&end=450&step=50';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -546,8 +551,8 @@ describe('PrometheusDatasource', function() {
+     });
+     it('should be min interval when greater than interval * intervalFactor', function() {
+       var query = {
+-        // 6 hour range
+-        range: { from: moment(1443438674760), to: moment(1443460274760) },
++        // 6 minute range
++        range: { from: time({ minutes: 1 }), to: time({ minutes: 7 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -562,9 +567,7 @@ describe('PrometheusDatasource', function() {
+         },
+       };
+       var urlExpected =
+-        'proxied/api/v1/query_range?query=' +
+-        encodeURIComponent('rate(test[15s])') +
+-        '&start=1443438675&end=1443460275&step=15';
++        'proxied/api/v1/query_range?query=' + encodeURIComponent('rate(test[15s])') + '&start=60&end=420&step=15';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -577,7 +580,7 @@ describe('PrometheusDatasource', function() {
+     it('should be determined by the 11000 data points limit, accounting for intervalFactor', function() {
+       var query = {
+         // 1 week range
+-        range: { from: moment(1443438674760), to: moment(1444043474760) },
++        range: { from: time({}), to: time({ hours: 7 * 24 }) },
+         targets: [
+           {
+             expr: 'rate(test[$__interval])',
+@@ -590,10 +593,16 @@ describe('PrometheusDatasource', function() {
+           __interval_ms: { text: 5 * 1000, value: 5 * 1000 },
+         },
+       };
++      var end = 7 * 24 * 60 * 60;
++      var start = 0;
+       var urlExpected =
+         'proxied/api/v1/query_range?query=' +
+         encodeURIComponent('rate(test[60s])') +
+-        '&start=1443438675&end=1444043475&step=60';
++        '&start=' +
++        start +
++        '&end=' +
++        end +
++        '&step=60';
+       ctx.$httpBackend.expect('GET', urlExpected).respond(response);
+       ctx.ds.query(query);
+       ctx.$httpBackend.verifyNoOutstandingExpectation();
+@@ -604,6 +613,29 @@ describe('PrometheusDatasource', function() {
+       expect(query.scopedVars.__interval_ms.value).to.be(5 * 1000);
+     });
+   });
++
++  describe('Step alignment of intervals', function() {
++    it('does not modify already aligned intervals with perfect step', function() {
++      const range = ctx.ds.clampRange(0, 3, 3);
++      expect(range.start).to.be(0);
++      expect(range.end).to.be(3);
++    });
++    it('does modify end-aligned intervals to reflect number of steps possible', function() {
++      const range = ctx.ds.clampRange(1, 6, 3);
++      expect(range.start).to.be(3);
++      expect(range.end).to.be(6);
++    });
++    it('does align intervals that are a multiple of steps', function() {
++      const range = ctx.ds.clampRange(1, 4, 3);
++      expect(range.start).to.be(3);
++      expect(range.end).to.be(6);
++    });
++    it('does align intervals that are not a multiple of steps', function() {
++      const range = ctx.ds.clampRange(1, 5, 3);
++      expect(range.start).to.be(3);
++      expect(range.end).to.be(6);
++    });
++  });
+ });
+ 
+ describe('PrometheusDatasource for POST', function() {
+@@ -635,12 +667,12 @@ describe('PrometheusDatasource for POST', function() {
+     var urlExpected = 'proxied/api/v1/query_range';
+     var dataExpected = $.param({
+       query: 'test{job="testjob"}',
+-      start: 1443438675,
+-      end: 1443460275,
++      start: 2 * 60,
++      end: 3 * 60,
+       step: 60,
+     });
+     var query = {
+-      range: { from: moment(1443438674760), to: moment(1443460274760) },
++      range: { from: time({ minutes: 1, seconds: 3 }), to: time({ minutes: 2, seconds: 3 }) },
+       targets: [{ expr: 'test{job="testjob"}', format: 'time_series' }],
+       interval: '60s',
+     };
+@@ -651,7 +683,7 @@ describe('PrometheusDatasource for POST', function() {
+         result: [
+           {
+             metric: { __name__: 'test', job: 'testjob' },
+-            values: [[1443454528, '3846']],
++            values: [[2 * 60, '3846']],
+           },
+         ],
+       },

@@ -1,0 +1,1370 @@
+commit 5153d8e53526b5a9da67d2112205de38de940736 (from e11437ff5624074080195963f88a8fa4e408e7df)
+Merge: e11437ff562 bbd6adabbfb
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Thu Mar 8 15:21:16 2018 +0100
+
+    Merge pull request #11161 from DanCech/quota-refactor
+    
+    move quota to dedicated service
+
+diff --git a/pkg/api/dashboard.go b/pkg/api/dashboard.go
+index 015047fb6de..877524ad5dd 100644
+--- a/pkg/api/dashboard.go
++++ b/pkg/api/dashboard.go
+@@ -14,10 +14,10 @@ import (
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	"github.com/grafana/grafana/pkg/log"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
++	"github.com/grafana/grafana/pkg/services/quota"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+@@ -202,7 +202,7 @@ func PostDashboard(c *m.ReqContext, cmd m.SaveDashboardCommand) Response {
+ 	dash := cmd.GetDashboardModel()
+ 
+ 	if dash.Id == 0 && dash.Uid == "" {
+-		limitReached, err := middleware.QuotaReached(c, "dashboard")
++		limitReached, err := quota.QuotaReached(c, "dashboard")
+ 		if err != nil {
+ 			return ApiError(500, "failed to get quota", err)
+ 		}
+diff --git a/pkg/api/login_oauth.go b/pkg/api/login_oauth.go
+index d9018885161..1dba38e9cbd 100644
+--- a/pkg/api/login_oauth.go
++++ b/pkg/api/login_oauth.go
+@@ -17,8 +17,8 @@ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/log"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/quota"
+ 	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/social"
+@@ -168,7 +168,7 @@ func OAuthLogin(ctx *m.ReqContext) {
+ 			redirectWithError(ctx, ErrSignUpNotAllowed)
+ 			return
+ 		}
+-		limitReached, err := middleware.QuotaReached(ctx, "user")
++		limitReached, err := quota.QuotaReached(ctx, "user")
+ 		if err != nil {
+ 			ctx.Handle(500, "Failed to get user quota", err)
+ 			return
+diff --git a/pkg/middleware/quota.go b/pkg/middleware/quota.go
+index 82564d0646d..43efca43485 100644
+--- a/pkg/middleware/quota.go
++++ b/pkg/middleware/quota.go
+@@ -3,16 +3,15 @@ package middleware
+ import (
+ 	"fmt"
+ 
+-	"github.com/grafana/grafana/pkg/bus"
+-	m "github.com/grafana/grafana/pkg/models"
+-	"github.com/grafana/grafana/pkg/services/session"
+-	"github.com/grafana/grafana/pkg/setting"
+ 	"gopkg.in/macaron.v1"
++
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/quota"
+ )
+ 
+ func Quota(target string) macaron.Handler {
+ 	return func(c *m.ReqContext) {
+-		limitReached, err := QuotaReached(c, target)
++		limitReached, err := quota.QuotaReached(c, target)
+ 		if err != nil {
+ 			c.JsonApiErr(500, "failed to get quota", err)
+ 			return
+@@ -23,82 +22,3 @@ func Quota(target string) macaron.Handler {
+ 		}
+ 	}
+ }
+-
+-func QuotaReached(c *m.ReqContext, target string) (bool, error) {
+-	if !setting.Quota.Enabled {
+-		return false, nil
+-	}
+-
+-	// get the list of scopes that this target is valid for. Org, User, Global
+-	scopes, err := m.GetQuotaScopes(target)
+-	if err != nil {
+-		return false, err
+-	}
+-
+-	for _, scope := range scopes {
+-		c.Logger.Debug("Checking quota", "target", target, "scope", scope)
+-
+-		switch scope.Name {
+-		case "global":
+-			if scope.DefaultLimit < 0 {
+-				continue
+-			}
+-			if scope.DefaultLimit == 0 {
+-				return true, nil
+-			}
+-			if target == "session" {
+-				usedSessions := session.GetSessionCount()
+-				if int64(usedSessions) > scope.DefaultLimit {
+-					c.Logger.Debug("Sessions limit reached", "active", usedSessions, "limit", scope.DefaultLimit)
+-					return true, nil
+-				}
+-				continue
+-			}
+-			query := m.GetGlobalQuotaByTargetQuery{Target: scope.Target}
+-			if err := bus.Dispatch(&query); err != nil {
+-				return true, err
+-			}
+-			if query.Result.Used >= scope.DefaultLimit {
+-				return true, nil
+-			}
+-		case "org":
+-			if !c.IsSignedIn {
+-				continue
+-			}
+-			query := m.GetOrgQuotaByTargetQuery{OrgId: c.OrgId, Target: scope.Target, Default: scope.DefaultLimit}
+-			if err := bus.Dispatch(&query); err != nil {
+-				return true, err
+-			}
+-			if query.Result.Limit < 0 {
+-				continue
+-			}
+-			if query.Result.Limit == 0 {
+-				return true, nil
+-			}
+-
+-			if query.Result.Used >= query.Result.Limit {
+-				return true, nil
+-			}
+-		case "user":
+-			if !c.IsSignedIn || c.UserId == 0 {
+-				continue
+-			}
+-			query := m.GetUserQuotaByTargetQuery{UserId: c.UserId, Target: scope.Target, Default: scope.DefaultLimit}
+-			if err := bus.Dispatch(&query); err != nil {
+-				return true, err
+-			}
+-			if query.Result.Limit < 0 {
+-				continue
+-			}
+-			if query.Result.Limit == 0 {
+-				return true, nil
+-			}
+-
+-			if query.Result.Used >= query.Result.Limit {
+-				return true, nil
+-			}
+-		}
+-	}
+-
+-	return false, nil
+-}
+diff --git a/pkg/services/quota/quota.go b/pkg/services/quota/quota.go
+new file mode 100644
+index 00000000000..2ec399437e6
+--- /dev/null
++++ b/pkg/services/quota/quota.go
+@@ -0,0 +1,87 @@
++package quota
++
++import (
++	"github.com/grafana/grafana/pkg/bus"
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
++	"github.com/grafana/grafana/pkg/setting"
++)
++
++func QuotaReached(c *m.ReqContext, target string) (bool, error) {
++	if !setting.Quota.Enabled {
++		return false, nil
++	}
++
++	// get the list of scopes that this target is valid for. Org, User, Global
++	scopes, err := m.GetQuotaScopes(target)
++	if err != nil {
++		return false, err
++	}
++
++	for _, scope := range scopes {
++		c.Logger.Debug("Checking quota", "target", target, "scope", scope)
++
++		switch scope.Name {
++		case "global":
++			if scope.DefaultLimit < 0 {
++				continue
++			}
++			if scope.DefaultLimit == 0 {
++				return true, nil
++			}
++			if target == "session" {
++				usedSessions := session.GetSessionCount()
++				if int64(usedSessions) > scope.DefaultLimit {
++					c.Logger.Debug("Sessions limit reached", "active", usedSessions, "limit", scope.DefaultLimit)
++					return true, nil
++				}
++				continue
++			}
++			query := m.GetGlobalQuotaByTargetQuery{Target: scope.Target}
++			if err := bus.Dispatch(&query); err != nil {
++				return true, err
++			}
++			if query.Result.Used >= scope.DefaultLimit {
++				return true, nil
++			}
++		case "org":
++			if !c.IsSignedIn {
++				continue
++			}
++			query := m.GetOrgQuotaByTargetQuery{OrgId: c.OrgId, Target: scope.Target, Default: scope.DefaultLimit}
++			if err := bus.Dispatch(&query); err != nil {
++				return true, err
++			}
++			if query.Result.Limit < 0 {
++				continue
++			}
++			if query.Result.Limit == 0 {
++				return true, nil
++			}
++
++			if query.Result.Used >= query.Result.Limit {
++				return true, nil
++			}
++		case "user":
++			if !c.IsSignedIn || c.UserId == 0 {
++				continue
++			}
++			query := m.GetUserQuotaByTargetQuery{UserId: c.UserId, Target: scope.Target, Default: scope.DefaultLimit}
++			if err := bus.Dispatch(&query); err != nil {
++				return true, err
++			}
++			if query.Result.Limit < 0 {
++				continue
++			}
++			if query.Result.Limit == 0 {
++				return true, nil
++			}
++
++			if query.Result.Used >= query.Result.Limit {
++				return true, nil
++			}
++		}
++	}
++
++	return false, nil
++}
+
+commit 5153d8e53526b5a9da67d2112205de38de940736 (from bbd6adabbfbe55efee3a8cbb74cc313eae0a4afa)
+Merge: e11437ff562 bbd6adabbfb
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Thu Mar 8 15:21:16 2018 +0100
+
+    Merge pull request #11161 from DanCech/quota-refactor
+    
+    move quota to dedicated service
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index afe04ba575f..9aaaa910acf 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,8 +2,13 @@
+ 
+ * **Postgres/MySQL**: Ability to insert 0s or nulls for missing intervals [#9487](https://github.com/grafana/grafana/issues/9487), thanks [@svenklemm](https://github.com/svenklemm)
+ * **Graph**: Thresholds for Right Y axis [#7107](https://github.com/grafana/grafana/issues/7107), thx [@ilgizar](https://github.com/ilgizar)
++* **Alerting**: Pausing/un alerts now updates new_state_date [#10942](https://github.com/grafana/grafana/pull/10942)
++* **Templating**: Add comma templating format [#10632](https://github.com/grafana/grafana/issues/10632), thx [@mtanda](https://github.com/mtanda)
+ 
+-# 5.0.1 (unreleased)
++### Minor
++* **OpsGenie**: Add triggered alerts as description [#11046](https://github.com/grafana/grafana/pull/11046), thx [@llamashoes](https://github.com/llamashoes)
++
++# 5.0.1 (2018-03-08)
+ 
+ * **Postgres**: PostgreSQL error when using ipv6 address as hostname in connection string [#11055](https://github.com/grafana/grafana/issues/11055), thanks [@svenklemm](https://github.com/svenklemm)
+ * **Dashboards**: Changing templated value from dropdown is causing unsaved changes [#11063](https://github.com/grafana/grafana/issues/11063)
+@@ -11,6 +16,8 @@
+ * **Sidemenu**: Profile menu "invisible" when gravatar is disabled [#11097](https://github.com/grafana/grafana/issues/11097)
+ * **Dashboard**: Fixes a bug with resizeable handles for panels [#11103](https://github.com/grafana/grafana/issues/11103)
+ * **Alerting**: Telegram inline image mode fails when caption too long [#10975](https://github.com/grafana/grafana/issues/10975)
++* **Alerting**: Fixes silent failing validation [#11145](https://github.com/grafana/grafana/pull/11145)
++* **OAuth**: Only use jwt token if it contains an email address [#11127](https://github.com/grafana/grafana/pull/11127)
+ 
+ # 5.0.0-stable (2018-03-01)
+ 
+diff --git a/README.md b/README.md
+index 81fb1f8d42b..9db746cc5ea 100644
+--- a/README.md
++++ b/README.md
+@@ -33,7 +33,7 @@ the latest master builds [here](https://grafana.com/grafana/download)
+ ### Building the backend
+ ```bash
+ go get github.com/grafana/grafana
+-cd ~/go/src/github.com/grafana/grafana
++cd $GOPATH/src/github.com/grafana/grafana
+ go run build.go setup
+ go run build.go build
+ ```
+diff --git a/ROADMAP.md b/ROADMAP.md
+index c8dc3186c73..67d7093263d 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -8,7 +8,6 @@ But it will give you an idea of our current vision and plan.
+ - v5.1
+   - Crossplatform builds & build speed improvements
+   - Enterprise LDAP
+-  - New template interpolation syntax
+   - Provisioning workflow
+   - First login registration view
+   - IFQL Initial support
+diff --git a/circle.yml b/circle.yml
+index bf013e3f5b1..b429911ceb8 100644
+--- a/circle.yml
++++ b/circle.yml
+@@ -9,7 +9,7 @@ machine:
+     GOPATH: "/home/ubuntu/.go_workspace"
+     ORG_PATH: "github.com/grafana"
+     REPO_PATH: "${ORG_PATH}/grafana"
+-    GODIST: "go1.9.3.linux-amd64.tar.gz"
++    GODIST: "go1.10.linux-amd64.tar.gz"
+   post:
+     - mkdir -p ~/download
+     - mkdir -p ~/docker
+diff --git a/docs/sources/alerting/rules.md b/docs/sources/alerting/rules.md
+index bd5b95da856..9bbbd70641d 100644
+--- a/docs/sources/alerting/rules.md
++++ b/docs/sources/alerting/rules.md
+@@ -59,7 +59,7 @@ avg() OF query(A, 5m, now) IS BELOW 14
+ ```
+ 
+ - `avg()` Controls how the values for **each** series should be reduced to a value that can be compared against the threshold. Click on the function to change it to another aggregation function.
+-- `query(A, 5m, now)`  The letter defines what query to execute from the **Metrics** tab. The second two parameters define the time range, `5m, now` means 5 minutes from now to now. You can also do `10m, now-2m` to define a time range that will be 10 minutes from now to 2 minutes from now. This is useful if you want to ignore the last 2 minutes of data.
++- `query(A, 5m, now)`  The letter defines what query to execute from the **Metrics** tab. The second two parameters define the time range, `5m, now` means 5 minutes ago to now. You can also do `10m, now-2m` to define a time range that will be 10 minutes ago to 2 minutes ago. This is useful if you want to ignore the last 2 minutes of data.
+ - `IS BELOW 14`  Defines the type of threshold and the threshold value.  You can click on `IS BELOW` to change the type of threshold.
+ 
+ The query used in an alert rule cannot contain any template variables. Currently we only support `AND` and `OR` operators between conditions and they are executed serially.
+diff --git a/docs/sources/installation/debian.md b/docs/sources/installation/debian.md
+index 515a598d3cd..30b6824c751 100644
+--- a/docs/sources/installation/debian.md
++++ b/docs/sources/installation/debian.md
+@@ -15,7 +15,7 @@ weight = 1
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for Debian-based Linux | [grafana_5.0.0_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.0.0_amd64.deb)
++Stable for Debian-based Linux | [grafana_5.0.1_amd64.deb](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.0.1_amd64.deb)
+ 
+ Read [Upgrading Grafana]({{< relref "installation/upgrading.md" >}}) for tips and guidance on updating an existing
+ installation.
+@@ -24,9 +24,9 @@ installation.
+ 
+ 
+ ```bash
+-wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.0.0_amd64.deb
++wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_5.0.1_amd64.deb
+ sudo apt-get install -y adduser libfontconfig
+-sudo dpkg -i grafana_5.0.0_amd64.deb
++sudo dpkg -i grafana_5.0.1_amd64.deb
+ ```
+ 
+ ## APT Repository
+diff --git a/docs/sources/installation/rpm.md b/docs/sources/installation/rpm.md
+index 4ed59093903..da9ba1ebbe7 100644
+--- a/docs/sources/installation/rpm.md
++++ b/docs/sources/installation/rpm.md
+@@ -15,7 +15,7 @@ weight = 2
+ 
+ Description | Download
+ ------------ | -------------
+-Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.0.0 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-1.x86_64.rpm)
++Stable for CentOS / Fedora / OpenSuse / Redhat Linux | [5.0.1 (x86-64 rpm)](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.1-1.x86_64.rpm)
+ 
+ 
+ Read [Upgrading Grafana]({{< relref "installation/upgrading.md" >}}) for tips and guidance on updating an existing
+@@ -26,7 +26,7 @@ installation.
+ You can install Grafana using Yum directly.
+ 
+ ```bash
+-$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-1.x86_64.rpm
++$ sudo yum install https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.1-1.x86_64.rpm
+ ```
+ 
+ Or install manually using `rpm`.
+@@ -34,15 +34,15 @@ Or install manually using `rpm`.
+ #### On CentOS / Fedora / Redhat:
+ 
+ ```bash
+-$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0-1.x86_64.rpm
++$ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.1-1.x86_64.rpm
+ $ sudo yum install initscripts fontconfig
+-$ sudo rpm -Uvh grafana-5.0.0-1.x86_64.rpm
++$ sudo rpm -Uvh grafana-5.0.1-1.x86_64.rpm
+ ```
+ 
+ #### On OpenSuse:
+ 
+ ```bash
+-$ sudo rpm -i --nodeps grafana-5.0.0-1.x86_64.rpm
++$ sudo rpm -i --nodeps grafana-5.0.1-1.x86_64.rpm
+ ```
+ 
+ ## Install via YUM Repository
+diff --git a/docs/sources/installation/windows.md b/docs/sources/installation/windows.md
+index d4c233df996..1a8c55aa056 100644
+--- a/docs/sources/installation/windows.md
++++ b/docs/sources/installation/windows.md
+@@ -13,7 +13,7 @@ weight = 3
+ 
+ Description | Download
+ ------------ | -------------
+-Latest stable package for Windows | [grafana-5.0.0.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.0.windows-x64.zip)
++Latest stable package for Windows | [grafana-5.0.1.windows-x64.zip](https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana-5.0.1.windows-x64.zip)
+ 
+ Read [Upgrading Grafana]({{< relref "installation/upgrading.md" >}}) for tips and guidance on updating an existing
+ installation.
+diff --git a/package.json b/package.json
+index df4359ef5c1..9493965f2fd 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,7 @@
+     "company": "Grafana Labs"
+   },
+   "name": "grafana",
+-  "version": "5.0.1-pre1",
++  "version": "5.1.0-pre1",
+   "repository": {
+     "type": "git",
+     "url": "http://github.com/grafana/grafana.git"
+diff --git a/packaging/publish/publish_both.sh b/packaging/publish/publish_both.sh
+index 9736cbddd6c..597d113f96a 100755
+--- a/packaging/publish/publish_both.sh
++++ b/packaging/publish/publish_both.sh
+@@ -1,5 +1,5 @@
+ #! /usr/bin/env bash
+-version=4.6.3
++version=5.0.1
+ 
+ wget https://s3-us-west-2.amazonaws.com/grafana-releases/release/grafana_${version}_amd64.deb
+ 
+diff --git a/pkg/services/alerting/extractor.go b/pkg/services/alerting/extractor.go
+index a609824cbc8..5206c81642e 100644
+--- a/pkg/services/alerting/extractor.go
++++ b/pkg/services/alerting/extractor.go
+@@ -143,10 +143,15 @@ func (e *DashAlertExtractor) GetAlertFromPanels(jsonWithPanels *simplejson.Json)
+ 
+ 		// validate
+ 		_, err = NewRuleFromDBAlert(alert)
+-		if err == nil && alert.ValidToSave() {
++		if err != nil {
++			return nil, err
++		}
++
++		if alert.ValidToSave() {
+ 			alerts = append(alerts, alert)
+ 		} else {
+-			return nil, err
++			e.log.Debug("Invalid Alert Data. Dashboard, Org or Panel ID is not correct", "alertName", alert.Name, "panelId", alert.PanelId)
++			return nil, m.ErrDashboardContainsInvalidAlertData
+ 		}
+ 	}
+ 
+diff --git a/pkg/services/alerting/extractor_test.go b/pkg/services/alerting/extractor_test.go
+index 71f3026025d..f8b678e66bd 100644
+--- a/pkg/services/alerting/extractor_test.go
++++ b/pkg/services/alerting/extractor_test.go
+@@ -150,6 +150,22 @@ func TestAlertRuleExtraction(t *testing.T) {
+ 			})
+ 		})
+ 
++		Convey("Panel with id set to zero should return error", func() {
++			panelWithIdZero, err := ioutil.ReadFile("./test-data/panel-with-id-0.json")
++			So(err, ShouldBeNil)
++
++			dashJson, err := simplejson.NewJson([]byte(panelWithIdZero))
++			So(err, ShouldBeNil)
++			dash := m.NewDashboardFromJson(dashJson)
++			extractor := NewDashAlertExtractor(dash, 1)
++
++			_, err = extractor.GetAlerts()
++
++			Convey("panel with id 0 should return error", func() {
++				So(err, ShouldNotBeNil)
++			})
++		})
++
+ 		Convey("Parse alerts from dashboard without rows", func() {
+ 			json, err := ioutil.ReadFile("./test-data/v5-dashboard.json")
+ 			So(err, ShouldBeNil)
+diff --git a/pkg/services/alerting/notifiers/opsgenie.go b/pkg/services/alerting/notifiers/opsgenie.go
+index 82be9d1df4e..863b4f1c286 100644
+--- a/pkg/services/alerting/notifiers/opsgenie.go
++++ b/pkg/services/alerting/notifiers/opsgenie.go
+@@ -99,11 +99,16 @@ func (this *OpsGenieNotifier) createAlert(evalContext *alerting.EvalContext) err
+ 		return err
+ 	}
+ 
++	customData := "Triggered metrics:\n\n"
++	for _, evt := range evalContext.EvalMatches {
++		customData = customData + fmt.Sprintf("%s: %v\n", evt.Metric, evt.Value)
++	}
++
+ 	bodyJSON := simplejson.New()
+ 	bodyJSON.Set("message", evalContext.Rule.Name)
+ 	bodyJSON.Set("source", "Grafana")
+ 	bodyJSON.Set("alias", "alertId-"+strconv.FormatInt(evalContext.Rule.Id, 10))
+-	bodyJSON.Set("description", fmt.Sprintf("%s - %s\n%s", evalContext.Rule.Name, ruleUrl, evalContext.Rule.Message))
++	bodyJSON.Set("description", fmt.Sprintf("%s - %s\n%s\n%s", evalContext.Rule.Name, ruleUrl, evalContext.Rule.Message, customData))
+ 
+ 	details := simplejson.New()
+ 	details.Set("url", ruleUrl)
+diff --git a/pkg/services/alerting/test-data/panel-with-id-0.json b/pkg/services/alerting/test-data/panel-with-id-0.json
+new file mode 100644
+index 00000000000..d1f314a4f55
+--- /dev/null
++++ b/pkg/services/alerting/test-data/panel-with-id-0.json
+@@ -0,0 +1,63 @@
++{
++  "id": 57,
++  "title": "Graphite 4",
++  "originalTitle": "Graphite 4",
++  "tags": ["graphite"],
++  "rows": [
++  {
++    "panels": [
++    {
++      "title": "Active desktop users",
++      "id": 0,
++      "editable": true,
++      "type": "graph",
++      "targets": [
++      {
++        "refId": "A",
++        "target": "aliasByNode(statsd.fakesite.counters.session_start.desktop.count, 4)"
++      }
++      ],
++      "datasource": null,
++      "alert": {
++        "name": "name1",
++        "message": "desc1",
++        "handler": 1,
++        "frequency": "60s",
++        "conditions": [
++        {
++          "type": "query",
++          "query": {"params": ["A", "5m", "now"]},
++          "reducer": {"type": "avg", "params": []},
++          "evaluator": {"type": ">", "params": [100]}
++        }
++        ]
++      }
++    },
++    {
++      "title": "Active mobile users",
++      "id": 4,
++      "targets": [
++        {"refId": "A", "target": ""},
++        {"refId": "B", "target": "aliasByNode(statsd.fakesite.counters.session_start.mobile.count, 4)"}
++      ],
++      "datasource": "graphite2",
++      "alert": {
++        "name": "name2",
++        "message": "desc2",
++        "handler": 0,
++        "frequency": "60s",
++        "severity": "warning",
++        "conditions": [
++        {
++          "type": "query",
++          "query":  {"params": ["B", "5m", "now"]},
++          "reducer": {"type": "avg", "params": []},
++          "evaluator": {"type": ">", "params": [100]}
++        }
++        ]
++      }
++    }
++    ]
++  }
++]
++      }
+diff --git a/pkg/services/sqlstore/alert.go b/pkg/services/sqlstore/alert.go
+index 8c751f0cada..6342496ed26 100644
+--- a/pkg/services/sqlstore/alert.go
++++ b/pkg/services/sqlstore/alert.go
+@@ -10,6 +10,9 @@ import (
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
++// timeNow makes it possible to test usage of time
++var timeNow = time.Now
++
+ func init() {
+ 	bus.AddHandler("sql", SaveAlerts)
+ 	bus.AddHandler("sql", HandleAlertsQuery)
+@@ -147,7 +150,7 @@ func SaveAlerts(cmd *m.SaveAlertsCommand) error {
+ 			return err
+ 		}
+ 
+-		if err := upsertAlerts(existingAlerts, cmd, sess); err != nil {
++		if err := updateAlerts(existingAlerts, cmd, sess); err != nil {
+ 			return err
+ 		}
+ 
+@@ -159,7 +162,7 @@ func SaveAlerts(cmd *m.SaveAlertsCommand) error {
+ 	})
+ }
+ 
+-func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBSession) error {
++func updateAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBSession) error {
+ 	for _, alert := range cmd.Alerts {
+ 		update := false
+ 		var alertToUpdate *m.Alert
+@@ -175,7 +178,7 @@ func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBS
+ 
+ 		if update {
+ 			if alertToUpdate.ContainsUpdates(alert) {
+-				alert.Updated = time.Now()
++				alert.Updated = timeNow()
+ 				alert.State = alertToUpdate.State
+ 				sess.MustCols("message")
+ 				_, err := sess.Id(alert.Id).Update(alert)
+@@ -186,10 +189,10 @@ func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBS
+ 				sqlog.Debug("Alert updated", "name", alert.Name, "id", alert.Id)
+ 			}
+ 		} else {
+-			alert.Updated = time.Now()
+-			alert.Created = time.Now()
++			alert.Updated = timeNow()
++			alert.Created = timeNow()
+ 			alert.State = m.AlertStatePending
+-			alert.NewStateDate = time.Now()
++			alert.NewStateDate = timeNow()
+ 
+ 			_, err := sess.Insert(alert)
+ 			if err != nil {
+@@ -253,7 +256,7 @@ func SetAlertState(cmd *m.SetAlertStateCommand) error {
+ 
+ 		alert.State = cmd.State
+ 		alert.StateChanges += 1
+-		alert.NewStateDate = time.Now()
++		alert.NewStateDate = timeNow()
+ 		alert.EvalData = cmd.EvalData
+ 
+ 		if cmd.Error == "" {
+@@ -276,11 +279,13 @@ func PauseAlert(cmd *m.PauseAlertCommand) error {
+ 		var buffer bytes.Buffer
+ 		params := make([]interface{}, 0)
+ 
+-		buffer.WriteString(`UPDATE alert SET state = ?`)
++		buffer.WriteString(`UPDATE alert SET state = ?, new_state_date = ?`)
+ 		if cmd.Paused {
+ 			params = append(params, string(m.AlertStatePaused))
++			params = append(params, timeNow())
+ 		} else {
+ 			params = append(params, string(m.AlertStatePending))
++			params = append(params, timeNow())
+ 		}
+ 
+ 		buffer.WriteString(` WHERE id IN (?` + strings.Repeat(",?", len(cmd.AlertIds)-1) + `)`)
+@@ -306,7 +311,7 @@ func PauseAllAlerts(cmd *m.PauseAllAlertCommand) error {
+ 			newState = string(m.AlertStatePending)
+ 		}
+ 
+-		res, err := sess.Exec(`UPDATE alert SET state = ?`, newState)
++		res, err := sess.Exec(`UPDATE alert SET state = ?, new_state_date = ?`, newState, timeNow())
+ 		if err != nil {
+ 			return err
+ 		}
+diff --git a/pkg/services/sqlstore/alert_test.go b/pkg/services/sqlstore/alert_test.go
+index de86ae87a4f..296d16c2f45 100644
+--- a/pkg/services/sqlstore/alert_test.go
++++ b/pkg/services/sqlstore/alert_test.go
+@@ -6,9 +6,26 @@ import (
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	. "github.com/smartystreets/goconvey/convey"
++	"time"
+ )
+ 
++func mockTimeNow() {
++	var timeSeed int64
++	timeNow = func() time.Time {
++		fakeNow := time.Unix(timeSeed, 0)
++		timeSeed += 1
++		return fakeNow
++	}
++}
++
++func resetTimeNow() {
++	timeNow = time.Now
++}
++
+ func TestAlertingDataAccess(t *testing.T) {
++	mockTimeNow()
++	defer resetTimeNow()
++
+ 	Convey("Testing Alerting data access", t, func() {
+ 		InitTestDB(t)
+ 
+@@ -50,13 +67,11 @@ func TestAlertingDataAccess(t *testing.T) {
+ 				So(err, ShouldBeNil)
+ 			})
+ 
+-			Convey("can pause alert", func() {
+-				cmd := &m.PauseAllAlertCommand{
+-					Paused: true,
+-				}
++			alert, _ := getAlertById(1)
++			stateDateBeforePause := alert.NewStateDate
+ 
+-				err = PauseAllAlerts(cmd)
+-				So(err, ShouldBeNil)
++			Convey("can pause all alerts", func() {
++				pauseAllAlerts(true)
+ 
+ 				Convey("cannot updated paused alert", func() {
+ 					cmd := &m.SetAlertStateCommand{
+@@ -67,6 +82,19 @@ func TestAlertingDataAccess(t *testing.T) {
+ 					err = SetAlertState(cmd)
+ 					So(err, ShouldNotBeNil)
+ 				})
++
++				Convey("pausing alerts should update their NewStateDate", func() {
++					alert, _ = getAlertById(1)
++					stateDateAfterPause := alert.NewStateDate
++					So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterPause)
++				})
++
++				Convey("unpausing alerts should update their NewStateDate again", func() {
++					pauseAllAlerts(false)
++					alert, _ = getAlertById(1)
++					stateDateAfterUnpause := alert.NewStateDate
++					So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterUnpause)
++				})
+ 			})
+ 		})
+ 
+@@ -214,3 +242,90 @@ func TestAlertingDataAccess(t *testing.T) {
+ 		})
+ 	})
+ }
++
++func TestPausingAlerts(t *testing.T) {
++	mockTimeNow()
++	defer resetTimeNow()
++
++	Convey("Given an alert", t, func() {
++		InitTestDB(t)
++
++		testDash := insertTestDashboard("dashboard with alerts", 1, 0, false, "alert")
++		alert, _ := insertTestAlert("Alerting title", "Alerting message", testDash.OrgId, testDash.Id, simplejson.New())
++
++		stateDateBeforePause := alert.NewStateDate
++		stateDateAfterPause := stateDateBeforePause
++		Convey("when paused", func() {
++			pauseAlert(testDash.OrgId, 1, true)
++
++			Convey("the NewStateDate should be updated", func() {
++				alert, _ := getAlertById(1)
++
++				stateDateAfterPause = alert.NewStateDate
++				So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterPause)
++			})
++		})
++
++		Convey("when unpaused", func() {
++			pauseAlert(testDash.OrgId, 1, false)
++
++			Convey("the NewStateDate should be updated again", func() {
++				alert, _ := getAlertById(1)
++
++				stateDateAfterUnpause := alert.NewStateDate
++				So(stateDateAfterPause, ShouldHappenBefore, stateDateAfterUnpause)
++			})
++		})
++	})
++}
++func pauseAlert(orgId int64, alertId int64, pauseState bool) (int64, error) {
++	cmd := &m.PauseAlertCommand{
++		OrgId:    orgId,
++		AlertIds: []int64{alertId},
++		Paused:   pauseState,
++	}
++	err := PauseAlert(cmd)
++	So(err, ShouldBeNil)
++	return cmd.ResultCount, err
++}
++func insertTestAlert(title string, message string, orgId int64, dashId int64, settings *simplejson.Json) (*m.Alert, error) {
++	items := []*m.Alert{
++		{
++			PanelId:     1,
++			DashboardId: dashId,
++			OrgId:       orgId,
++			Name:        title,
++			Message:     message,
++			Settings:    settings,
++			Frequency:   1,
++		},
++	}
++
++	cmd := m.SaveAlertsCommand{
++		Alerts:      items,
++		DashboardId: dashId,
++		OrgId:       orgId,
++		UserId:      1,
++	}
++
++	err := SaveAlerts(&cmd)
++	return cmd.Alerts[0], err
++}
++
++func getAlertById(id int64) (*m.Alert, error) {
++	q := &m.GetAlertByIdQuery{
++		Id: id,
++	}
++	err := GetAlertById(q)
++	So(err, ShouldBeNil)
++	return q.Result, err
++}
++
++func pauseAllAlerts(pauseState bool) error {
++	cmd := &m.PauseAllAlertCommand{
++		Paused: pauseState,
++	}
++	err := PauseAllAlerts(cmd)
++	So(err, ShouldBeNil)
++	return err
++}
+diff --git a/pkg/services/sqlstore/dashboard_folder_test.go b/pkg/services/sqlstore/dashboard_folder_test.go
+index 40d6cf5bcb2..ea8f1216706 100644
+--- a/pkg/services/sqlstore/dashboard_folder_test.go
++++ b/pkg/services/sqlstore/dashboard_folder_test.go
+@@ -3,7 +3,6 @@ package sqlstore
+ import (
+ 	"testing"
+ 
+-	"github.com/go-xorm/xorm"
+ 	. "github.com/smartystreets/goconvey/convey"
+ 
+ 	m "github.com/grafana/grafana/pkg/models"
+@@ -11,10 +10,8 @@ import (
+ )
+ 
+ func TestDashboardFolderDataAccess(t *testing.T) {
+-	var x *xorm.Engine
+-
+ 	Convey("Testing DB", t, func() {
+-		x = InitTestDB(t)
++		InitTestDB(t)
+ 
+ 		Convey("Given one dashboard folder with two dashboards and one dashboard in the root folder", func() {
+ 			folder := insertTestDashboard("1 test dash folder", 1, 0, true, "prod", "webapp")
+diff --git a/pkg/services/sqlstore/dashboard_test.go b/pkg/services/sqlstore/dashboard_test.go
+index e0a73b9a49a..9124a686236 100644
+--- a/pkg/services/sqlstore/dashboard_test.go
++++ b/pkg/services/sqlstore/dashboard_test.go
+@@ -5,7 +5,6 @@ import (
+ 	"testing"
+ 	"time"
+ 
+-	"github.com/go-xorm/xorm"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/search"
+@@ -15,10 +14,8 @@ import (
+ )
+ 
+ func TestDashboardDataAccess(t *testing.T) {
+-	var x *xorm.Engine
+-
+ 	Convey("Testing DB", t, func() {
+-		x = InitTestDB(t)
++		InitTestDB(t)
+ 
+ 		Convey("Given saved dashboard", func() {
+ 			savedFolder := insertTestDashboard("1 test dash folder", 1, 0, true, "prod", "webapp")
+diff --git a/pkg/social/generic_oauth.go b/pkg/social/generic_oauth.go
+index 2411e0006a2..b92d64ad9fc 100644
+--- a/pkg/social/generic_oauth.go
++++ b/pkg/social/generic_oauth.go
+@@ -180,6 +180,7 @@ type UserInfoJson struct {
+ 
+ func (s *SocialGenericOAuth) UserInfo(client *http.Client, token *oauth2.Token) (*BasicUserInfo, error) {
+ 	var data UserInfoJson
++	var err error
+ 
+ 	if s.extractToken(&data, token) != true {
+ 		response, err := HttpGet(client, s.apiUrl)
+@@ -193,20 +194,17 @@ func (s *SocialGenericOAuth) UserInfo(client *http.Client, token *oauth2.Token)
+ 		}
+ 	}
+ 
+-	name, err := s.extractName(data)
+-	if err != nil {
+-		return nil, err
+-	}
++	name := s.extractName(&data)
+ 
+-	email, err := s.extractEmail(data, client)
+-	if err != nil {
+-		return nil, err
++	email := s.extractEmail(&data)
++	if email == "" {
++		email, err = s.FetchPrivateEmail(client)
++		if err != nil {
++			return nil, err
++		}
+ 	}
+ 
+-	login, err := s.extractLogin(data, email)
+-	if err != nil {
+-		return nil, err
+-	}
++	login := s.extractLogin(&data, email)
+ 
+ 	userInfo := &BasicUserInfo{
+ 		Name:  name,
+@@ -251,49 +249,55 @@ func (s *SocialGenericOAuth) extractToken(data *UserInfoJson, token *oauth2.Toke
+ 		return false
+ 	}
+ 
++	email := s.extractEmail(data)
++	if email == "" {
++		s.log.Debug("No email found in id_token", "json", string(payload), "data", data)
++		return false
++	}
++
+ 	s.log.Debug("Received id_token", "json", string(payload), "data", data)
+ 	return true
+ }
+ 
+-func (s *SocialGenericOAuth) extractEmail(data UserInfoJson, client *http.Client) (string, error) {
++func (s *SocialGenericOAuth) extractEmail(data *UserInfoJson) string {
+ 	if data.Email != "" {
+-		return data.Email, nil
++		return data.Email
+ 	}
+ 
+ 	if data.Attributes["email:primary"] != nil {
+-		return data.Attributes["email:primary"][0], nil
++		return data.Attributes["email:primary"][0]
+ 	}
+ 
+ 	if data.Upn != "" {
+ 		emailAddr, emailErr := mail.ParseAddress(data.Upn)
+ 		if emailErr == nil {
+-			return emailAddr.Address, nil
++			return emailAddr.Address
+ 		}
+ 	}
+ 
+-	return s.FetchPrivateEmail(client)
++	return ""
+ }
+ 
+-func (s *SocialGenericOAuth) extractLogin(data UserInfoJson, email string) (string, error) {
++func (s *SocialGenericOAuth) extractLogin(data *UserInfoJson, email string) string {
+ 	if data.Login != "" {
+-		return data.Login, nil
++		return data.Login
+ 	}
+ 
+ 	if data.Username != "" {
+-		return data.Username, nil
++		return data.Username
+ 	}
+ 
+-	return email, nil
++	return email
+ }
+ 
+-func (s *SocialGenericOAuth) extractName(data UserInfoJson) (string, error) {
++func (s *SocialGenericOAuth) extractName(data *UserInfoJson) string {
+ 	if data.Name != "" {
+-		return data.Name, nil
++		return data.Name
+ 	}
+ 
+ 	if data.DisplayName != "" {
+-		return data.DisplayName, nil
++		return data.DisplayName
+ 	}
+ 
+-	return "", nil
++	return ""
+ }
+diff --git a/pkg/tsdb/opentsdb/opentsdb.go b/pkg/tsdb/opentsdb/opentsdb.go
+index 29daa0c3bb4..692b891eddd 100644
+--- a/pkg/tsdb/opentsdb/opentsdb.go
++++ b/pkg/tsdb/opentsdb/opentsdb.go
+@@ -22,23 +22,10 @@ import (
+ )
+ 
+ type OpenTsdbExecutor struct {
+-	//*models.DataSource
+-	//httpClient *http.Client
+ }
+ 
+ func NewOpenTsdbExecutor(datasource *models.DataSource) (tsdb.TsdbQueryEndpoint, error) {
+-	/*
+-		httpClient, err := datasource.GetHttpClient()
+-
+-		if err != nil {
+-			return nil, err
+-		}
+-	*/
+-
+-	return &OpenTsdbExecutor{
+-	//DataSource: datasource,
+-	//httpClient: httpClient,
+-	}, nil
++	return &OpenTsdbExecutor{}, nil
+ }
+ 
+ var (
+diff --git a/public/app/core/components/sidemenu/sidemenu.html b/public/app/core/components/sidemenu/sidemenu.html
+index e97d34739ba..1b301363e62 100644
+--- a/public/app/core/components/sidemenu/sidemenu.html
++++ b/public/app/core/components/sidemenu/sidemenu.html
+@@ -1,73 +1,78 @@
+ <a class="sidemenu__logo" ng-click="ctrl.toggleSideMenu()">
+-	<img src="public/img/grafana_icon.svg"></img>
++  <img src="public/img/grafana_icon.svg"></img>
+ </a>
+ 
+ <a class="sidemenu__logo_small_breakpoint" ng-click="ctrl.toggleSideMenuSmallBreakpoint()">
+   <i class="fa fa-bars"></i>
+-  <span class="sidemenu__close"><i class="fa fa-times"></i>&nbsp;Close</span>
++  <span class="sidemenu__close">
++    <i class="fa fa-times"></i>&nbsp;Close</span>
+ </a>
+ 
+ <div class="sidemenu__top">
+-	<div ng-repeat="item in ::ctrl.mainLinks" class="sidemenu-item dropdown">
+-		<a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
+-			<span class="icon-circle sidemenu-icon">
+-				<i class="{{::item.icon}}" ng-show="::item.icon"></i>
+-				<img ng-src="{{::item.img}}" ng-show="::item.img">
+-			</span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu" ng-if="::item.children">
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">{{::item.text}}</span>
+-			</li>
+-			<li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}">
+-				<a href="{{::child.url}}">
+-					<i class="{{::child.icon}}" ng-show="::child.icon"></i>
+-					{{::child.text}}
+-				</a>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-repeat="item in ::ctrl.mainLinks" class="sidemenu-item dropdown">
++    <a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
++      <span class="icon-circle sidemenu-icon">
++        <i class="{{::item.icon}}" ng-show="::item.icon"></i>
++        <img ng-src="{{::item.img}}" ng-show="::item.img">
++      </span>
++    </a>
++    <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu" ng-if="::item.children">
++      <li class="side-menu-header">
++        <span class="sidemenu-item-text">{{::item.text}}</span>
++      </li>
++      <li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}">
++        <a href="{{::child.url}}">
++          <i class="{{::child.icon}}" ng-show="::child.icon"></i>
++          {{::child.text}}
++        </a>
++      </li>
++    </ul>
++  </div>
+ </div>
+ 
+ <div class="sidemenu__bottom">
+-	<div ng-show="::!ctrl.isSignedIn" class="sidemenu-item">
+-		<a href="{{ctrl.loginUrl}}" class="sidemenu-link" target="_self">
+-			<span class="icon-circle sidemenu-icon"><i class="fa fa-fw fa-sign-in"></i></span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">Sign In</span>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-show="::!ctrl.isSignedIn" class="sidemenu-item">
++    <a href="{{ctrl.loginUrl}}" class="sidemenu-link" target="_self">
++      <span class="icon-circle sidemenu-icon">
++        <i class="fa fa-fw fa-sign-in"></i>
++      </span>
++    </a>
++    <a href="{{ctrl.loginUrl}}">
++      <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
++        <li class="side-menu-header">
++          <span class="sidemenu-item-text">Sign In</span>
++        </li>
++      </ul>
++    </a>
++  </div>
+ 
+-	<div ng-repeat="item in ::ctrl.bottomNav" class="sidemenu-item dropdown dropup">
+-		<a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
+-			<span class="icon-circle sidemenu-icon">
+-				<i class="{{::item.icon}}" ng-show="::item.icon"></i>
+-				<img ng-src="{{::item.img}}" ng-show="::item.img">
+-			</span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
+-			<li ng-if="item.showOrgSwitcher" class="sidemenu-org-switcher">
+-				<a ng-click="ctrl.switchOrg()">
+-					<div>
+-						<div class="sidemenu-org-switcher__org-name">{{ctrl.contextSrv.user.orgName}}</div>
+-						<div class="sidemenu-org-switcher__org-current">Current Org:</div>
+-					</div>
+-					<div class="sidemenu-org-switcher__switch"><i class="fa fa-fw fa-random"></i>Switch</div>
+-				</a>
+-			</li>
+-			<li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}" ng-hide="::child.hideFromMenu">
+-				<a href="{{::child.url}}" target="{{::child.target}}" ng-click="ctrl.itemClicked(child, $event)">
+-					<i class="{{::child.icon}}" ng-show="::child.icon"></i>
+-					{{::child.text}}
+-				</a>
+-			</li>
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">{{::item.text}}</span>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-repeat="item in ::ctrl.bottomNav" class="sidemenu-item dropdown dropup">
++    <a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
++      <span class="icon-circle sidemenu-icon">
++        <i class="{{::item.icon}}" ng-show="::item.icon"></i>
++        <img ng-src="{{::item.img}}" ng-show="::item.img">
++      </span>
++    </a>
++    <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
++      <li ng-if="item.showOrgSwitcher" class="sidemenu-org-switcher">
++        <a ng-click="ctrl.switchOrg()">
++          <div>
++            <div class="sidemenu-org-switcher__org-name">{{ctrl.contextSrv.user.orgName}}</div>
++            <div class="sidemenu-org-switcher__org-current">Current Org:</div>
++          </div>
++          <div class="sidemenu-org-switcher__switch">
++            <i class="fa fa-fw fa-random"></i>Switch</div>
++        </a>
++      </li>
++      <li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}" ng-hide="::child.hideFromMenu">
++        <a href="{{::child.url}}" target="{{::child.target}}" ng-click="ctrl.itemClicked(child, $event)">
++          <i class="{{::child.icon}}" ng-show="::child.icon"></i>
++          {{::child.text}}
++        </a>
++      </li>
++      <li class="side-menu-header">
++        <span class="sidemenu-item-text">{{::item.text}}</span>
++      </li>
++    </ul>
++  </div>
+ </div>
+-
+diff --git a/public/app/features/dashboard/dashgrid/DashboardRow.tsx b/public/app/features/dashboard/dashgrid/DashboardRow.tsx
+index 7a4d6cf8070..c2a84cb7da9 100644
+--- a/public/app/features/dashboard/dashgrid/DashboardRow.tsx
++++ b/public/app/features/dashboard/dashgrid/DashboardRow.tsx
+@@ -4,6 +4,7 @@ import { PanelModel } from '../panel_model';
+ import { PanelContainer } from './PanelContainer';
+ import templateSrv from 'app/features/templating/template_srv';
+ import appEvents from 'app/core/app_events';
++import config from 'app/core/config';
+ 
+ export interface DashboardRowProps {
+   panel: PanelModel;
+@@ -94,14 +95,16 @@ export class DashboardRow extends React.Component<DashboardRowProps, any> {
+           {title}
+           <span className="dashboard-row__panel_count">({hiddenPanels} hidden panels)</span>
+         </a>
+-        <div className="dashboard-row__actions">
+-          <a className="pointer" onClick={this.openSettings}>
+-            <i className="fa fa-cog" />
+-          </a>
+-          <a className="pointer" onClick={this.delete}>
+-            <i className="fa fa-trash" />
+-          </a>
+-        </div>
++        {config.bootData.user.orgRole !== 'Viewer' && (
++          <div className="dashboard-row__actions">
++            <a className="pointer" onClick={this.openSettings}>
++              <i className="fa fa-cog" />
++            </a>
++            <a className="pointer" onClick={this.delete}>
++              <i className="fa fa-trash" />
++            </a>
++          </div>
++        )}
+         <div className="dashboard-row__drag grid-drag-handle" />
+       </div>
+     );
+diff --git a/public/app/features/dashboard/specs/DashboardRow.jest.tsx b/public/app/features/dashboard/specs/DashboardRow.jest.tsx
+index 2d44f2e0e74..c0ac172aa26 100644
+--- a/public/app/features/dashboard/specs/DashboardRow.jest.tsx
++++ b/public/app/features/dashboard/specs/DashboardRow.jest.tsx
+@@ -2,19 +2,26 @@ import React from 'react';
+ import { shallow } from 'enzyme';
+ import { DashboardRow } from '../dashgrid/DashboardRow';
+ import { PanelModel } from '../panel_model';
++import config from '../../../core/config';
+ 
+ describe('DashboardRow', () => {
+   let wrapper, panel, getPanelContainer, dashboardMock;
+ 
+   beforeEach(() => {
+-    dashboardMock = {toggleRow: jest.fn()};
++    dashboardMock = { toggleRow: jest.fn() };
++
++    config.bootData = {
++      user: {
++        orgRole: 'Admin',
++      },
++    };
+ 
+     getPanelContainer = jest.fn().mockReturnValue({
+       getDashboard: jest.fn().mockReturnValue(dashboardMock),
+-      getPanelLoader: jest.fn()
++      getPanelLoader: jest.fn(),
+     });
+ 
+-    panel = new PanelModel({collapsed: false});
++    panel = new PanelModel({ collapsed: false });
+     wrapper = shallow(<DashboardRow panel={panel} getPanelContainer={getPanelContainer} />);
+   });
+ 
+@@ -30,4 +37,14 @@ describe('DashboardRow', () => {
+     expect(dashboardMock.toggleRow.mock.calls).toHaveLength(1);
+   });
+ 
++  it('should have two actions as admin', () => {
++    expect(wrapper.find('.dashboard-row__actions .pointer')).toHaveLength(2);
++  });
++
++  it('should have zero actions as viewer', () => {
++    config.bootData.user.orgRole = 'Viewer';
++    panel = new PanelModel({ collapsed: false });
++    wrapper = shallow(<DashboardRow panel={panel} getPanelContainer={getPanelContainer} />);
++    expect(wrapper.find('.dashboard-row__actions .pointer')).toHaveLength(0);
++  });
+ });
+diff --git a/public/app/features/templating/specs/template_srv.jest.ts b/public/app/features/templating/specs/template_srv.jest.ts
+index 37e2f5e4fe5..f28fbf9ac64 100644
+--- a/public/app/features/templating/specs/template_srv.jest.ts
++++ b/public/app/features/templating/specs/template_srv.jest.ts
+@@ -107,7 +107,6 @@ describe('templateSrv', function() {
+       ]);
+     });
+ 
+-
+     it('should replace $test with globbed value', function() {
+       var target = _templateSrv.replace('this.$test.filters', {}, 'glob');
+       expect(target).toBe('this.{value1,value2}.filters');
+@@ -261,6 +260,11 @@ describe('templateSrv', function() {
+       expect(result).toBe('test');
+     });
+ 
++    it('multi value and csv format should render csv string', function() {
++      var result = _templateSrv.formatValue(['test', 'test2'], 'csv');
++      expect(result).toBe('test,test2');
++    });
++
+     it('slash should be properly escaped in regex format', function() {
+       var result = _templateSrv.formatValue('Gi3/14', 'regex');
+       expect(result).toBe('Gi3\\/14');
+diff --git a/public/app/features/templating/template_srv.ts b/public/app/features/templating/template_srv.ts
+index 40f119ea10b..5b31072d140 100644
+--- a/public/app/features/templating/template_srv.ts
++++ b/public/app/features/templating/template_srv.ts
+@@ -115,6 +115,12 @@ export class TemplateSrv {
+         }
+         return this.distributeVariable(value, variable.name);
+       }
++      case 'csv': {
++        if (_.isArray(value)) {
++          return value.join(',');
++        }
++        return value;
++      }
+       default: {
+         if (_.isArray(value)) {
+           return '{' + value.join(',') + '}';
+diff --git a/public/sass/_variables.dark.scss b/public/sass/_variables.dark.scss
+index ef9f1a06996..6e86aa1872e 100644
+--- a/public/sass/_variables.dark.scss
++++ b/public/sass/_variables.dark.scss
+@@ -259,6 +259,7 @@ $navbar-button-border: #2f2f32;
+ // Sidemenu
+ // -------------------------
+ $side-menu-bg: $black;
++$side-menu-bg-mobile: $side-menu-bg;
+ $side-menu-item-hover-bg: $dark-2;
+ $side-menu-shadow: 0 0 20px black;
+ $side-menu-link-color: $link-color;
+diff --git a/public/sass/_variables.light.scss b/public/sass/_variables.light.scss
+index eb598f27d4c..a59350d2195 100644
+--- a/public/sass/_variables.light.scss
++++ b/public/sass/_variables.light.scss
+@@ -200,6 +200,7 @@ $input-invalid-border-color: lighten($red, 5%);
+ // Sidemenu
+ // -------------------------
+ $side-menu-bg: $dark-2;
++$side-menu-bg-mobile: rgba(0, 0, 0, 0); //$gray-6;
+ $side-menu-item-hover-bg: $gray-1;
+ $side-menu-shadow: 5px 0px 10px -5px $gray-1;
+ $side-menu-link-color: $gray-6;
+diff --git a/public/sass/components/_sidemenu.scss b/public/sass/components/_sidemenu.scss
+index 5f21bbc8cd0..8a5c3779714 100644
+--- a/public/sass/components/_sidemenu.scss
++++ b/public/sass/components/_sidemenu.scss
+@@ -71,7 +71,7 @@
+         // important to overlap it otherwise it can be hidden
+         // again by the mouse getting outside the hover space
+         left: $side-menu-width - 2px;
+-        @include animation("dropdown-anim 150ms ease-in-out 100ms forwards");
++        @include animation('dropdown-anim 150ms ease-in-out 100ms forwards');
+         z-index: $zindex-sidemenu;
+       }
+     }
+@@ -193,9 +193,13 @@ li.sidemenu-org-switcher {
+ 
+ @include media-breakpoint-down(xs) {
+   .sidemenu-open--xs {
++    li {
++      font-size: $font-size-lg;
++    }
++
+     .sidemenu {
+       width: 100%;
+-      background: $side-menu-bg;
++      background: $side-menu-bg-mobile;
+       position: initial;
+       height: auto;
+       box-shadow: $side-menu-shadow;
+@@ -214,6 +218,9 @@ li.sidemenu-org-switcher {
+     .sidemenu__bottom {
+       display: block;
+     }
++    .sidemenu-item {
++      border-right: 2px solid transparent;
++    }
+   }
+ 
+   .sidemenu {
+diff --git a/scripts/build/Dockerfile b/scripts/build/Dockerfile
+index 8fde9eb1dcd..808e7f141e9 100644
+--- a/scripts/build/Dockerfile
++++ b/scripts/build/Dockerfile
+@@ -21,7 +21,7 @@ RUN gpg --keyserver hkp://keys.gnupg.net --recv-keys 409B6B1796C275462A170311380
+ RUN curl --silent --location https://rpm.nodesource.com/setup_6.x | bash - && \
+     yum install -y nodejs --nogpgcheck
+ 
+-ENV GOLANG_VERSION 1.9.3
++ENV GOLANG_VERSION 1.10
+ 
+ RUN wget https://dl.yarnpkg.com/rpm/yarn.repo -O /etc/yum.repos.d/yarn.repo && \
+     yum install -y yarn --nogpgcheck && \

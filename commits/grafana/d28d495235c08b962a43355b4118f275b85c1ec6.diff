@@ -1,0 +1,1884 @@
+commit d28d495235c08b962a43355b4118f275b85c1ec6
+Author: Arve Knudsen <arve.knudsen@gmail.com>
+Date:   Fri Jul 10 16:09:21 2020 +0200
+
+    Chore: Enable PR testing in Drone (#26189)
+    
+    * Add Drone configuration
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add more steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add more steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Build front-end before testing it
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Upgrade grafana/build-container
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add packaging step
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Trigger on push
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove some steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Enable steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Install Dockerize
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use node image for test-frontend
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Increase number of test workers
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Make plugin installation depend on frontend tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Make integration tests depend on frontend tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use grafana/build-container also for front-end tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Upgrade dependencies in order to fix front-end tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Depend on es-check
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Dont' depend on tests before building front-end
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add more steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix packaging
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Simplify
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Try to build images
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix e2e tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove steps
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Install netcat
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Include golangci-lint with grafana/build-container
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Build storybook and docs website
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix e2e tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use build image with root user
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drop CircleCI dependencies
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix e2e tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix e2e under Drone
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Execute e2e server separately
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use own plugin for building Docker images
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use Starlark to configure Drone
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add enterprise steps to pipeline
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add more enterprise steps to pipeline
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Maintain Yarn cache
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Build enterprise Docker images
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Build Ubuntu Docker images
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Refactor
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add Postgres integration test
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Add MySQL integration test
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix integration tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Parameterize integration test DB connections
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Categorize integration tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use grabpl integration-tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove unintended change
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drone: Disable Ubuntu Docker images for PR pipeline
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Regenerate yarn.lock
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Upgrade grabpl
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Restore Yarn cache before installing in grafana-enterprise
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Use separate pipelines for OSS and enterprise
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Let OSS builds depend on tests
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Restore Go cache before building back-end
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Reduce number of variants built for PRs
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix building of Docker images
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drone: Simplify logic
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drone: Use Starlark
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drone: Fix syntax error
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Convert .drone.star to YAML
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Upgrade AWS Go SDK
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Drone: Fix Go linting
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Undo irrelevant changes
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Revert "Undo irrelevant changes"
+    
+    This reverts commit 5152f65972fc24f579f065beb43c2df929da1f19.
+    
+    * Undo irrelevant changes
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * e2e: Support Circle
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove unused script
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * TypeScript fixes
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * TypeScript fixes
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove unused script
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * More Drone support
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove unused script
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix build on Circle
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Remove TODO comment
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+
+diff --git a/.drone.star b/.drone.star
+new file mode 100644
+index 00000000000..15780a6f28c
+--- /dev/null
++++ b/.drone.star
+@@ -0,0 +1,488 @@
++def main(ctx):
++    return pr_pipeline_set()
++
++build_image = 'grafana/build-container:1.2.21'
++grafana_docker_image = 'grafana/drone-grafana-docker:0.2.0'
++exclude_forks_cond = {
++    'repo': {
++        'include': [
++            'grafana/grafana',
++            'aknuds1/grafana',
++        ],
++    },
++}
++
++pr_kind = 'pr'
++
++restore_yarn_cache = 'rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)'
++def install_deps(exclude_forks=False):
++    obj = {
++        'name': 'install-deps',
++        'image': build_image,
++        'environment': {
++            'GRABPL_VERSION': '0.4.15',
++            'DOCKERIZE_VERSION': '0.6.1',
++        },
++        'commands': [
++            'curl -fLO https://grafana-downloads.storage.googleapis.com/grafana-build-pipeline/v$${GRABPL_VERSION}/grabpl',
++            'chmod +x grabpl',
++            'mkdir -p bin',
++            'mv grabpl bin',
++            'curl -fLO https://github.com/jwilder/dockerize/releases/download/v$${DOCKERIZE_VERSION}/dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz',
++            'tar -C bin -xzvf dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz',
++            'rm dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz',
++            'yarn install --frozen-lockfile --no-progress',
++            # Keep the Yarn cache for subsequent steps
++            'cp -r $(yarn cache dir) yarn-cache',
++        ],
++    }
++    if exclude_forks:
++        obj['when'] = exclude_forks_cond
++
++    return obj
++
++def pr_pipeline_set():
++    return pipeline_set(kind=pr_kind, name='test-pr')
++
++def pipeline_set(kind, name):
++    """Generate a certain kind of pipeline set."""
++    if kind not in [
++        pr_kind,
++    ]:
++        # There should be a 'fail' function in Starlark, but won't build
++        return []
++
++    return [
++        {
++            'kind': 'pipeline',
++            'type': 'docker',
++            'name': '{}-oss'.format(name),
++            'trigger': {
++                'event': ['pull_request',],
++            },
++            'services': [
++                {
++                    'name': 'postgres',
++                    'image': 'postgres:12.3-alpine',
++                    'environment': {
++                      'POSTGRES_USER': 'grafanatest',
++                      'POSTGRES_PASSWORD': 'grafanatest',
++                      'POSTGRES_DB': 'grafanatest',
++                    },
++                },
++                {
++                    'name': 'mysql',
++                    'image': 'mysql:5.6.48',
++                    'environment': {
++                        'MYSQL_ROOT_PASSWORD': 'rootpass',
++                        'MYSQL_DATABASE': 'grafana_tests',
++                        'MYSQL_USER': 'grafana',
++                        'MYSQL_PASSWORD': 'password',
++                    },
++                },
++            ],
++            'steps': [
++                install_deps(),
++                {
++                    'name': 'lint-go',
++                    'image': build_image,
++                    'environment': {
++                        # We need CGO because of go-sqlite3
++                        'CGO_ENABLED': '1',
++                    },
++                    'depends_on': [
++                      'install-deps',
++                    ],
++                    'commands': [
++                        'make lint-go',
++                    ],
++                },
++                {
++                    'name': 'codespell',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'commands': [
++                        # Important: all words have to be in lowercase, and separated by "\n".
++                        'echo -e "unknwon\nreferer\nerrorstring\neror\niam" > words_to_ignore.txt',
++                        'codespell -I words_to_ignore.txt docs/',
++                    ],
++                },
++                {
++                    'name': 'shellcheck',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'environment': {
++                        'VERSION': '0.7.1',
++                        'CHKSUM': 'beca3d7819a6bdcfbd044576df4fc284053b48f468b2f03428fe66f4ceb2c05d9b5411357fa15003cb0' +
++                            '311406c255084cf7283a3b8fce644c340c2f6aa910b9f',
++                    },
++                    'commands': [
++                        'curl -fLO http://storage.googleapis.com/grafana-downloads/ci-dependencies/shellcheck-' +
++                            'v$${VERSION}.linux.x86_64.tar.xz',
++                        'echo $$CHKSUM shellcheck-v$${VERSION}.linux.x86_64.tar.xz | sha512sum --check --strict --status',
++                        'tar xf shellcheck-v$${VERSION}.linux.x86_64.tar.xz',
++                        'mv shellcheck-v$${VERSION}/shellcheck /usr/local/bin/',
++                        'rm -rf shellcheck-v$${VERSION}*',
++                        './bin/grabpl shellcheck',
++                    ],
++                },
++                {
++                    'name': 'build-backend',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                        'lint-go',
++                        'test-backend',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        'rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)',
++                        './bin/grabpl build-backend --github-token "$${GITHUB_TOKEN}" --edition oss ' +
++                            '--build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64',
++                    ],
++                },
++                {
++                    'name': 'build-frontend',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                        'test-frontend',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        restore_yarn_cache,
++                        './bin/grabpl build-frontend --no-install-deps --github-token "$${GITHUB_TOKEN}" ' +
++                            '--edition oss --build-id $DRONE_BUILD_NUMBER',
++                    ],
++                },
++                {
++                    'name': 'test-backend',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                        'lint-go',
++                    ],
++                    'commands': [
++                        # First execute non-integration tests in parallel, since it should be safe
++                        'go test -covermode=atomic ./pkg/...',
++                        # Then execute integration tests in serial
++                        './bin/grabpl integration-tests',
++                        # Keep the test cache
++                        'cp -r $(go env GOCACHE) go-cache',
++                    ],
++                },
++                {
++                    'name': 'test-frontend',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'commands': [
++                        restore_yarn_cache,
++                        'yarn run prettier:check',
++                        'yarn run packages:typecheck',
++                        'yarn run typecheck',
++                        'yarn run test',
++                    ],
++                },
++                {
++                    'name': 'build-plugins',
++                    'image': build_image,
++                    'depends_on': [
++                        'install-deps',
++                        'lint-go',
++                    ],
++                    'commands': [
++                        restore_yarn_cache,
++                        './bin/grabpl build-plugins --edition oss --no-install-deps',
++                    ],
++                },
++                {
++                    'name': 'package',
++                    'image': build_image,
++                    'depends_on': [
++                        'build-backend',
++                        'build-frontend',
++                        'build-plugins',
++                        'test-backend',
++                        'test-frontend',
++                        'codespell',
++                        'shellcheck',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        '. scripts/build/gpg-test-vars.sh && ./bin/grabpl package --github-token ' +
++                            '"$${GITHUB_TOKEN}" --edition oss --build-id $DRONE_BUILD_NUMBER ' +
++                            '--variants linux-x64,linux-x64-musl,osx64,win64',
++                    ],
++                },
++                {
++                    'name': 'end-to-end-tests-server',
++                    'image': build_image,
++                    'detach': True,
++                    'depends_on': [
++                        'package',
++                    ],
++                    'commands': [
++                        './e2e/start-server',
++                    ],
++                },
++                {
++                    'name': 'end-to-end-tests',
++                    'image': 'grafana/ci-e2e:12.18-1',
++                    'depends_on': [
++                        'end-to-end-tests-server',
++                    ],
++                    'environment': {
++                        'HOST': 'end-to-end-tests-server',
++                    },
++                    'commands': [
++                        restore_yarn_cache,
++                        # Have to re-install Cypress since it insists on searching for its binary beneath /root/.cache,
++                        # even though the Yarn cache directory is beneath /usr/local/share somewhere
++                        './node_modules/.bin/cypress install',
++                        './e2e/wait-for-grafana',
++                        './e2e/run-suite',
++                    ],
++                },
++                {
++                    'name': 'publish-storybook',
++                    'image': build_image,
++                    'depends_on': [
++                        # Best to ensure that this step doesn't mess with what's getting built and packaged
++                        'package',
++                    ],
++                    'commands': [
++                        restore_yarn_cache,
++                        'yarn storybook:build',
++                        # TODO: Enable the following for non-forked PRs
++                        # - echo $GCP_GRAFANA_UPLOAD_KEY > /tmp/gcpkey.json
++                        # - gcloud auth activate-service-account --key-file=/tmp/gcpkey.json
++                        # - gsutil -m rsync -d -r ./packages/grafana-ui/dist/storybook gs://grafana-storybook/latest
++                        # - gsutil -m rsync -d -r ./packages/grafana-ui/dist/storybook gs://grafana-storybook/$CIRCLE_TAG
++                    ],
++                },
++                {
++                    'name': 'build-docs-website',
++                    # Use latest revision here, since we want to catch if it breaks
++                    'image': 'grafana/docs-base:latest',
++                    'commands': [
++                        'mkdir -p /hugo/content/docs/grafana',
++                        'cp -r docs/sources /hugo/content/docs/grafana/latest',
++                        'cd /hugo && make prod',
++                    ],
++                },
++                {
++                    'name': 'copy-packages-for-docker',
++                    'image': build_image,
++                    'depends_on': [
++                        'package',
++                    ],
++                    'commands': [
++                        'cp dist/*.tar.gz packaging/docker/',
++                    ],
++                },
++                {
++                    'name': 'build-docker-images',
++                    'image': grafana_docker_image,
++                    'depends_on': [
++                        'copy-packages-for-docker',
++                    ],
++                    'settings': {
++                        'dry_run': True,
++                        'edition': 'oss',
++                        'archs': 'amd64',
++                    },
++                },
++                # {
++                    # 'name': 'build-ubuntu-docker-images',
++                    # 'image': grafana_docker_image,
++                    # 'depends_on': [
++                        # 'copy-packages-for-docker',
++                    # ],
++                    # 'settings': {
++                        # 'dry_run': True,
++                        # 'edition': 'oss',
++                        # 'ubuntu': True,
++                    # },
++                # },
++                {
++                    'name': 'postgres-integration-test',
++                    'image': build_image,
++                    'depends_on': [
++                        'test-backend',
++                        'test-frontend',
++                    ],
++                    'environment': {
++                        'PGPASSWORD': 'grafanatest',
++                        'GRAFANA_TEST_DB': 'postgres',
++                        'POSTGRES_HOST': 'postgres',
++                    },
++                    'commands': [
++                        'apt-get update',
++                        'apt-get install -yq postgresql-client',
++                        './bin/dockerize -wait tcp://postgres:5432 -timeout 120s',
++                        'psql -p 5432 -h postgres -U grafanatest -d grafanatest -f ' +
++                            'devenv/docker/blocks/postgres_tests/setup.sql',
++                        'rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)',
++                        # Make sure that we don't use cached results for another database
++                        'go clean -testcache',
++                        './bin/grabpl integration-tests --database postgres',
++                    ],
++                },
++                {
++                    'name': 'mysql-integration-test',
++                    'image': build_image,
++                    'depends_on': [
++                        'test-backend',
++                        'test-frontend',
++                    ],
++                    'environment': {
++                        'GRAFANA_TEST_DB': 'mysql',
++                        'MYSQL_HOST': 'mysql',
++                    },
++                    'commands': [
++                        'apt-get update',
++                        'apt-get install -yq default-mysql-client',
++                        './bin/dockerize -wait tcp://mysql:3306 -timeout 120s',
++                        'cat devenv/docker/blocks/mysql_tests/setup.sql | mysql -h mysql -P 3306 -u root -prootpass',
++                        'rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)',
++                        # Make sure that we don't use cached results for another database
++                        'go clean -testcache',
++                        './bin/grabpl integration-tests --database mysql',
++                    ],
++                },
++            ],
++        },
++        {
++            'kind': 'pipeline',
++            'type': 'docker',
++            'name': '{}-enterprise'.format(name),
++            'trigger': {
++                'event': ['pull_request',],
++            },
++            'steps': [
++                install_deps(exclude_forks=True),
++                {
++                    'name': 'build-backend',
++                    'image': build_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        './bin/grabpl build-backend --github-token "$${GITHUB_TOKEN}" --edition enterprise ' +
++                            '--build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64',
++                    ],
++                },
++                {
++                    'name': 'build-frontend',
++                    'image': build_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        restore_yarn_cache,
++                        './bin/grabpl build-frontend --no-install-deps --github-token "$${GITHUB_TOKEN}" ' +
++                            '--edition enterprise --build-id $DRONE_BUILD_NUMBER',
++                    ],
++                },
++                {
++                    'name': 'build-plugins',
++                    'image': build_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'install-deps',
++                    ],
++                    'commands': [
++                        restore_yarn_cache,
++                        './bin/grabpl build-plugins --edition enterprise --no-install-deps',
++                    ],
++                },
++                {
++                    'name': 'package',
++                    'image': build_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'build-backend',
++                        'build-frontend',
++                        'build-plugins',
++                    ],
++                    'environment': {
++                        'GITHUB_TOKEN': {
++                            'from_secret': 'github_token',
++                        },
++                    },
++                    'commands': [
++                        '. scripts/build/gpg-test-vars.sh && ./bin/grabpl package --github-token ' +
++                            '"$${GITHUB_TOKEN}" --edition enterprise --build-id $DRONE_BUILD_NUMBER ' +
++                            '--variants linux-x64,linux-x64-musl,osx64,win64',
++                    ],
++                },
++                {
++                    'name': 'copy-packages-for-docker',
++                    'image': build_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'package',
++                    ],
++                    'commands': [
++                        'cp dist/*.tar.gz packaging/docker/',
++                    ],
++                },
++                {
++                    'name': 'build-docker-images',
++                    'image': grafana_docker_image,
++                    'when': exclude_forks_cond,
++                    'depends_on': [
++                        'copy-packages-for-docker',
++                    ],
++                    'settings': {
++                        'dry_run': True,
++                        'edition': 'enterprise',
++                        'archs': 'amd64',
++                    },
++                },
++                # {
++                    # 'name': 'build-ubuntu-docker-images',
++                    # 'image': grafana_docker_image,
++                    # 'when': exclude_forks_cond,
++                    # 'depends_on': [
++                        # 'copy-packages-for-docker',
++                    # ],
++                    # 'settings': {
++                        # 'dry_run': True,
++                        # 'edition': 'enterprise',
++                        # 'ubuntu': True,
++                    # },
++                # },
++            ]
++        },
++    ]
+diff --git a/.drone.yml b/.drone.yml
+new file mode 100644
+index 00000000000..2afaf39cd10
+--- /dev/null
++++ b/.drone.yml
+@@ -0,0 +1,351 @@
++---
++kind: pipeline
++type: docker
++name: test-pr-oss
++
++platform:
++  os: linux
++  arch: amd64
++
++steps:
++- name: install-deps
++  image: grafana/build-container:1.2.21
++  commands:
++  - curl -fLO https://grafana-downloads.storage.googleapis.com/grafana-build-pipeline/v$${GRABPL_VERSION}/grabpl
++  - chmod +x grabpl
++  - mkdir -p bin
++  - mv grabpl bin
++  - curl -fLO https://github.com/jwilder/dockerize/releases/download/v$${DOCKERIZE_VERSION}/dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - tar -C bin -xzvf dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - rm dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - yarn install --frozen-lockfile --no-progress
++  - cp -r $(yarn cache dir) yarn-cache
++  environment:
++    DOCKERIZE_VERSION: 0.6.1
++    GRABPL_VERSION: 0.4.15
++
++- name: lint-go
++  image: grafana/build-container:1.2.21
++  commands:
++  - make lint-go
++  environment:
++    CGO_ENABLED: 1
++  depends_on:
++  - install-deps
++
++- name: codespell
++  image: grafana/build-container:1.2.21
++  commands:
++  - "echo -e \"unknwon\nreferer\nerrorstring\neror\niam\" > words_to_ignore.txt"
++  - codespell -I words_to_ignore.txt docs/
++  depends_on:
++  - install-deps
++
++- name: shellcheck
++  image: grafana/build-container:1.2.21
++  commands:
++  - curl -fLO http://storage.googleapis.com/grafana-downloads/ci-dependencies/shellcheck-v$${VERSION}.linux.x86_64.tar.xz
++  - echo $$CHKSUM shellcheck-v$${VERSION}.linux.x86_64.tar.xz | sha512sum --check --strict --status
++  - tar xf shellcheck-v$${VERSION}.linux.x86_64.tar.xz
++  - mv shellcheck-v$${VERSION}/shellcheck /usr/local/bin/
++  - rm -rf shellcheck-v$${VERSION}*
++  - ./bin/grabpl shellcheck
++  environment:
++    CHKSUM: beca3d7819a6bdcfbd044576df4fc284053b48f468b2f03428fe66f4ceb2c05d9b5411357fa15003cb0311406c255084cf7283a3b8fce644c340c2f6aa910b9f
++    VERSION: 0.7.1
++  depends_on:
++  - install-deps
++
++- name: build-backend
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)
++  - ./bin/grabpl build-backend --github-token "$${GITHUB_TOKEN}" --edition oss --build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  depends_on:
++  - install-deps
++  - lint-go
++  - test-backend
++
++- name: build-frontend
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - ./bin/grabpl build-frontend --no-install-deps --github-token "$${GITHUB_TOKEN}" --edition oss --build-id $DRONE_BUILD_NUMBER
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  depends_on:
++  - install-deps
++  - test-frontend
++
++- name: test-backend
++  image: grafana/build-container:1.2.21
++  commands:
++  - go test -covermode=atomic ./pkg/...
++  - ./bin/grabpl integration-tests
++  - cp -r $(go env GOCACHE) go-cache
++  depends_on:
++  - install-deps
++  - lint-go
++
++- name: test-frontend
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - yarn run prettier:check
++  - yarn run packages:typecheck
++  - yarn run typecheck
++  - yarn run test
++  depends_on:
++  - install-deps
++
++- name: build-plugins
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - ./bin/grabpl build-plugins --edition oss --no-install-deps
++  depends_on:
++  - install-deps
++  - lint-go
++
++- name: package
++  image: grafana/build-container:1.2.21
++  commands:
++  - . scripts/build/gpg-test-vars.sh && ./bin/grabpl package --github-token "$${GITHUB_TOKEN}" --edition oss --build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  depends_on:
++  - build-backend
++  - build-frontend
++  - build-plugins
++  - test-backend
++  - test-frontend
++  - codespell
++  - shellcheck
++
++- name: end-to-end-tests-server
++  image: grafana/build-container:1.2.21
++  detach: true
++  commands:
++  - ./e2e/start-server
++  depends_on:
++  - package
++
++- name: end-to-end-tests
++  image: grafana/ci-e2e:12.18-1
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - ./node_modules/.bin/cypress install
++  - ./e2e/wait-for-grafana
++  - ./e2e/run-suite
++  environment:
++    HOST: end-to-end-tests-server
++  depends_on:
++  - end-to-end-tests-server
++
++- name: publish-storybook
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - yarn storybook:build
++  depends_on:
++  - package
++
++- name: build-docs-website
++  image: grafana/docs-base:latest
++  commands:
++  - mkdir -p /hugo/content/docs/grafana
++  - cp -r docs/sources /hugo/content/docs/grafana/latest
++  - cd /hugo && make prod
++
++- name: copy-packages-for-docker
++  image: grafana/build-container:1.2.21
++  commands:
++  - cp dist/*.tar.gz packaging/docker/
++  depends_on:
++  - package
++
++- name: build-docker-images
++  image: grafana/drone-grafana-docker:0.2.0
++  settings:
++    archs: amd64
++    dry_run: true
++    edition: oss
++  depends_on:
++  - copy-packages-for-docker
++
++- name: postgres-integration-test
++  image: grafana/build-container:1.2.21
++  commands:
++  - apt-get update
++  - apt-get install -yq postgresql-client
++  - ./bin/dockerize -wait tcp://postgres:5432 -timeout 120s
++  - psql -p 5432 -h postgres -U grafanatest -d grafanatest -f devenv/docker/blocks/postgres_tests/setup.sql
++  - rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)
++  - go clean -testcache
++  - ./bin/grabpl integration-tests --database postgres
++  environment:
++    GRAFANA_TEST_DB: postgres
++    PGPASSWORD: grafanatest
++    POSTGRES_HOST: postgres
++  depends_on:
++  - test-backend
++  - test-frontend
++
++- name: mysql-integration-test
++  image: grafana/build-container:1.2.21
++  commands:
++  - apt-get update
++  - apt-get install -yq default-mysql-client
++  - ./bin/dockerize -wait tcp://mysql:3306 -timeout 120s
++  - cat devenv/docker/blocks/mysql_tests/setup.sql | mysql -h mysql -P 3306 -u root -prootpass
++  - rm -rf $(go env GOCACHE) && cp -r go-cache $(go env GOCACHE)
++  - go clean -testcache
++  - ./bin/grabpl integration-tests --database mysql
++  environment:
++    GRAFANA_TEST_DB: mysql
++    MYSQL_HOST: mysql
++  depends_on:
++  - test-backend
++  - test-frontend
++
++services:
++- name: postgres
++  image: postgres:12.3-alpine
++  environment:
++    POSTGRES_DB: grafanatest
++    POSTGRES_PASSWORD: grafanatest
++    POSTGRES_USER: grafanatest
++
++- name: mysql
++  image: mysql:5.6.48
++  environment:
++    MYSQL_DATABASE: grafana_tests
++    MYSQL_PASSWORD: password
++    MYSQL_ROOT_PASSWORD: rootpass
++    MYSQL_USER: grafana
++
++trigger:
++  event:
++  - pull_request
++
++---
++kind: pipeline
++type: docker
++name: test-pr-enterprise
++
++platform:
++  os: linux
++  arch: amd64
++
++steps:
++- name: install-deps
++  image: grafana/build-container:1.2.21
++  commands:
++  - curl -fLO https://grafana-downloads.storage.googleapis.com/grafana-build-pipeline/v$${GRABPL_VERSION}/grabpl
++  - chmod +x grabpl
++  - mkdir -p bin
++  - mv grabpl bin
++  - curl -fLO https://github.com/jwilder/dockerize/releases/download/v$${DOCKERIZE_VERSION}/dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - tar -C bin -xzvf dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - rm dockerize-linux-amd64-v$${DOCKERIZE_VERSION}.tar.gz
++  - yarn install --frozen-lockfile --no-progress
++  - cp -r $(yarn cache dir) yarn-cache
++  environment:
++    DOCKERIZE_VERSION: 0.6.1
++    GRABPL_VERSION: 0.4.15
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++
++- name: build-backend
++  image: grafana/build-container:1.2.21
++  commands:
++  - ./bin/grabpl build-backend --github-token "$${GITHUB_TOKEN}" --edition enterprise --build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - install-deps
++
++- name: build-frontend
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - ./bin/grabpl build-frontend --no-install-deps --github-token "$${GITHUB_TOKEN}" --edition enterprise --build-id $DRONE_BUILD_NUMBER
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - install-deps
++
++- name: build-plugins
++  image: grafana/build-container:1.2.21
++  commands:
++  - rm -rf $(yarn cache dir) && cp -r yarn-cache $(yarn cache dir)
++  - ./bin/grabpl build-plugins --edition enterprise --no-install-deps
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - install-deps
++
++- name: package
++  image: grafana/build-container:1.2.21
++  commands:
++  - . scripts/build/gpg-test-vars.sh && ./bin/grabpl package --github-token "$${GITHUB_TOKEN}" --edition enterprise --build-id $DRONE_BUILD_NUMBER --variants linux-x64,linux-x64-musl,osx64,win64
++  environment:
++    GITHUB_TOKEN:
++      from_secret: github_token
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - build-backend
++  - build-frontend
++  - build-plugins
++
++- name: copy-packages-for-docker
++  image: grafana/build-container:1.2.21
++  commands:
++  - cp dist/*.tar.gz packaging/docker/
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - package
++
++- name: build-docker-images
++  image: grafana/drone-grafana-docker:0.2.0
++  settings:
++    archs: amd64
++    dry_run: true
++    edition: enterprise
++  when:
++    repo:
++    - grafana/grafana
++    - aknuds1/grafana
++  depends_on:
++  - copy-packages-for-docker
++
++trigger:
++  event:
++  - pull_request
++
++...
+diff --git a/.editorconfig b/.editorconfig
+index 88df70e91e7..3a8c0c7751f 100644
+--- a/.editorconfig
++++ b/.editorconfig
+@@ -25,3 +25,6 @@ trim_trailing_whitespace = false
+ [Makefile]
+ indent_style = tab
+ indent_size = 2
++
++[*.star]
++indent_size = 4
+diff --git a/e2e/run-suite b/e2e/run-suite
+index 8439c43db5f..267c06ac97d 100755
+--- a/e2e/run-suite
++++ b/e2e/run-suite
+@@ -1,13 +1,17 @@
+ #!/bin/bash
++set -xeo pipefail
+ 
+ . e2e/variables
+ 
++HOST=${HOST:-$DEFAULT_HOST}
++PORT=${PORT:-$DEFAULT_PORT}
++
+ echo -e "Starting Cypress scenarios"
+ 
+ CMD="start"
+ PARAMS=""
+ SLOWMO=0
+-URL=${BASE_URL:-"http://$DEFAULT_HOST:$DEFAULT_PORT"}
++URL=${BASE_URL:-"http://$HOST:$PORT"}
+ SUITE=${SUITE:-$DEFAULT_SUITE}
+ 
+ if [ "$1" == "debug" ]; then
+@@ -23,6 +27,6 @@ fi
+ 
+ cd packages/grafana-e2e
+ 
+-yarn $CMD --env BASE_URL=$URL,CIRCLE_SHA1=$CIRCLE_SHA1,SLOWMO=$SLOWMO \
++yarn $CMD --env BASE_URL=$URL,SLOWMO=$SLOWMO \
+   --config integrationFolder=../../e2e/$SUITE/specs,screenshotsFolder=../../e2e/$SUITE/screenshots,videosFolder=../../e2e/$SUITE/videos,fileServerFolder=./cypress,viewportWidth=1920,viewportHeight=1080,trashAssetsBeforeRuns=false \
+   $PARAMS
+diff --git a/package.json b/package.json
+index f4a6358f63c..09e279c85d8 100644
+--- a/package.json
++++ b/package.json
+@@ -13,7 +13,7 @@
+     "e2e:debug": "./e2e/start-and-run-suite debug",
+     "e2e:dev": "./e2e/start-and-run-suite dev",
+     "jest": "jest --notify --watch",
+-    "jest-ci": "mkdir -p reports/junit && export JEST_JUNIT_OUTPUT_DIR=reports/junit && jest --ci --reporters=default --reporters=jest-junit --maxWorkers 2",
++    "jest-ci": "mkdir -p reports/junit && export JEST_JUNIT_OUTPUT_DIR=reports/junit && jest --ci --reporters=default --reporters=jest-junit -w ${TEST_MAX_WORKERS:-100%}",
+     "lint": "eslint public/app e2e/suite1 public/test --ext=.js,.ts,.tsx",
+     "lint:fix": "yarn lint --fix",
+     "packages:build": "lerna run clean && lerna run build --ignore @grafana-plugins/input-datasource",
+diff --git a/packages/grafana-e2e/src/flows/login.ts b/packages/grafana-e2e/src/flows/login.ts
+index 81b5b6303e6..218f3d5b3a6 100644
+--- a/packages/grafana-e2e/src/flows/login.ts
++++ b/packages/grafana-e2e/src/flows/login.ts
+@@ -13,11 +13,9 @@ export const login = (username: string = 'admin', password: string = 'admin') =>
+   e2e()
+     .url()
+     .then(url => {
+-      if (/^https?:\/\/localhost/.test(url)) {
+-        e2e.pages.Login.skip()
+-          .should('be.visible')
+-          .click();
+-      }
++      e2e.pages.Login.skip()
++        .should('be.visible')
++        .click();
+     });
+ 
+   e2e()
+diff --git a/packages/grafana-toolkit/src/cli/tasks/plugin.utils.ts b/packages/grafana-toolkit/src/cli/tasks/plugin.utils.ts
+index 0ab6876ff23..6222ccd49d0 100755
+--- a/packages/grafana-toolkit/src/cli/tasks/plugin.utils.ts
++++ b/packages/grafana-toolkit/src/cli/tasks/plugin.utils.ts
+@@ -161,14 +161,16 @@ export interface GithubPublishOptions {
+ }
+ 
+ const githubPublishRunner: TaskRunner<GithubPublishOptions> = async ({ dryrun, verbose, commitHash }) => {
+-  if (!process.env['CIRCLE_REPOSITORY_URL']) {
++  let repoUrl: string | undefined = process.env.DRONE_REPO_LINK || process.env.CIRCLE_REPOSITORY_URL;
++  if (!repoUrl) {
+     // Try and figure it out
+     const repo = await execa('git', ['config', '--local', 'remote.origin.url']);
+     if (repo && repo.stdout) {
+-      process.env.CIRCLE_REPOSITORY_URL = repo.stdout;
++      repoUrl = repo.stdout;
+     } else {
+       throw new Error(
+-        'The release plugin requires you specify the repository url as environment variable CIRCLE_REPOSITORY_URL'
++        'The release plugin requires you specify the repository url as environment variable DRONE_REPO_LINK or ' +
++          'CIRCLE_REPOSITORY_URL'
+       );
+     }
+   }
+@@ -190,7 +192,7 @@ const githubPublishRunner: TaskRunner<GithubPublishOptions> = async ({ dryrun, v
+     process.env['GITHUB_USERNAME'] = DEFAULT_EMAIL_ADDRESS;
+   }
+ 
+-  const parsedUrl = gitUrlParse(process.env['CIRCLE_REPOSITORY_URL']);
++  const parsedUrl = gitUrlParse(repoUrl);
+   const githubToken = process.env['GITHUB_ACCESS_TOKEN'];
+   const githubUser = parsedUrl.owner;
+ 
+diff --git a/packages/grafana-toolkit/src/plugins/env.ts b/packages/grafana-toolkit/src/plugins/env.ts
+index ab4fb6292db..0a8494ea8d1 100644
+--- a/packages/grafana-toolkit/src/plugins/env.ts
++++ b/packages/grafana-toolkit/src/plugins/env.ts
+@@ -19,26 +19,47 @@ const getJobFromProcessArgv = () => {
+   return 'unknown_job';
+ };
+ 
+-export const job = process.env.CIRCLE_JOB || getJobFromProcessArgv();
++export const job =
++  (process.env.DRONE_STEP_NAME ? process.env.DRONE_STEP_NAME : process.env.CIRCLE_JOB) || getJobFromProcessArgv();
+ 
+ export const getPluginBuildInfo = async (): Promise<PluginBuildInfo> => {
+-  if (process.env.CIRCLE_SHA1) {
++  if (process.env.CI === 'true') {
++    let repo: string | undefined;
++    let branch: string | undefined;
++    let hash: string | undefined;
++    let build: number | undefined;
++    let pr: number | undefined;
++    if (process.env.DRONE === 'true') {
++      repo = process.env.DRONE_REPO_LINK;
++      branch = process.env.DRONE_BRANCH;
++      hash = process.env.DRONE_COMMIT_SHA;
++      build = parseInt(process.env.DRONE_BUILD_NUMBER || '', 10);
++      pr = parseInt(process.env.DRONE_PULL_REQUEST || '', 10);
++    } else if (process.env.CIRCLECI === 'true') {
++      repo = process.env.CIRCLE_REPOSITORY_URL;
++      branch = process.env.CIRCLE_BRANCH;
++      hash = process.env.CIRCLE_SHA1;
++      build = parseInt(process.env.CIRCLE_BUILD_NUM || '', 10);
++      const url = process.env.CIRCLE_PULL_REQUEST || '';
++      const idx = url.lastIndexOf('/') + 1;
++      pr = parseInt(url.substring(idx), 10);
++    }
++
+     const info: PluginBuildInfo = {
+       time: Date.now(),
+-      repo: process.env.CIRCLE_REPOSITORY_URL,
+-      branch: process.env.CIRCLE_BRANCH,
+-      hash: process.env.CIRCLE_SHA1,
++      repo,
++      branch,
++      hash,
+     };
+-    const pr = getPullRequestNumber();
+-    const build = getBuildNumber();
+     if (pr) {
+       info.pr = pr;
+     }
+     if (build) {
+       info.number = build;
+     }
+-    return Promise.resolve(info);
++    return info;
+   }
++
+   const branch = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+   const hash = await execa('git', ['rev-parse', 'HEAD']);
+   return {
+@@ -49,18 +70,24 @@ export const getPluginBuildInfo = async (): Promise<PluginBuildInfo> => {
+ };
+ 
+ export const getBuildNumber = (): number | undefined => {
+-  if (process.env.CIRCLE_BUILD_NUM) {
+-    return parseInt(process.env.CIRCLE_BUILD_NUM, 10);
++  if (process.env.DRONE === 'true') {
++    return parseInt(process.env.DRONE_BUILD_NUMBER || '', 10);
++  } else if (process.env.CIRCLECI === 'true') {
++    return parseInt(process.env.CIRCLE_BUILD_NUM || '', 10);
+   }
++
+   return undefined;
+ };
+ 
+ export const getPullRequestNumber = (): number | undefined => {
+-  if (process.env.CIRCLE_PULL_REQUEST) {
+-    const url = process.env.CIRCLE_PULL_REQUEST;
++  if (process.env.DRONE === 'true') {
++    return parseInt(process.env.DRONE_PULL_REQUEST || '', 10);
++  } else if (process.env.CIRCLECI === 'true') {
++    const url = process.env.CIRCLE_PULL_REQUEST || '';
+     const idx = url.lastIndexOf('/') + 1;
+     return parseInt(url.substring(idx), 10);
+   }
++
+   return undefined;
+ };
+ 
+diff --git a/packaging/docker/build-deploy.sh b/packaging/docker/build-deploy.sh
+deleted file mode 100755
+index d02f4248404..00000000000
+--- a/packaging/docker/build-deploy.sh
++++ /dev/null
+@@ -1,32 +0,0 @@
+-#!/bin/sh
+-set -e
+-
+-OPT=""
+-UBUNTU_BASE=0
+-
+-while [ "$1" != "" ]; do
+-  case "$1" in
+-    "--ubuntu")
+-      OPT="${OPT} --ubuntu"
+-      UBUNTU_BASE=1
+-      echo "Ubuntu base image enabled"
+-      shift
+-      ;;
+-    * )
+-      # unknown param causes args to be passed through to $@
+-      break
+-      ;;
+-  esac
+-done
+-
+-_grafana_version=$1
+-./build.sh ${OPT} "$_grafana_version"
+-docker login -u "$DOCKER_USER" -p "$DOCKER_PASS"
+-
+-./push_to_docker_hub.sh ${OPT} "$_grafana_version"
+-
+-if [ ${UBUNTU_BASE} = "0" ]; then
+-  if echo "$_grafana_version" | grep -q "^master-"; then
+-    ./deploy_to_k8s.sh "grafana/grafana-dev:$_grafana_version"
+-  fi
+-fi
+diff --git a/packaging/docker/deploy_to_k8s.sh b/packaging/docker/deploy_to_k8s.sh
+deleted file mode 100755
+index 57b016629b6..00000000000
+--- a/packaging/docker/deploy_to_k8s.sh
++++ /dev/null
+@@ -1,6 +0,0 @@
+-#!/bin/sh
+-
+-curl -s --header "Content-Type: application/json" \
+-     --data "{\"build_parameters\": {\"CIRCLE_JOB\": \"deploy\", \"IMAGE_NAMES\": \"$1\"}}" \
+-     --request POST \
+-     https://circleci.com/api/v1.1/project/github/grafana/deployment_tools/tree/master?circle-token=$CIRCLE_TOKEN
+diff --git a/pkg/services/sqlstore/migrations/migrations_test.go b/pkg/services/sqlstore/migrations/migrations_test.go
+index 9172912d963..2069c031178 100644
+--- a/pkg/services/sqlstore/migrations/migrations_test.go
++++ b/pkg/services/sqlstore/migrations/migrations_test.go
+@@ -12,7 +12,7 @@ import (
+ 
+ func TestMigrations(t *testing.T) {
+ 	testDBs := []sqlutil.TestDB{
+-		sqlutil.TestDB_Sqlite3,
++		sqlutil.Sqlite3TestDB(),
+ 	}
+ 
+ 	for _, testDB := range testDBs {
+diff --git a/pkg/services/sqlstore/migrator/mysql_dialect.go b/pkg/services/sqlstore/migrator/mysql_dialect.go
+index c0df81292f0..ec0b67a076b 100644
+--- a/pkg/services/sqlstore/migrator/mysql_dialect.go
++++ b/pkg/services/sqlstore/migrator/mysql_dialect.go
+@@ -1,12 +1,12 @@
+ package migrator
+ 
+ import (
+-	"fmt"
+ 	"strconv"
+ 	"strings"
+ 
+ 	"github.com/VividCortex/mysqlerr"
+ 	"github.com/go-sql-driver/mysql"
++	"github.com/grafana/grafana/pkg/util/errutil"
+ 	"xorm.io/xorm"
+ )
+ 
+@@ -115,19 +115,22 @@ func (db *Mysql) ColumnCheckSql(tableName, columnName string) (string, []interfa
+ }
+ 
+ func (db *Mysql) CleanDB() error {
+-	tables, _ := db.engine.DBMetas()
++	tables, err := db.engine.DBMetas()
++	if err != nil {
++		return err
++	}
+ 	sess := db.engine.NewSession()
+ 	defer sess.Close()
+ 
+ 	for _, table := range tables {
+ 		if _, err := sess.Exec("set foreign_key_checks = 0"); err != nil {
+-			return fmt.Errorf("failed to disable foreign key checks")
++			return errutil.Wrap("failed to disable foreign key checks", err)
+ 		}
+ 		if _, err := sess.Exec("drop table " + table.Name + " ;"); err != nil {
+-			return fmt.Errorf("failed to delete table: %v, err: %v", table.Name, err)
++			return errutil.Wrapf(err, "failed to delete table %q", table.Name)
+ 		}
+ 		if _, err := sess.Exec("set foreign_key_checks = 1"); err != nil {
+-			return fmt.Errorf("failed to disable foreign key checks")
++			return errutil.Wrap("failed to disable foreign key checks", err)
+ 		}
+ 	}
+ 
+diff --git a/pkg/services/sqlstore/migrator/postgres_dialect.go b/pkg/services/sqlstore/migrator/postgres_dialect.go
+index e3dfd0a84db..bf063dcf0a7 100644
+--- a/pkg/services/sqlstore/migrator/postgres_dialect.go
++++ b/pkg/services/sqlstore/migrator/postgres_dialect.go
+@@ -130,11 +130,11 @@ func (db *Postgres) CleanDB() error {
+ 	defer sess.Close()
+ 
+ 	if _, err := sess.Exec("DROP SCHEMA public CASCADE;"); err != nil {
+-		return fmt.Errorf("Failed to drop schema public")
++		return errutil.Wrap("failed to drop schema public", err)
+ 	}
+ 
+ 	if _, err := sess.Exec("CREATE SCHEMA public;"); err != nil {
+-		return fmt.Errorf("Failed to create schema public")
++		return errutil.Wrap("failed to create schema public", err)
+ 	}
+ 
+ 	return nil
+diff --git a/pkg/services/sqlstore/sqlstore.go b/pkg/services/sqlstore/sqlstore.go
+index e7d578edb87..4984e662232 100644
+--- a/pkg/services/sqlstore/sqlstore.go
++++ b/pkg/services/sqlstore/sqlstore.go
+@@ -335,9 +335,10 @@ func (ss *SqlStore) readConfig() {
+ type ITestDB interface {
+ 	Helper()
+ 	Fatalf(format string, args ...interface{})
++	Logf(format string, args ...interface{})
+ }
+ 
+-// InitTestDB initialize test DB.
++// InitTestDB initializes the test DB.
+ func InitTestDB(t ITestDB) *SqlStore {
+ 	t.Helper()
+ 	sqlstore := &SqlStore{}
+@@ -349,6 +350,7 @@ func InitTestDB(t ITestDB) *SqlStore {
+ 
+ 	// environment variable present for test db?
+ 	if db, present := os.LookupEnv("GRAFANA_TEST_DB"); present {
++		t.Logf("Using database type %q", db)
+ 		dbType = db
+ 	}
+ 
+@@ -364,20 +366,21 @@ func InitTestDB(t ITestDB) *SqlStore {
+ 
+ 	switch dbType {
+ 	case "mysql":
+-		if _, err := sec.NewKey("connection_string", sqlutil.TestDB_Mysql.ConnStr); err != nil {
++		if _, err := sec.NewKey("connection_string", sqlutil.MySQLTestDB().ConnStr); err != nil {
+ 			t.Fatalf("Failed to create key: %s", err)
+ 		}
+ 	case "postgres":
+-		if _, err := sec.NewKey("connection_string", sqlutil.TestDB_Postgres.ConnStr); err != nil {
++		if _, err := sec.NewKey("connection_string", sqlutil.PostgresTestDB().ConnStr); err != nil {
+ 			t.Fatalf("Failed to create key: %s", err)
+ 		}
+ 	default:
+-		if _, err := sec.NewKey("connection_string", sqlutil.TestDB_Sqlite3.ConnStr); err != nil {
++		if _, err := sec.NewKey("connection_string", sqlutil.Sqlite3TestDB().ConnStr); err != nil {
+ 			t.Fatalf("Failed to create key: %s", err)
+ 		}
+ 	}
+ 
+ 	// need to get engine to clean db before we init
++	t.Logf("Creating database connection: %q", sec.Key("connection_string"))
+ 	engine, err := xorm.NewEngine(dbType, sec.Key("connection_string").String())
+ 	if err != nil {
+ 		t.Fatalf("Failed to init test database: %v", err)
+@@ -388,6 +391,7 @@ func InitTestDB(t ITestDB) *SqlStore {
+ 	// temp global var until we get rid of global vars
+ 	dialect = sqlstore.Dialect
+ 
++	t.Logf("Cleaning DB")
+ 	if err := dialect.CleanDB(); err != nil {
+ 		t.Fatalf("Failed to clean test db %v", err)
+ 	}
+diff --git a/pkg/services/sqlstore/sqlutil/sqlutil.go b/pkg/services/sqlstore/sqlutil/sqlutil.go
+index f73985fb1ba..7416bc801dd 100644
+--- a/pkg/services/sqlstore/sqlutil/sqlutil.go
++++ b/pkg/services/sqlstore/sqlutil/sqlutil.go
+@@ -1,11 +1,65 @@
+ package sqlutil
+ 
++import (
++	"fmt"
++	"os"
++)
++
+ type TestDB struct {
+ 	DriverName string
+ 	ConnStr    string
+ }
+ 
+-var TestDB_Sqlite3 = TestDB{DriverName: "sqlite3", ConnStr: ":memory:"}
+-var TestDB_Mysql = TestDB{DriverName: "mysql", ConnStr: "grafana:password@tcp(localhost:3306)/grafana_tests?collation=utf8mb4_unicode_ci"}
+-var TestDB_Postgres = TestDB{DriverName: "postgres", ConnStr: "user=grafanatest password=grafanatest host=localhost port=5432 dbname=grafanatest sslmode=disable"}
+-var TestDB_Mssql = TestDB{DriverName: "mssql", ConnStr: "server=localhost;port=1433;database=grafanatest;user id=grafana;password=Password!"}
++func Sqlite3TestDB() TestDB {
++	return TestDB{
++		DriverName: "sqlite3",
++		ConnStr:    ":memory:",
++	}
++}
++
++func MySQLTestDB() TestDB {
++	host := os.Getenv("MYSQL_HOST")
++	if host == "" {
++		host = "localhost"
++	}
++	port := os.Getenv("MYSQL_PORT")
++	if port == "" {
++		port = "3306"
++	}
++	return TestDB{
++		DriverName: "mysql",
++		ConnStr:    fmt.Sprintf("grafana:password@tcp(%s:%s)/grafana_tests?collation=utf8mb4_unicode_ci", host, port),
++	}
++}
++
++func PostgresTestDB() TestDB {
++	host := os.Getenv("POSTGRES_HOST")
++	if host == "" {
++		host = "localhost"
++	}
++	port := os.Getenv("POSTGRES_PORT")
++	if port == "" {
++		port = "5432"
++	}
++	connStr := fmt.Sprintf("user=grafanatest password=grafanatest host=%s port=%s dbname=grafanatest sslmode=disable",
++		host, port)
++	return TestDB{
++		DriverName: "postgres",
++		ConnStr:    connStr,
++	}
++}
++
++func MSSQLTestDB() TestDB {
++	host := os.Getenv("MSSQL_HOST")
++	if host == "" {
++		host = "localhost"
++	}
++	port := os.Getenv("MSSQL_PORT")
++	if port == "" {
++		port = "1433"
++	}
++	return TestDB{
++		DriverName: "mssql",
++		ConnStr:    fmt.Sprintf("server=%s;port=%s;database=grafanatest;user id=grafana;password=Password!", host, port),
++	}
++}
+diff --git a/pkg/tsdb/mssql/mssql_test.go b/pkg/tsdb/mssql/mssql_test.go
+index 3916db39ebe..58ae0dd8d5b 100644
+--- a/pkg/tsdb/mssql/mssql_test.go
++++ b/pkg/tsdb/mssql/mssql_test.go
+@@ -1137,7 +1137,9 @@ func TestMSSQL(t *testing.T) {
+ }
+ 
+ func InitMSSQLTestDB(t *testing.T) *xorm.Engine {
+-	x, err := xorm.NewEngine(sqlutil.TestDB_Mssql.DriverName, strings.Replace(sqlutil.TestDB_Mssql.ConnStr, "localhost", serverIP, 1))
++	testDB := sqlutil.MSSQLTestDB()
++	x, err := xorm.NewEngine(testDB.DriverName, strings.Replace(testDB.ConnStr, "localhost",
++		serverIP, 1))
+ 	if err != nil {
+ 		t.Fatalf("Failed to init mssql db %v", err)
+ 	}
+diff --git a/pkg/tsdb/mysql/mysql_test.go b/pkg/tsdb/mysql/mysql_test.go
+index f361afb9ec0..dad04144807 100644
+--- a/pkg/tsdb/mysql/mysql_test.go
++++ b/pkg/tsdb/mysql/mysql_test.go
+@@ -1,3 +1,5 @@
++// +build integration
++
+ package mysql
+ 
+ import (
+@@ -1040,7 +1042,9 @@ func TestMySQL(t *testing.T) {
+ }
+ 
+ func InitMySQLTestDB(t *testing.T) *xorm.Engine {
+-	x, err := xorm.NewEngine(sqlutil.TestDB_Mysql.DriverName, strings.Replace(sqlutil.TestDB_Mysql.ConnStr, "/grafana_tests", "/grafana_ds_tests", 1))
++	testDB := sqlutil.MySQLTestDB()
++	x, err := xorm.NewEngine(testDB.DriverName, strings.Replace(testDB.ConnStr, "/grafana_tests",
++		"/grafana_ds_tests", 1))
+ 	if err != nil {
+ 		t.Fatalf("Failed to init mysql db %v", err)
+ 	}
+diff --git a/pkg/tsdb/postgres/postgres_test.go b/pkg/tsdb/postgres/postgres_test.go
+index bff66a9dd88..0340444fdcb 100644
+--- a/pkg/tsdb/postgres/postgres_test.go
++++ b/pkg/tsdb/postgres/postgres_test.go
+@@ -1,3 +1,5 @@
++// +build integration
++
+ package postgres
+ 
+ import (
+@@ -1064,9 +1066,11 @@ func TestPostgres(t *testing.T) {
+ }
+ 
+ func InitPostgresTestDB(t *testing.T) *xorm.Engine {
+-	x, err := xorm.NewEngine(sqlutil.TestDB_Postgres.DriverName, strings.Replace(sqlutil.TestDB_Postgres.ConnStr, "dbname=grafanatest", "dbname=grafanadstest", 1))
++	testDB := sqlutil.PostgresTestDB()
++	x, err := xorm.NewEngine(testDB.DriverName, strings.Replace(testDB.ConnStr, "dbname=grafanatest",
++		"dbname=grafanadstest", 1))
+ 	if err != nil {
+-		t.Fatalf("Failed to init postgres db %v", err)
++		t.Fatalf("Failed to init postgres DB %v", err)
+ 	}
+ 
+ 	x.DatabaseTZ = time.UTC
+diff --git a/scripts/build/build-all.sh b/scripts/build/build-all.sh
+deleted file mode 100755
+index a2a4a4aba77..00000000000
+--- a/scripts/build/build-all.sh
++++ /dev/null
+@@ -1,106 +0,0 @@
+-#!/bin/bash
+-
+-# shellcheck disable=SC2086
+-
+-# shellcheck source=./scripts/helpers/exit-if-fail.sh
+-source "$(dirname "$0")/../helpers/exit-if-fail.sh"
+-#
+-#   This script is executed from within the container.
+-#
+-
+-set -e
+-
+-# shellcheck disable=SC2124
+-EXTRA_OPTS="$@"
+-
+-CCARMV6=/opt/rpi-tools/arm-bcm2708/arm-linux-gnueabihf/bin/arm-linux-gnueabihf-gcc
+-CCARMV7=arm-linux-gnueabihf-gcc
+-CCARMV7_MUSL=/tmp/arm-linux-musleabihf-cross/bin/arm-linux-musleabihf-gcc
+-CCARM64=aarch64-linux-gnu-gcc
+-CCARM64_MUSL=/tmp/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc
+-CCOSX64=/tmp/osxcross/target/bin/o64-clang
+-CCWIN64=x86_64-w64-mingw32-gcc
+-CCX64=/tmp/x86_64-centos6-linux-gnu/bin/x86_64-centos6-linux-gnu-gcc
+-CCX64_MUSL=/tmp/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc
+-
+-cd /go/src/github.com/grafana/grafana
+-echo "current dir: $(pwd)"
+-
+-function reportFrontEndBuildTime() {
+-  if echo "$EXTRA_OPTS" | grep -vq enterprise ; then
+-    # Only report for build job
+-    # build-enterprise happens right after build on master
+-    # so there is no need for reporting the same metric again
+-    exit_if_fail ./scripts/ci-metrics-publisher.sh "grafana.ci-performance.frontend-build=$1"
+-  fi
+-}
+-
+-
+-if [ "$CIRCLE_TAG" != "" ]; then
+-  echo "Building releases from tag $CIRCLE_TAG"
+-  OPT="-includeBuildId=false ${EXTRA_OPTS}"
+-else
+-  echo "Building incremental build for $CIRCLE_BRANCH"
+-  OPT="-buildId=${CIRCLE_WORKFLOW_ID} ${EXTRA_OPTS}"
+-fi
+-
+-echo "Build arguments: $OPT"
+-echo "current dir: $(pwd)"
+-
+-go run build.go -goarch armv6 -cc ${CCARMV6} ${OPT} build
+-go run build.go -goarch armv7 -cc ${CCARMV7} ${OPT} build
+-go run build.go -goarch arm64 -cc ${CCARM64} ${OPT} build
+-go run build.go -goarch armv7 -libc musl -cc ${CCARMV7_MUSL} ${OPT} build
+-go run build.go -goarch arm64 -libc musl -cc ${CCARM64_MUSL} ${OPT} build
+-go run build.go -goos darwin -cc ${CCOSX64} ${OPT} build
+-
+-
+-go run build.go -goos windows -cc ${CCWIN64} ${OPT} build
+-
+-# Do not remove CC from the linux build, its there for compatibility with Centos6
+-go run build.go -cc ${CCX64} ${OPT} build
+-
+-go run build.go -cc ${CCX64_MUSL} -libc musl ${OPT} build
+-
+-yarn install --pure-lockfile --no-progress
+-
+-if [ "$CIRCLE_TAG" != "" ]; then
+-  echo "Building frontend and packaging from tag $CIRCLE_TAG"
+-else
+-  echo "Building frontend and packaging incremental build for $CIRCLE_BRANCH"
+-fi
+-echo "Building frontend"
+-start=$(date +%s%N)
+-go run build.go ${OPT} build-frontend
+-runtime=$((($(date +%s%N) - start)/1000000))
+-echo "Frontend build took $runtime"
+-reportFrontEndBuildTime $runtime
+-
+-if [ -d "dist" ]; then
+-  rm -rf dist
+-fi
+-
+-mkdir dist
+-go run build.go -gen-version ${OPT} > dist/grafana.version
+-
+-# Load ruby, needed for packing with fpm
+-# shellcheck disable=SC1091
+-source /etc/profile.d/rvm.sh
+-
+-echo "Packaging"
+-go run build.go -goos linux -pkg-arch amd64 ${OPT} package-only
+-go run build.go -goos linux -pkg-arch amd64 -libc musl ${OPT} -skipRpm -skipDeb package-only
+-
+-go run build.go -goos linux -pkg-arch armv6 ${OPT} -skipRpm package-only
+-go run build.go -goos linux -pkg-arch armv7 ${OPT} package-only
+-go run build.go -goos linux -pkg-arch arm64 ${OPT} package-only
+-go run build.go -goos linux -pkg-arch armv7 -libc musl ${OPT} -skipRpm -skipDeb package-only
+-go run build.go -goos linux -pkg-arch arm64 -libc musl ${OPT} -skipRpm -skipDeb package-only
+-
+-go run build.go -goos darwin -pkg-arch amd64 ${OPT} package-only
+-
+-cp /usr/local/go/lib/time/zoneinfo.zip tools/zoneinfo.zip
+-go run build.go -goos windows -pkg-arch amd64 ${OPT} package-only
+-rm tools/zoneinfo.zip
+-
+-go run build.go latest
+diff --git a/scripts/build/ci-build/Dockerfile b/scripts/build/ci-build/Dockerfile
+index dd14827145b..c6b1d3dd148 100644
+--- a/scripts/build/ci-build/Dockerfile
++++ b/scripts/build/ci-build/Dockerfile
+@@ -101,6 +101,7 @@ RUN apt-get update && \
+     apt-get install -yq  \
+         build-essential clang gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-mingw-w64-x86-64 \
+         apt-transport-https \
++        python-pip      \
+         ca-certificates \
+         curl            \
+         libfontconfig1  \
+@@ -126,7 +127,8 @@ RUN apt-get update && \
+     apt-get update && apt-get install -yq yarn=${YARNVERSION} && \
+     curl -fL https://storage.googleapis.com/golang/go${GOVERSION}.linux-amd64.tar.gz \
+       | tar -xz -C /usr/local && \
+-    git clone https://github.com/raspberrypi/tools.git /opt/rpi-tools --depth=1
++    git clone https://github.com/raspberrypi/tools.git /opt/rpi-tools --depth=1 && \
++    pip install codespell
+ 
+ # We build our own musl cross-compilers via the musl-cross-make project, on the same OS as this image's base image,
+ # to ensure compatibility. We also make sure to target musl 1.1.x, since musl 1.2.x introduces 64-bit time types
+diff --git a/scripts/build/ci-build/build-deploy.sh b/scripts/build/ci-build/build-deploy.sh
+index 572d87e1f17..4837843d0a0 100755
+--- a/scripts/build/ci-build/build-deploy.sh
++++ b/scripts/build/ci-build/build-deploy.sh
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ set -eo pipefail
+ 
+-_version="1.2.20"
++_version="1.2.21"
+ _tag="grafana/build-container:${_version}"
+ 
+ _dpath=$(dirname "${BASH_SOURCE[0]}")
+diff --git a/scripts/build/ci-e2e/Dockerfile b/scripts/build/ci-e2e/Dockerfile
+new file mode 100644
+index 00000000000..dfec25521dc
+--- /dev/null
++++ b/scripts/build/ci-e2e/Dockerfile
+@@ -0,0 +1,11 @@
++FROM node:12.18-buster-slim
++
++WORKDIR /root
++
++RUN apt-get update && apt-get install -yq gnupg netcat curl
++RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
++  echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list && \
++  # Cypress dependencies
++  apt-get update && apt-get install -yq libgtk2.0-0 libgtk-3-0 libnotify-dev libgconf-2-4 libnss3 libxss1 \
++    libasound2 libxtst6 xauth xvfb google-chrome-stable && \
++  apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+diff --git a/scripts/build/prepare-enterprise.sh b/scripts/build/prepare-enterprise.sh
+deleted file mode 100755
+index 77ed8ce8bf4..00000000000
+--- a/scripts/build/prepare-enterprise.sh
++++ /dev/null
+@@ -1,14 +0,0 @@
+-#!/bin/bash
+-
+-cd ..
+-
+-if [ -z "$CIRCLE_TAG" ]; then
+-  _target="master"
+-else
+-  _target="$CIRCLE_TAG"
+-fi
+-
+-git clone -b "$_target" --single-branch git@github.com:grafana/grafana-enterprise.git --depth 1
+-
+-cd grafana-enterprise || exit
+-./build.sh
+diff --git a/scripts/circle-release-next-packages.sh b/scripts/circle-release-next-packages.sh
+index cdc652c701e..fd7d98665e2 100755
+--- a/scripts/circle-release-next-packages.sh
++++ b/scripts/circle-release-next-packages.sh
+@@ -67,8 +67,10 @@ else
+     start=$(date +%s%N)
+     yarn workspace @grafana/"${PACKAGE}" run build
+     runtime=$((($(date +%s%N) - start)/1000000))
+-    if [ "${CIRCLE_BRANCH}" == "master" ]; then
+-      exit_if_fail ./scripts/ci-metrics-publisher.sh "grafana.ci-buildtimes.$CIRCLE_JOB.$PACKAGE=$runtime"
++    if [ "${DRONE_BRANCH}" == "master" ]; then
++      exit_if_fail ./scripts/ci-metrics-publisher.sh "grafana.ci-buildtimes.${DRONE_STEP_NAME}.$PACKAGE=$runtime"
++	  elif [ "${CIRCLE_BRANCH}" == "master" ]; then
++      exit_if_fail ./scripts/ci-metrics-publisher.sh "grafana.ci-buildtimes.${CIRCLE_JOB}.$PACKAGE=$runtime"
+     fi
+ 
+     exit_status=$?
+diff --git a/scripts/circle-test-frontend.sh b/scripts/circle-test-frontend.sh
+index 91b31c80056..3266347ab51 100755
+--- a/scripts/circle-test-frontend.sh
++++ b/scripts/circle-test-frontend.sh
+@@ -5,6 +5,8 @@ source "$(dirname "$0")/helpers/exit-if-fail.sh"
+ 
+ start=$(date +%s)
+ 
++export TEST_MAX_WORKERS=2
++
+ exit_if_fail yarn run prettier:check
+ exit_if_fail yarn run packages:typecheck
+ exit_if_fail yarn run typecheck

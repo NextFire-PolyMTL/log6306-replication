@@ -1,0 +1,230 @@
+commit cb8e336d256136b79cf58d6becd596cdb56fdb47
+Author: Brennan Kinney <5098581+polarathene@users.noreply.github.com>
+Date:   Wed Jan 25 12:53:47 2023 +1300
+
+    fix: Ensure state persisted to `/var/mail-state` retains correct group (#3011)
+    
+    * fix: RSPAM ENV should only add to array if ENV enabled
+    
+    * fix: Correctly match ownership for Postfix content
+    
+    - `/var/lib/postfix` dir and content is `postfix:postfix`, not `postfix:root`.
+    - `/var/spool/postfix` is `root:root` not `postfix:root` like it's content.
+    - Add additional comments, including ownership changes by Postfix to `/var/spool/postfix` when process starts / restarts.
+    
+    * fix: Ensure correct `chown -R` user and groups applied
+    
+    These were all fine except for clamav not using the correct clamav group. `fetchmail` group is `nogroup` as per the group set by the debian package.
+    
+    Additionally formatted the `-eq 1 ]]` content to align on the same columns, and added additional comment about the purpose of this `chown -R` usage so that it's clear what bug / breakage it's attempting to prevent / fix.
+    
+    * refactor: `misc-stack.sh` conditional handling
+    
+    The last condition doesn't get triggered at all AFAIK.  Nor does it make sense to make a folder path with `mkdir -p` to symlink to when the container does not have anything to copy over?
+    
+    - If that was for files, the `mkdir -p` approach seems invalid?
+    - If it was for a directory that could come up later, it should instead be created in advance? None of the current values for `FILES` seem to hit this path.
+    
+    Removing as it doesn't seem relevant to current support.
+    
+    Symlinking was done for each case, I've opted to just perform that after the conditional instead.
+    
+    Additional inline docs added for additional context.
+    
+    * chore: Move amavis `chown -R` fix into `misc-stack.sh`
+    
+    This was handled separately for some reason. It belongs with the other services handling this fix in `misc-stack.sh`.
+    
+    The `-h` option isn't relevant, when paired with `-R` it has no effect.
+    
+    * fix: Dockerfile should preserve `clamav` ownership with `COPY --link`
+    
+    The UID and GID were copied over but would not match `clamav` user and group due to numeric ID mismatch between containers. `--chown=clamav` fixes that.
+    
+    * chore: Workaround `buildx` bug with separate `chown -R`
+    
+    Avoids increasing the image weight from this change by leveraging `COPY` in the final stage.
+    
+    * chore: `COPY --link` from a separate stage instead of relying on scratch
+    
+    The `scratch` approach wasn't great. A single layer invalidation in the previous stage would result in a new 600MB layer to store.
+    
+    `make build` with this change seems to barely be affected by such if a change came before copying over the linked stage, although with `buildx` and the `docker-container` driver with `--load` it would take much longer to import and seemed to keep adding storage. Possibly because I was testing with a minimal `buildx` command, that wasn't leveraging proper cache options?
+    
+    * lint: Appease the linting gods
+    
+    * chore: Align `misc-stack.sh` paths for `chown -R` operations
+    
+    Review feedback
+    
+    Co-authored-by: Casper <casperklein@users.noreply.github.com>
+    
+    * fix: Reduce one extra cache layer copy
+    
+    No apparent advantage of a `COPY --link` initially in separate stage.
+    
+    Just `COPY --chown` in the separate stage and `COPY --link` the stage content. 230MB less in build cache used.
+    
+    * fix: Remove separate ClamAV stage by adding `clamav` user explicitly
+    
+    Creating the user before the package is installed allows to ensure a fixed numeric ID that we can provide to `--chown` that is compatible with `--link`.
+    
+    This keeps the build cache minimal for CI, without being anymore complex as a workaround than the separate stage was for the most part.
+    
+    * chore: Add reference link regarding users to `misc-stack.sh`
+
+diff --git a/Dockerfile b/Dockerfile
+index 4a02cb61..16db5638 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -20,7 +20,10 @@ SHELL ["/bin/bash", "-e", "-o", "pipefail", "-c"]
+ # -----------------------------------------------
+ 
+ COPY target/bin/sedfile /usr/local/bin/sedfile
+-RUN chmod +x /usr/local/bin/sedfile
++RUN <<EOF
++  chmod +x /usr/local/bin/sedfile
++  adduser --quiet --system --group --disabled-password --home /var/lib/clamav --no-create-home --uid 200 clamav
++EOF
+ 
+ COPY target/scripts/build/* /build/
+ COPY target/scripts/helpers/log.sh /usr/local/bin/helpers/log.sh
+@@ -31,6 +34,12 @@ RUN /bin/bash /build/packages.sh
+ # --- ClamAV & FeshClam -------------------------
+ # -----------------------------------------------
+ 
++# Copy over latest DB updates from official ClamAV image. This is better than running `freshclam`,
++# which would require an extra memory of 500MB+ during an image build.
++# When using `COPY --link`, the `--chown` option is only compatible with numeric ID values.
++# hadolint ignore=DL3021
++COPY --link --chown=200 --from=docker.io/clamav/clamav:latest /var/lib/clamav /var/lib/clamav
++
+ RUN <<EOF
+   echo '0 */6 * * * clamav /usr/bin/freshclam --quiet' >/etc/cron.d/clamav-freshclam
+   chmod 644 /etc/clamav/freshclam.conf
+@@ -40,10 +49,6 @@ RUN <<EOF
+   rm -rf /var/log/clamav/
+ EOF
+ 
+-# Copy over latest DB updates from official ClamAV image. Better than running `freshclam` (which requires extra RAM during build)
+-# hadolint ignore=DL3021
+-COPY --link --from=docker.io/clamav/clamav:latest /var/lib/clamav /var/lib/clamav
+-
+ # -----------------------------------------------
+ # --- Dovecot -----------------------------------
+ # -----------------------------------------------
+diff --git a/target/scripts/start-mailserver.sh b/target/scripts/start-mailserver.sh
+index 66ac69e0..795b5129 100755
+--- a/target/scripts/start-mailserver.sh
++++ b/target/scripts/start-mailserver.sh
+@@ -148,7 +148,6 @@ function _register_functions
+   # ? >> Fixes
+ 
+   _register_fix_function '_fix_var_mail_permissions'
+-  [[ ${ENABLE_AMAVIS} -eq 1 ]] && _register_fix_function '_fix_var_amavis_permissions'
+ 
+   [[ ${ENABLE_CLAMAV} -eq 0 ]] && _register_fix_function '_fix_cleanup_clamav'
+   [[ ${ENABLE_SPAMASSASSIN} -eq 0 ]] &&	_register_fix_function '_fix_cleanup_spamassassin'
+diff --git a/target/scripts/startup/fixes-stack.sh b/target/scripts/startup/fixes-stack.sh
+index 9a2f9615..b118b742 100644
+--- a/target/scripts/startup/fixes-stack.sh
++++ b/target/scripts/startup/fixes-stack.sh
+@@ -21,16 +21,6 @@ function _fix_var_mail_permissions
+   _log 'trace' 'Permissions in /var/mail look OK'
+ }
+ 
+-function _fix_var_amavis_permissions
+-{
+-  local AMAVIS_STATE_DIR='/var/mail-state/lib-amavis'
+-  [[ ${ONE_DIR} -eq 0 ]] && AMAVIS_STATE_DIR="/var/lib/amavis"
+-  [[ ! -e ${AMAVIS_STATE_DIR} ]] && return 0
+-
+-  _log 'trace' 'Fixing Amavis permissions'
+-  chown -hR amavis:amavis "${AMAVIS_STATE_DIR}" || _shutdown 'Failed to fix Amavis permissions'
+-}
+-
+ function _fix_cleanup_clamav
+ {
+   _log 'trace' 'Cleaning up disabled ClamAV'
+diff --git a/target/scripts/startup/misc-stack.sh b/target/scripts/startup/misc-stack.sh
+index 0c78fa76..ca014453 100644
+--- a/target/scripts/startup/misc-stack.sh
++++ b/target/scripts/startup/misc-stack.sh
+@@ -21,6 +21,7 @@ function _misc_save_states
+   then
+     _log 'debug' "Consolidating all state onto ${STATEDIR}"
+ 
++    # Always enabled features:
+     FILES=(
+       spool/postfix
+       lib/postfix
+@@ -33,8 +34,8 @@ function _misc_save_states
+     [[ ${ENABLE_FAIL2BAN} -eq 1 ]] && FILES+=('lib/fail2ban')
+     [[ ${ENABLE_FETCHMAIL} -eq 1 ]] && FILES+=('lib/fetchmail')
+     [[ ${ENABLE_POSTGREY} -eq 1 ]] && FILES+=('lib/postgrey')
+-    [[ ${ENABLE_RSPAMD} -ne 1 ]] && FILES+=('lib/rspamd')
+-    # [[ ${ENABLE_RSPAMD} -ne 1 ]] && FILES+=('lib/redis')
++    [[ ${ENABLE_RSPAMD} -eq 1 ]] && FILES+=('lib/rspamd')
++    # [[ ${ENABLE_RSPAMD} -eq 1 ]] && FILES+=('lib/redis')
+     [[ ${ENABLE_SPAMASSASSIN} -eq 1 ]] && FILES+=('lib/spamassassin')
+     [[ ${SMTP_ONLY} -ne 1 ]] && FILES+=('lib/dovecot')
+ 
+@@ -43,36 +44,48 @@ function _misc_save_states
+       DEST="${STATEDIR}/${FILE//\//-}"
+       FILE="/var/${FILE}"
+ 
++      # If relevant content is found in /var/mail-state (presumably a volume mount),
++      # use it instead. Otherwise copy over any missing directories checked.
+       if [[ -d ${DEST} ]]
+       then
+         _log 'trace' "Destination ${DEST} exists, linking ${FILE} to it"
++        # Original content from image no longer relevant, remove it:
+         rm -rf "${FILE}"
+-        ln -s "${DEST}" "${FILE}"
+       elif [[ -d ${FILE} ]]
+       then
+         _log 'trace' "Moving contents of ${FILE} to ${DEST}"
++        # Empty volume was mounted, or new content from enabling a feature ENV:
+         mv "${FILE}" "${DEST}"
+-        ln -s "${DEST}" "${FILE}"
+-      else
+-        _log 'trace' "Linking ${FILE} to ${DEST}"
+-        mkdir -p "${DEST}"
+-        ln -s "${DEST}" "${FILE}"
+       fi
++
++      # Symlink the original path in the container ($FILE) to be
++      # sourced from assocaiated path in /var/mail-state/ ($DEST):
++      ln -s "${DEST}" "${FILE}"
+     done
+ 
++    # This ensures the user and group of the files from the external mount have their
++    # numeric ID values in sync. New releases where the installed packages order changes
++    # can change the values in the Docker image, causing an ownership mismatch.
++    # NOTE: More details about users and groups added during image builds are documented here:
++    # https://github.com/docker-mailserver/docker-mailserver/pull/3011#issuecomment-1399120252
+     _log 'trace' 'Fixing /var/mail-state/* permissions'
+-    [[ ${ENABLE_CLAMAV} -eq 1 ]] && chown -R clamav /var/mail-state/lib-clamav
+-    [[ ${ENABLE_SPAMASSASSIN} -eq 1 ]] && chown -R debian-spamd /var/mail-state/lib-spamassassin
+-    [[ ${ENABLE_POSTGREY} -eq 1 ]] && chown -R postgrey /var/mail-state/lib-postgrey
++    [[ ${ENABLE_AMAVIS}       -eq 1 ]] && chown -R amavis:amavis             /var/mail-state/lib-amavis
++    [[ ${ENABLE_CLAMAV}       -eq 1 ]] && chown -R clamav:clamav             /var/mail-state/lib-clamav
++    [[ ${ENABLE_FETCHMAIL}    -eq 1 ]] && chown -R fetchmail:nogroup         /var/mail-state/lib-fetchmail
++    [[ ${ENABLE_POSTGREY}     -eq 1 ]] && chown -R postgrey:postgrey         /var/mail-state/lib-postgrey
++    [[ ${ENABLE_SPAMASSASSIN} -eq 1 ]] && chown -R debian-spamd:debian-spamd /var/mail-state/lib-spamassassin
+ 
+-    chown -R postfix /var/mail-state/lib-postfix
++    chown -R postfix:postfix /var/mail-state/lib-postfix
+ 
++    # NOTE: The Postfix spool location has mixed owner/groups to take into account:
+     # UID = postfix(101): active, bounce, corrupt, defer, deferred, flush, hold, incoming, maildrop, private, public, saved, trace
+     # UID = root(0): dev, etc, lib, pid, usr
+     # GID = postdrop(103): maildrop, public
+     # GID for all other directories is root(0)
++    # NOTE: `spool-postfix/private/` will be set to `postfix:postfix` when Postfix starts / restarts
+     # Set most common ownership:
+     chown -R postfix:root /var/mail-state/spool-postfix
++    chown root:root /var/mail-state/spool-postfix
+     # These two require the postdrop(103) group:
+     chgrp -R postdrop /var/mail-state/spool-postfix/maildrop
+     chgrp -R postdrop /var/mail-state/spool-postfix/public

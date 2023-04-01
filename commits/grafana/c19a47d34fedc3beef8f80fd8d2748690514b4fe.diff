@@ -1,0 +1,1274 @@
+commit c19a47d34fedc3beef8f80fd8d2748690514b4fe (from 95f7a9132815312966386c57e536efef387ca46d)
+Merge: 95f7a913281 2ca5149c67e
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Tue Mar 19 15:00:30 2019 +0100
+
+    Merge pull request #16008 from grafana/bar-gauge-refactoring
+    
+    Refactoring the bar gauge and the orientation modes
+
+diff --git a/packages/grafana-ui/src/components/BarGauge/BarGauge.story.tsx b/packages/grafana-ui/src/components/BarGauge/BarGauge.story.tsx
+index c7a53af5ccf..6754d43a5cc 100644
+--- a/packages/grafana-ui/src/components/BarGauge/BarGauge.story.tsx
++++ b/packages/grafana-ui/src/components/BarGauge/BarGauge.story.tsx
+@@ -1,6 +1,7 @@
+ import { storiesOf } from '@storybook/react';
+-import { number, text } from '@storybook/addon-knobs';
++import { number, text, boolean } from '@storybook/addon-knobs';
+ import { BarGauge } from './BarGauge';
++import { VizOrientation } from '../../types';
+ import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
+ import { renderComponentWithTheme } from '../../utils/storybook/withTheme';
+ 
+@@ -15,6 +16,8 @@ const getKnobs = () => {
+     threshold2Color: text('threshold2Color', 'red'),
+     unit: text('unit', 'ms'),
+     decimals: number('decimals', 1),
++    horizontal: boolean('horizontal', false),
++    lcd: boolean('lcd', false),
+   };
+ };
+ 
+@@ -22,7 +25,7 @@ const BarGaugeStories = storiesOf('UI/BarGauge/BarGauge', module);
+ 
+ BarGaugeStories.addDecorator(withCenteredStory);
+ 
+-BarGaugeStories.add('Vertical, with basic thresholds', () => {
++BarGaugeStories.add('Simple with basic thresholds', () => {
+   const {
+     value,
+     minValue,
+@@ -33,11 +36,13 @@ BarGaugeStories.add('Vertical, with basic thresholds', () => {
+     threshold2Value,
+     unit,
+     decimals,
++    horizontal,
++    lcd,
+   } = getKnobs();
+ 
+   return renderComponentWithTheme(BarGauge, {
+-    width: 200,
+-    height: 400,
++    width: 700,
++    height: 700,
+     value: value,
+     minValue: minValue,
+     maxValue: maxValue,
+@@ -45,6 +50,8 @@ BarGaugeStories.add('Vertical, with basic thresholds', () => {
+     prefix: '',
+     postfix: '',
+     decimals: decimals,
++    orientation: horizontal ? VizOrientation.Horizontal : VizOrientation.Vertical,
++    displayMode: lcd ? 'lcd' : 'simple',
+     thresholds: [
+       { index: 0, value: -Infinity, color: 'green' },
+       { index: 1, value: threshold1Value, color: threshold1Color },
+diff --git a/packages/grafana-ui/src/components/BarGauge/BarGauge.test.tsx b/packages/grafana-ui/src/components/BarGauge/BarGauge.test.tsx
+index 9d592ef310b..69cdbf5bff1 100644
+--- a/packages/grafana-ui/src/components/BarGauge/BarGauge.test.tsx
++++ b/packages/grafana-ui/src/components/BarGauge/BarGauge.test.tsx
+@@ -12,6 +12,7 @@ const setup = (propOverrides?: object) => {
+   const props: Props = {
+     maxValue: 100,
+     minValue: 0,
++    displayMode: 'basic',
+     thresholds: [{ index: 0, value: -Infinity, color: '#7EB26D' }],
+     height: 300,
+     width: 300,
+diff --git a/packages/grafana-ui/src/components/BarGauge/BarGauge.tsx b/packages/grafana-ui/src/components/BarGauge/BarGauge.tsx
+index aadd4dbcf3b..99d2d061a11 100644
+--- a/packages/grafana-ui/src/components/BarGauge/BarGauge.tsx
++++ b/packages/grafana-ui/src/components/BarGauge/BarGauge.tsx
+@@ -1,5 +1,5 @@
+ // Library
+-import React, { PureComponent, CSSProperties } from 'react';
++import React, { PureComponent, CSSProperties, ReactNode } from 'react';
+ import tinycolor from 'tinycolor2';
+ 
+ // Utils
+@@ -18,11 +18,9 @@ export interface Props extends Themeable {
+   maxValue: number;
+   minValue: number;
+   orientation: VizOrientation;
++  displayMode: 'basic' | 'lcd' | 'gradient';
+ }
+ 
+-/*
+- * This visualization is still in POC state, needed more tests & better structure
+- */
+ export class BarGauge extends PureComponent<Props> {
+   static defaultProps: Partial<Props> = {
+     maxValue: 100,
+@@ -31,10 +29,22 @@ export class BarGauge extends PureComponent<Props> {
+       text: '100',
+       numeric: 100,
+     },
++    displayMode: 'lcd',
+     orientation: VizOrientation.Horizontal,
+     thresholds: [],
+   };
+ 
++  render() {
++    switch (this.props.displayMode) {
++      case 'lcd':
++        return this.renderRetroBars();
++      case 'basic':
++      case 'gradient':
++      default:
++        return this.renderBasicAndGradientBars();
++    }
++  }
++
+   getValueColors(): BarColors {
+     const { thresholds, theme, value } = this.props;
+ 
+@@ -46,41 +56,19 @@ export class BarGauge extends PureComponent<Props> {
+       return {
+         value: color,
+         border: color,
+-        bar: tinycolor(color)
+-          .setAlpha(0.3)
++        background: tinycolor(color)
++          .setAlpha(0.15)
+           .toRgbString(),
+       };
+     }
+ 
+     return {
+       value: getColorFromHexRgbOrName('gray', theme.type),
+-      bar: getColorFromHexRgbOrName('gray', theme.type),
++      background: getColorFromHexRgbOrName('gray', theme.type),
+       border: getColorFromHexRgbOrName('gray', theme.type),
+     };
+   }
+ 
+-  getCellColor(positionValue: TimeSeriesValue): string {
+-    const { thresholds, theme, value } = this.props;
+-    const activeThreshold = getThresholdForValue(thresholds, positionValue);
+-
+-    if (activeThreshold !== null) {
+-      const color = getColorFromHexRgbOrName(activeThreshold.color, theme.type);
+-
+-      // if we are past real value the cell is not "on"
+-      if (value === null || (positionValue !== null && positionValue > value.numeric)) {
+-        return tinycolor(color)
+-          .setAlpha(0.15)
+-          .toRgbString();
+-      } else {
+-        return tinycolor(color)
+-          .setAlpha(0.7)
+-          .toRgbString();
+-      }
+-    }
+-
+-    return 'gray';
+-  }
+-
+   getValueStyles(value: string, color: string, width: number): CSSProperties {
+     const guess = width / (value.length * 1.1);
+     const fontSize = Math.min(Math.max(guess, 14), 40);
+@@ -91,107 +79,205 @@ export class BarGauge extends PureComponent<Props> {
+     };
+   }
+ 
+-  renderVerticalBar(valueFormatted: string, valuePercent: number) {
++  /*
++   * Return width or height depending on viz orientation
++   * */
++  get size() {
+     const { height, width } = this.props;
++    return this.isVertical ? height : width;
++  }
+ 
+-    const maxHeight = height * BAR_SIZE_RATIO;
+-    const barHeight = Math.max(valuePercent * maxHeight, 0);
++  get isVertical() {
++    return this.props.orientation === VizOrientation.Vertical;
++  }
++
++  getBarGradient(maxSize: number): string {
++    const { minValue, maxValue, thresholds, value } = this.props;
++    const cssDirection = this.isVertical ? '0deg' : '90deg';
++
++    let gradient = '';
++    let lastpos = 0;
++
++    for (let i = 0; i < thresholds.length; i++) {
++      const threshold = thresholds[i];
++      const color = getColorFromHexRgbOrName(threshold.color);
++      const valuePercent = Math.min(threshold.value / (maxValue - minValue), 1);
++      const pos = valuePercent * maxSize;
++      const offset = Math.round(pos - (pos - lastpos) / 2);
++
++      if (gradient === '') {
++        gradient = `linear-gradient(${cssDirection}, ${color}, ${color}`;
++      } else if (value.numeric < threshold.value) {
++        break;
++      } else {
++        lastpos = pos;
++        gradient += ` ${offset}px, ${color}`;
++      }
++    }
++
++    return gradient + ')';
++  }
++
++  renderBasicAndGradientBars(): ReactNode {
++    const { height, width, displayMode, maxValue, minValue, value } = this.props;
++
++    const valuePercent = Math.min(value.numeric / (maxValue - minValue), 1);
++    const maxSize = this.size * BAR_SIZE_RATIO;
++    const barSize = Math.max(valuePercent * maxSize, 0);
+     const colors = this.getValueColors();
+-    const valueStyles = this.getValueStyles(valueFormatted, colors.value, width);
++    const spaceForText = this.isVertical ? width : Math.min(this.size - maxSize, height);
++    const valueStyles = this.getValueStyles(value.text, colors.value, spaceForText);
++    const isBasic = displayMode === 'basic';
+ 
+     const containerStyles: CSSProperties = {
+       width: `${width}px`,
+       height: `${height}px`,
+       display: 'flex',
+-      flexDirection: 'column',
+-      justifyContent: 'flex-end',
+     };
+ 
+     const barStyles: CSSProperties = {
+-      height: `${barHeight}px`,
+-      width: `${width}px`,
+-      backgroundColor: colors.bar,
+-      borderTop: `1px solid ${colors.border}`,
++      borderRadius: '3px',
+     };
+ 
++    if (this.isVertical) {
++      // Custom styles for vertical orientation
++      containerStyles.flexDirection = 'column';
++      containerStyles.justifyContent = 'flex-end';
++      barStyles.transition = 'height 1s';
++      barStyles.height = `${barSize}px`;
++      barStyles.width = `${width}px`;
++      if (isBasic) {
++        // Basic styles
++        barStyles.background = `${colors.background}`;
++        barStyles.border = `1px solid ${colors.border}`;
++        barStyles.boxShadow = `0 0 4px ${colors.border}`;
++      } else {
++        // Gradient styles
++        barStyles.background = this.getBarGradient(maxSize);
++      }
++    } else {
++      // Custom styles for horizontal orientation
++      containerStyles.flexDirection = 'row-reverse';
++      containerStyles.justifyContent = 'flex-end';
++      containerStyles.alignItems = 'center';
++      barStyles.transition = 'width 1s';
++      barStyles.height = `${height}px`;
++      barStyles.width = `${barSize}px`;
++      barStyles.marginRight = '10px';
++
++      if (isBasic) {
++        // Basic styles
++        barStyles.background = `${colors.background}`;
++        barStyles.border = `1px solid ${colors.border}`;
++        barStyles.boxShadow = `0 0 4px ${colors.border}`;
++      } else {
++        // Gradient styles
++        barStyles.background = this.getBarGradient(maxSize);
++      }
++    }
++
+     return (
+       <div style={containerStyles}>
+         <div className="bar-gauge__value" style={valueStyles}>
+-          {valueFormatted}
++          {value.text}
+         </div>
+         <div style={barStyles} />
+       </div>
+     );
+   }
+ 
+-  renderHorizontalBar(valueFormatted: string, valuePercent: number) {
+-    const { height, width } = this.props;
+-
+-    const maxWidth = width * BAR_SIZE_RATIO;
+-    const barWidth = Math.max(valuePercent * maxWidth, 0);
+-    const colors = this.getValueColors();
+-    const valueStyles = this.getValueStyles(valueFormatted, colors.value, width * (1 - BAR_SIZE_RATIO));
++  getCellColor(positionValue: TimeSeriesValue): CellColors {
++    const { thresholds, theme, value } = this.props;
++    const activeThreshold = getThresholdForValue(thresholds, positionValue);
+ 
+-    valueStyles.marginLeft = '8px';
++    if (activeThreshold !== null) {
++      const color = getColorFromHexRgbOrName(activeThreshold.color, theme.type);
+ 
+-    const containerStyles: CSSProperties = {
+-      width: `${width}px`,
+-      height: `${height}px`,
+-      display: 'flex',
+-      flexDirection: 'row',
+-      alignItems: 'center',
+-    };
++      // if we are past real value the cell is not "on"
++      if (value === null || (positionValue !== null && positionValue > value.numeric)) {
++        return {
++          background: tinycolor(color)
++            .setAlpha(0.15)
++            .toRgbString(),
++          border: 'transparent',
++          isLit: false,
++        };
++      } else {
++        return {
++          background: tinycolor(color)
++            .setAlpha(0.85)
++            .toRgbString(),
++          backgroundShade: tinycolor(color)
++            .setAlpha(0.55)
++            .toRgbString(),
++          border: tinycolor(color)
++            .setAlpha(0.9)
++            .toRgbString(),
++          isLit: true,
++        };
++      }
++    }
+ 
+-    const barStyles = {
+-      height: `${height}px`,
+-      width: `${barWidth}px`,
+-      backgroundColor: colors.bar,
+-      borderRight: `1px solid ${colors.border}`,
++    return {
++      background: 'gray',
++      border: 'gray',
+     };
+-
+-    return (
+-      <div style={containerStyles}>
+-        <div style={barStyles} />
+-        <div className="bar-gauge__value" style={valueStyles}>
+-          {valueFormatted}
+-        </div>
+-      </div>
+-    );
+   }
+ 
+-  renderHorizontalLCD(valueFormatted: string, valuePercent: number) {
+-    const { height, width, maxValue, minValue } = this.props;
++  renderRetroBars(): ReactNode {
++    const { height, width, maxValue, minValue, value } = this.props;
+ 
+     const valueRange = maxValue - minValue;
+-    const maxWidth = width * BAR_SIZE_RATIO;
+-    const cellSpacing = 4;
+-    const cellCount = 30;
+-    const cellWidth = (maxWidth - cellSpacing * cellCount) / cellCount;
++    const maxSize = this.size * BAR_SIZE_RATIO;
++    const cellSpacing = 5;
++    const cellCount = maxSize / 20;
++    const cellSize = (maxSize - cellSpacing * cellCount) / cellCount;
+     const colors = this.getValueColors();
+-    const valueStyles = this.getValueStyles(valueFormatted, colors.value, width * (1 - BAR_SIZE_RATIO));
+-    valueStyles.marginLeft = '8px';
++    const spaceForText = this.isVertical ? width : Math.min(this.size - maxSize, height);
++    const valueStyles = this.getValueStyles(value.text, colors.value, spaceForText);
+ 
+     const containerStyles: CSSProperties = {
+       width: `${width}px`,
+       height: `${height}px`,
+       display: 'flex',
+-      flexDirection: 'row',
+-      alignItems: 'center',
+     };
+ 
++    if (this.isVertical) {
++      containerStyles.flexDirection = 'column-reverse';
++      containerStyles.alignItems = 'center';
++      valueStyles.marginBottom = '20px';
++    } else {
++      containerStyles.flexDirection = 'row';
++      containerStyles.alignItems = 'center';
++      valueStyles.marginLeft = '20px';
++    }
++
+     const cells: JSX.Element[] = [];
+ 
+     for (let i = 0; i < cellCount; i++) {
+       const currentValue = (valueRange / cellCount) * i;
+       const cellColor = this.getCellColor(currentValue);
+       const cellStyles: CSSProperties = {
+-        width: `${cellWidth}px`,
+-        backgroundColor: cellColor,
+-        marginRight: '4px',
+-        height: `${height}px`,
+         borderRadius: '2px',
+       };
+ 
++      if (cellColor.isLit) {
++        cellStyles.boxShadow = `0 0 4px ${cellColor.border}`;
++        cellStyles.backgroundImage = `radial-gradient(${cellColor.background} 10%, ${cellColor.backgroundShade})`;
++      } else {
++        cellStyles.backgroundColor = cellColor.background;
++      }
++
++      if (this.isVertical) {
++        cellStyles.height = `${cellSize}px`;
++        cellStyles.width = `${width}px`;
++        cellStyles.marginTop = `${cellSpacing}px`;
++      } else {
++        cellStyles.width = `${cellSize}px`;
++        cellStyles.height = `${height}px`;
++        cellStyles.marginRight = `${cellSpacing}px`;
++      }
++
+       cells.push(<div style={cellStyles} />);
+     }
+ 
+@@ -199,26 +285,22 @@ export class BarGauge extends PureComponent<Props> {
+       <div style={containerStyles}>
+         {cells}
+         <div className="bar-gauge__value" style={valueStyles}>
+-          {valueFormatted}
++          {value.text}
+         </div>
+       </div>
+     );
+   }
+-
+-  render() {
+-    const { maxValue, minValue, orientation, value } = this.props;
+-
+-    const valuePercent = Math.min(value.numeric / (maxValue - minValue), 1);
+-    const vertical = orientation === 'vertical';
+-
+-    return vertical
+-      ? this.renderVerticalBar(value.text, valuePercent)
+-      : this.renderHorizontalLCD(value.text, valuePercent);
+-  }
+ }
+ 
+ interface BarColors {
+   value: string;
+-  bar: string;
++  background: string;
++  border: string;
++}
++
++interface CellColors {
++  background: string;
++  backgroundShade?: string;
+   border: string;
++  isLit?: boolean;
+ }
+diff --git a/packages/grafana-ui/src/components/BarGauge/__snapshots__/BarGauge.test.tsx.snap b/packages/grafana-ui/src/components/BarGauge/__snapshots__/BarGauge.test.tsx.snap
+index 65c647bd90c..25a2e79b647 100644
+--- a/packages/grafana-ui/src/components/BarGauge/__snapshots__/BarGauge.test.tsx.snap
++++ b/packages/grafana-ui/src/components/BarGauge/__snapshots__/BarGauge.test.tsx.snap
+@@ -6,353 +6,37 @@ exports[`Render BarGauge with basic options should render 1`] = `
+     Object {
+       "alignItems": "center",
+       "display": "flex",
+-      "flexDirection": "row",
++      "flexDirection": "row-reverse",
+       "height": "300px",
++      "justifyContent": "flex-end",
+       "width": "300px",
+     }
+   }
+ >
+   <div
++    className="bar-gauge__value"
+     style={
+       Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.7)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
+-      }
+-    }
+-  />
+-  <div
+-    style={
+-      Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
+-        "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
++        "color": "#7EB26D",
++        "fontSize": "27.27272727272727px",
+       }
+     }
+-  />
++  >
++    25
++  </div>
+   <div
+     style={
+       Object {
+-        "backgroundColor": "rgba(126, 178, 109, 0.15)",
+-        "borderRadius": "2px",
++        "background": "rgba(126, 178, 109, 0.15)",
++        "border": "1px solid #7EB26D",
++        "borderRadius": "3px",
++        "boxShadow": "0 0 4px #7EB26D",
+         "height": "300px",
+-        "marginRight": "4px",
+-        "width": "4px",
++        "marginRight": "10px",
++        "transition": "width 1s",
++        "width": "60px",
+       }
+     }
+   />
+-  <div
+-    className="bar-gauge__value"
+-    style={
+-      Object {
+-        "color": "#7EB26D",
+-        "fontSize": "27.272727272727263px",
+-        "marginLeft": "8px",
+-      }
+-    }
+-  >
+-    25
+-  </div>
+ </div>
+ `;
+diff --git a/packages/grafana-ui/src/components/ThresholdsEditor/ThresholdsEditor.tsx b/packages/grafana-ui/src/components/ThresholdsEditor/ThresholdsEditor.tsx
+index adacf393a09..daecff37dc8 100644
+--- a/packages/grafana-ui/src/components/ThresholdsEditor/ThresholdsEditor.tsx
++++ b/packages/grafana-ui/src/components/ThresholdsEditor/ThresholdsEditor.tsx
+@@ -166,7 +166,11 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
+         <div className="thresholds-row-input-inner-color">
+           {threshold.color && (
+             <div className="thresholds-row-input-inner-color-colorpicker">
+-              <ColorPicker color={threshold.color} onChange={color => this.onChangeThresholdColor(threshold, color)} />
++              <ColorPicker
++                color={threshold.color}
++                onChange={color => this.onChangeThresholdColor(threshold, color)}
++                enableNamedColors={true}
++              />
+             </div>
+           )}
+         </div>
+diff --git a/packages/grafana-ui/src/components/ThresholdsEditor/__snapshots__/ThresholdsEditor.test.tsx.snap b/packages/grafana-ui/src/components/ThresholdsEditor/__snapshots__/ThresholdsEditor.test.tsx.snap
+index bd0ab03bf51..2bc5ee56d4d 100644
+--- a/packages/grafana-ui/src/components/ThresholdsEditor/__snapshots__/ThresholdsEditor.test.tsx.snap
++++ b/packages/grafana-ui/src/components/ThresholdsEditor/__snapshots__/ThresholdsEditor.test.tsx.snap
+@@ -83,10 +83,12 @@ exports[`Render should render with base threshold 1`] = `
+                   >
+                     <WithTheme(ColorPicker)
+                       color="#7EB26D"
++                      enableNamedColors={true}
+                       onChange={[Function]}
+                     >
+                       <ColorPicker
+                         color="#7EB26D"
++                        enableNamedColors={true}
+                         onChange={[Function]}
+                         theme={
+                           Object {
+@@ -230,6 +232,7 @@ exports[`Render should render with base threshold 1`] = `
+                           content={
+                             <ColorPickerPopover
+                               color="#7EB26D"
++                              enableNamedColors={true}
+                               onChange={[Function]}
+                               theme={
+                                 Object {
+diff --git a/public/app/plugins/panel/bargauge/BarGaugePanel.tsx b/public/app/plugins/panel/bargauge/BarGaugePanel.tsx
+index e738475afc8..8b612e6869e 100644
+--- a/public/app/plugins/panel/bargauge/BarGaugePanel.tsx
++++ b/public/app/plugins/panel/bargauge/BarGaugePanel.tsx
+@@ -22,6 +22,7 @@ export class BarGaugePanel extends PureComponent<PanelProps<BarGaugeOptions>> {
+         orientation={options.orientation}
+         thresholds={options.thresholds}
+         theme={config.theme}
++        displayMode={options.displayMode}
+       />
+     );
+   };
+diff --git a/public/app/plugins/panel/bargauge/BarGaugePanelEditor.tsx b/public/app/plugins/panel/bargauge/BarGaugePanelEditor.tsx
+index cccd4e88b8e..3404c8d8805 100644
+--- a/public/app/plugins/panel/bargauge/BarGaugePanelEditor.tsx
++++ b/public/app/plugins/panel/bargauge/BarGaugePanelEditor.tsx
+@@ -6,7 +6,7 @@ import { ThresholdsEditor, ValueMappingsEditor, PanelOptionsGrid, PanelOptionsGr
+ 
+ // Types
+ import { FormLabel, PanelEditorProps, Threshold, Select, ValueMapping } from '@grafana/ui';
+-import { BarGaugeOptions, orientationOptions } from './types';
++import { BarGaugeOptions, orientationOptions, displayModes } from './types';
+ import { SingleStatValueEditor } from '../singlestat2/SingleStatValueEditor';
+ import { SingleStatValueOptions } from '../singlestat2/types';
+ 
+@@ -32,6 +32,7 @@ export class BarGaugePanelEditor extends PureComponent<PanelEditorProps<BarGauge
+   onMinValueChange = ({ target }) => this.props.onOptionsChange({ ...this.props.options, minValue: target.value });
+   onMaxValueChange = ({ target }) => this.props.onOptionsChange({ ...this.props.options, maxValue: target.value });
+   onOrientationChange = ({ value }) => this.props.onOptionsChange({ ...this.props.options, orientation: value });
++  onDisplayModeChange = ({ value }) => this.props.onOptionsChange({ ...this.props.options, displayMode: value });
+ 
+   render() {
+     const { options } = this.props;
+@@ -53,6 +54,16 @@ export class BarGaugePanelEditor extends PureComponent<PanelEditorProps<BarGauge
+                 value={orientationOptions.find(item => item.value === options.orientation)}
+               />
+             </div>
++            <div className="form-field">
++              <FormLabel width={8}>Display Mode</FormLabel>
++              <Select
++                width={12}
++                options={displayModes}
++                defaultValue={displayModes[0]}
++                onChange={this.onDisplayModeChange}
++                value={displayModes.find(item => item.value === options.displayMode)}
++              />
++            </div>
+           </PanelOptionsGroup>
+           <ThresholdsEditor onChange={this.onThresholdsChanged} thresholds={options.thresholds} />
+         </PanelOptionsGrid>
+diff --git a/public/app/plugins/panel/bargauge/types.ts b/public/app/plugins/panel/bargauge/types.ts
+index ea6f1887501..4a22a64bdd4 100644
+--- a/public/app/plugins/panel/bargauge/types.ts
++++ b/public/app/plugins/panel/bargauge/types.ts
+@@ -1,20 +1,27 @@
+ import { VizOrientation, SelectOptionItem } from '@grafana/ui';
+-
+ import { SingleStatBaseOptions } from '../singlestat2/types';
+ 
+-export const orientationOptions: SelectOptionItem[] = [
+-  { value: VizOrientation.Horizontal, label: 'Horizontal' },
+-  { value: VizOrientation.Vertical, label: 'Vertical' },
+-];
+-
+ export interface BarGaugeOptions extends SingleStatBaseOptions {
+   minValue: number;
+   maxValue: number;
++  displayMode: 'basic' | 'lcd' | 'gradient';
+ }
+ 
++export const displayModes: SelectOptionItem[] = [
++  { value: 'gradient', label: 'Gradient' },
++  { value: 'lcd', label: 'Retro LCD' },
++  { value: 'basic', label: 'Basic' },
++];
++
++export const orientationOptions: SelectOptionItem[] = [
++  { value: VizOrientation.Horizontal, label: 'Horizontal' },
++  { value: VizOrientation.Vertical, label: 'Vertical' },
++];
++
+ export const defaults: BarGaugeOptions = {
+   minValue: 0,
+   maxValue: 100,
++  displayMode: 'lcd',
+   orientation: VizOrientation.Horizontal,
+   valueOptions: {
+     unit: 'none',
+
+commit c19a47d34fedc3beef8f80fd8d2748690514b4fe (from 2ca5149c67e04970232a90b65892c03a48ec1d68)
+Merge: 95f7a913281 2ca5149c67e
+Author: Torkel Ödegaard <torkel@grafana.com>
+Date:   Tue Mar 19 15:00:30 2019 +0100
+
+    Merge pull request #16008 from grafana/bar-gauge-refactoring
+    
+    Refactoring the bar gauge and the orientation modes
+
+diff --git a/.circleci/config.yml b/.circleci/config.yml
+index da0e0665285..49fb3776534 100644
+--- a/.circleci/config.yml
++++ b/.circleci/config.yml
+@@ -322,7 +322,7 @@ jobs:
+ 
+   deploy-enterprise-master:
+     docker:
+-      - image: grafana/grafana-ci-deploy:1.2.0
++      - image: grafana/grafana-ci-deploy:1.2.1
+     steps:
+       - attach_workspace:
+           at: .
+@@ -345,7 +345,7 @@ jobs:
+ 
+   deploy-enterprise-release:
+     docker:
+-    - image: grafana/grafana-ci-deploy:1.2.0
++    - image: grafana/grafana-ci-deploy:1.2.1
+     steps:
+       - checkout
+       - attach_workspace:
+@@ -378,7 +378,7 @@ jobs:
+ 
+   deploy-master:
+     docker:
+-      - image: grafana/grafana-ci-deploy:1.2.0
++      - image: grafana/grafana-ci-deploy:1.2.1
+     steps:
+       - attach_workspace:
+           at: .
+@@ -409,7 +409,7 @@ jobs:
+ 
+   deploy-release:
+     docker:
+-      - image: grafana/grafana-ci-deploy:1.2.0
++      - image: grafana/grafana-ci-deploy:1.2.1
+     steps:
+       - checkout
+       - attach_workspace:
+diff --git a/scripts/build/ci-build/Dockerfile b/scripts/build/ci-build/Dockerfile
+new file mode 100644
+index 00000000000..7c6ed58c0e4
+--- /dev/null
++++ b/scripts/build/ci-build/Dockerfile
+@@ -0,0 +1,114 @@
++FROM ubuntu:14.04 as toolchain
++
++ENV OSX_SDK_URL=https://s3.dockerproject.org/darwin/v2/ \
++    OSX_SDK=MacOSX10.10.sdk \
++    OSX_MIN=10.10 \
++    CTNG=1.23.0
++
++# FIRST PART
++# build osx64 toolchain (stripped of man documentation)
++# the toolchain produced is not self contained, it needs clang at runtime
++#
++# SECOND PART
++# build gcc (no g++) centos6-x64 toolchain
++# doc: https://crosstool-ng.github.io/docs/
++# apt-get should be all dep to build toolchain
++# sed and 1st echo are for convenience to get the toolchain in /tmp/x86_64-centos6-linux-gnu
++# other echo are to enable build by root (crosstool-NG refuse to do that by default)
++# the last 2 rm are just to save some time and space writing docker layers
++#
++# THIRD PART
++# build fpm and creates a set of deb from gem
++# ruby2.0 depends on ruby1.9.3 which is install as default ruby
++# rm/ln are here to change that
++# created deb depends on rubygem-json but json gem is not build
++# so do by hand
++
++
++# might wanna make sure osx cross and the other tarball as well as the packages ends up somewhere other than tmp
++# might also wanna put them as their own layer to not have to unpack them every time?
++
++RUN apt-get update   && \
++    apt-get install -y  \
++        clang-3.8 patch libxml2-dev \
++        ca-certificates \
++        curl            \
++        git             \
++        make            \
++        xz-utils     && \
++    git clone https://github.com/tpoechtrager/osxcross.git  /tmp/osxcross  && \
++    curl -L ${OSX_SDK_URL}/${OSX_SDK}.tar.xz -o /tmp/osxcross/tarballs/${OSX_SDK}.tar.xz && \
++    ln -s /usr/bin/clang-3.8 /usr/bin/clang              && \
++    ln -s /usr/bin/clang++-3.8 /usr/bin/clang++          && \
++    ln -s /usr/bin/llvm-dsymutil-3.8 /usr/bin/dsymutil   && \
++    UNATTENDED=yes OSX_VERSION_MIN=${OSX_MIN} /tmp/osxcross/build.sh && \
++    rm -rf /tmp/osxcross/target/SDK/${OSX_SDK}/usr/share && \
++    cd /tmp                                              && \
++    tar cfJ osxcross.tar.xz osxcross/target              && \
++    rm -rf /tmp/osxcross                                 && \
++    apt-get install -y                     \
++        bison curl flex gawk gcc g++ gperf help2man libncurses5-dev make patch python-dev texinfo xz-utils && \
++    curl -L http://crosstool-ng.org/download/crosstool-ng/crosstool-ng-${CTNG}.tar.xz  \
++         | tar -xJ -C /tmp/             && \
++    cd /tmp/crosstool-ng-${CTNG}        && \
++    ./configure --enable-local          && \
++    make                                && \
++    ./ct-ng x86_64-centos6-linux-gnu    && \
++    sed -i '/CT_PREFIX_DIR=/d' .config  && \
++    echo 'CT_PREFIX_DIR="/tmp/${CT_HOST:+HOST-${CT_HOST}/}${CT_TARGET}"' >> .config && \
++    echo 'CT_EXPERIMENTAL=y' >> .config && \
++    echo 'CT_ALLOW_BUILD_AS_ROOT=y' >> .config && \
++    echo 'CT_ALLOW_BUILD_AS_ROOT_SURE=y' >> .config && \
++    ./ct-ng build                       && \
++    cd /tmp                             && \
++    rm /tmp/x86_64-centos6-linux-gnu/build.log.bz2 && \
++    tar cfJ x86_64-centos6-linux-gnu.tar.xz x86_64-centos6-linux-gnu/ && \
++    rm -rf /tmp/x86_64-centos6-linux-gnu/ && \
++    rm -rf /tmp/crosstool-ng-${CTNG}
++
++# base image to crossbuild grafana
++FROM ubuntu:14.04
++
++ENV GOVERSION=1.11.5 \
++    PATH=/usr/local/go/bin:$PATH \
++    GOPATH=/go \
++    NODEVERSION=10.14.2
++
++COPY --from=toolchain /tmp/x86_64-centos6-linux-gnu.tar.xz /tmp/
++COPY --from=toolchain /tmp/osxcross.tar.xz /tmp/
++
++RUN apt-get update   && \
++    apt-get install -y  \
++        clang-3.8 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-mingw-w64-x86-64 \
++        apt-transport-https \
++        ca-certificates \
++        curl            \
++        libfontconfig1  \
++        gcc             \
++        g++             \
++        git             \
++        make            \
++        rpm             \
++        xz-utils        \
++        expect          \
++        gnupg2          \
++        unzip        && \
++    ln -s /usr/bin/clang-3.8 /usr/bin/clang                             && \
++    ln -s /usr/bin/clang++-3.8 /usr/bin/clang++                         && \
++    ln -s /usr/bin/llvm-dsymutil-3.8 /usr/bin/dsymutil                  && \
++    curl -L https://nodejs.org/dist/v${NODEVERSION}/node-v${NODEVERSION}-linux-x64.tar.xz \
++      | tar -xJ --strip-components=1 -C /usr/local                      && \
++    curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -   && \
++    echo "deb [arch=amd64] https://dl.yarnpkg.com/debian/ stable main"     \
++      | tee /etc/apt/sources.list.d/yarn.list                           && \
++    apt-get update && apt-get install --no-install-recommends yarn      && \
++    curl -L https://storage.googleapis.com/golang/go${GOVERSION}.linux-amd64.tar.gz \
++      | tar -xz -C /usr/local
++
++RUN apt-get install -y                           \
++        gcc libc-dev make && \
++    gpg2 --keyserver hkp://keys.gnupg.net --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3 7D2BAF1CF37B13E2069D6956105BD0E739499BDB && \
++    curl -sSL https://get.rvm.io | bash -s stable && \
++    /bin/bash -l -c "rvm requirements && rvm install 2.2 && gem install -N fpm"
++
++ADD ./bootstrap.sh /tmp/bootstrap.sh
+\ No newline at end of file
+diff --git a/scripts/build/ci-build/Makefile b/scripts/build/ci-build/Makefile
+new file mode 100644
+index 00000000000..64fa376d7cf
+--- /dev/null
++++ b/scripts/build/ci-build/Makefile
+@@ -0,0 +1,54 @@
++VERSION="dev"
++TAG="grafana/build-container"
++USER_ID=$(shell id -u)
++GROUP_ID=$(shell id -g)
++
++all: build deploy
++
++build:
++	docker build -t "${TAG}:${VERSION}" .
++
++deploy:
++	docker push "${TAG}:${VERSION}"
++
++run:
++	docker run -ti \
++		-e "CIRCLE_BRANCH=local" \
++		-e "CIRCLE_BUILD_NUM=472" \
++		${TAG}:${VERSION} \
++		bash
++
++run-with-local-source-live:
++	docker run -d \
++		-e "CIRCLE_BRANCH=local" \
++		-e "CIRCLE_BUILD_NUM=472" \
++		-w "/go/src/github.com/grafana/grafana" \
++		--name grafana-build \
++		-v "${GOPATH}/src/github.com/grafana/grafana:/go/src/github.com/grafana/grafana" \
++		${TAG}:${VERSION} \
++		bash -c "/tmp/bootstrap.sh; mkdir /.cache; chown "${USER_ID}:${GROUP_ID}" /.cache; tail -f /dev/null"
++	docker exec -ti --user "${USER_ID}:${GROUP_ID}" grafana-build bash
++
++run-with-local-source-copy:
++	docker run -d \
++		-e "CIRCLE_BRANCH=local" \
++		-e "CIRCLE_BUILD_NUM=472" \
++		-w "/go/src/github.com/grafana/grafana" \
++		--name grafana-build \
++		${TAG}:${VERSION} \
++		bash -c "/tmp/bootstrap.sh; tail -f /dev/null"
++	docker cp "${GOPATH}/src/github.com/grafana/grafana" grafana-build:/go/src/github.com/grafana/
++	docker exec -ti grafana-build bash
++
++update-source:
++	docker cp "${GOPATH}/src/github.com/grafana/grafana" grafana-build:/go/src/github.com/grafana/	
++
++attach:
++	docker exec -ti grafana-build bash
++
++attach-live:
++	docker exec -ti --user "${USER_ID}:${GROUP_ID}" grafana-build bash
++
++stop:
++	docker kill grafana-build
++	docker rm grafana-build
+diff --git a/scripts/build/ci-build/README.md b/scripts/build/ci-build/README.md
+new file mode 100644
+index 00000000000..e66ec1b3cf7
+--- /dev/null
++++ b/scripts/build/ci-build/README.md
+@@ -0,0 +1,20 @@
++# grafana-build-container
++Grafana build container
++
++## Description
++
++This is a container for cross-platform builds of Grafana. You can run it locally using the Makefile.
++
++## Makefile targets
++
++* `make run-with-local-source-copy`
++  - Starts the container locally and copies your local sources into the container
++* `make run-with-local-source-live`
++  - Starts the container (as your user) locally and maps your Grafana project dir into the container
++* `make update-source`
++  - Updates the sources in the container from your local sources
++* `make stop`
++  - Kills the container
++* `make attach`
++  - Opens bash within the running container
++
+diff --git a/scripts/build/ci-build/bootstrap.sh b/scripts/build/ci-build/bootstrap.sh
+new file mode 100755
+index 00000000000..2eda345b5ab
+--- /dev/null
++++ b/scripts/build/ci-build/bootstrap.sh
+@@ -0,0 +1,5 @@
++#!/bin/bash
++
++cd /tmp
++tar xfJ x86_64-centos6-linux-gnu.tar.xz
++tar xfJ osxcross.tar.xz
+diff --git a/scripts/build/ci-build/build-deploy.sh b/scripts/build/ci-build/build-deploy.sh
+new file mode 100755
+index 00000000000..c2a33e4a9e4
+--- /dev/null
++++ b/scripts/build/ci-build/build-deploy.sh
+@@ -0,0 +1,7 @@
++#!/bin/bash
++
++_version="1.2.3"
++_tag="grafana/build-container:${_version}"
++
++docker build -t $_tag .
++docker push $_tag
+diff --git a/scripts/build/ci-deploy/Dockerfile b/scripts/build/ci-deploy/Dockerfile
+index dd4987b96c3..e608d9156e7 100644
+--- a/scripts/build/ci-deploy/Dockerfile
++++ b/scripts/build/ci-deploy/Dockerfile
+@@ -10,7 +10,7 @@ FROM circleci/python:2.7-stretch
+ 
+ USER root
+ 
+-RUN pip install awscli && \
++RUN pip install -U awscli crcmod && \
+     curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-222.0.0-linux-x86_64.tar.gz | \
+       tar xvzf - -C /opt && \
+     apt update && \
+diff --git a/scripts/build/ci-deploy/build-deploy.sh b/scripts/build/ci-deploy/build-deploy.sh
+index 8dedeead009..ed9c9e5459e 100755
+--- a/scripts/build/ci-deploy/build-deploy.sh
++++ b/scripts/build/ci-deploy/build-deploy.sh
+@@ -1,6 +1,6 @@
+ #!/bin/bash
+ 
+-_version="1.2.0"
++_version="1.2.1"
+ _tag="grafana/grafana-ci-deploy:${_version}"
+ 
+ docker build -t $_tag .

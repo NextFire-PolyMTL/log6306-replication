@@ -1,0 +1,4693 @@
+commit 87db2d11835049fb73fb7314afee322b18ebbffa (from 7784e8a829c767d46b9aaf33b2dd9b3de07e6a43)
+Merge: 7784e8a829c c0ecdee3757
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Thu Mar 8 10:21:34 2018 +0100
+
+    Merge pull request #11130 from DanCech/context-refactor
+    
+    move Context and session out of middleware
+
+diff --git a/Makefile b/Makefile
+index d89718d200c..6f7beb837d8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -11,8 +11,14 @@ deps: deps-js
+ build-go:
+ 	go run build.go build
+ 
++build-server:
++	go run build.go build-server
++
++build-cli:
++	go run build.go build-cli
++
+ build-js:
+-	npm run build
++	yarn run build
+ 
+ build: build-go build-js
+ 
+@@ -20,7 +26,7 @@ test-go:
+ 	go test -v ./pkg/...
+ 
+ test-js:
+-	npm test
++	yarn test
+ 
+ test: test-go test-js
+ 
+diff --git a/build.go b/build.go
+index d55244246ff..24a29c4775f 100644
+--- a/build.go
++++ b/build.go
+@@ -83,6 +83,10 @@ func main() {
+ 			clean()
+ 			build("grafana-cli", "./pkg/cmd/grafana-cli", []string{})
+ 
++		case "build-server":
++			clean()
++			build("grafana-server", "./pkg/cmd/grafana-server", []string{})
++
+ 		case "build":
+ 			clean()
+ 			for _, binary := range binaries {
+diff --git a/pkg/api/admin.go b/pkg/api/admin.go
+index d7f5a240416..286f23356ea 100644
+--- a/pkg/api/admin.go
++++ b/pkg/api/admin.go
+@@ -4,12 +4,11 @@ import (
+ 	"strings"
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func AdminGetSettings(c *middleware.Context) {
++func AdminGetSettings(c *m.ReqContext) {
+ 	settings := make(map[string]interface{})
+ 
+ 	for _, section := range setting.Cfg.Sections() {
+@@ -30,7 +29,7 @@ func AdminGetSettings(c *middleware.Context) {
+ 	c.JSON(200, settings)
+ }
+ 
+-func AdminGetStats(c *middleware.Context) {
++func AdminGetStats(c *m.ReqContext) {
+ 
+ 	statsQuery := m.GetAdminStatsQuery{}
+ 
+diff --git a/pkg/api/admin_users.go b/pkg/api/admin_users.go
+index 1868c589673..4cf7f4db4ec 100644
+--- a/pkg/api/admin_users.go
++++ b/pkg/api/admin_users.go
+@@ -4,12 +4,11 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func AdminCreateUser(c *middleware.Context, form dtos.AdminCreateUserForm) {
++func AdminCreateUser(c *m.ReqContext, form dtos.AdminCreateUserForm) {
+ 	cmd := m.CreateUserCommand{
+ 		Login:    form.Login,
+ 		Email:    form.Email,
+@@ -47,7 +46,7 @@ func AdminCreateUser(c *middleware.Context, form dtos.AdminCreateUserForm) {
+ 	c.JSON(200, result)
+ }
+ 
+-func AdminUpdateUserPassword(c *middleware.Context, form dtos.AdminUpdateUserPasswordForm) {
++func AdminUpdateUserPassword(c *m.ReqContext, form dtos.AdminUpdateUserPasswordForm) {
+ 	userId := c.ParamsInt64(":id")
+ 
+ 	if len(form.Password) < 4 {
+@@ -77,7 +76,7 @@ func AdminUpdateUserPassword(c *middleware.Context, form dtos.AdminUpdateUserPas
+ 	c.JsonOK("User password updated")
+ }
+ 
+-func AdminUpdateUserPermissions(c *middleware.Context, form dtos.AdminUpdateUserPermissionsForm) {
++func AdminUpdateUserPermissions(c *m.ReqContext, form dtos.AdminUpdateUserPermissionsForm) {
+ 	userId := c.ParamsInt64(":id")
+ 
+ 	cmd := m.UpdateUserPermissionsCommand{
+@@ -93,7 +92,7 @@ func AdminUpdateUserPermissions(c *middleware.Context, form dtos.AdminUpdateUser
+ 	c.JsonOK("User permissions updated")
+ }
+ 
+-func AdminDeleteUser(c *middleware.Context) {
++func AdminDeleteUser(c *m.ReqContext) {
+ 	userId := c.ParamsInt64(":id")
+ 
+ 	cmd := m.DeleteUserCommand{UserId: userId}
+diff --git a/pkg/api/alerting.go b/pkg/api/alerting.go
+index 08edf54748b..eea4ef90c05 100644
+--- a/pkg/api/alerting.go
++++ b/pkg/api/alerting.go
+@@ -5,15 +5,14 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/models"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/alerting"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ )
+ 
+-func ValidateOrgAlert(c *middleware.Context) {
++func ValidateOrgAlert(c *m.ReqContext) {
+ 	id := c.ParamsInt64(":alertId")
+-	query := models.GetAlertByIdQuery{Id: id}
++	query := m.GetAlertByIdQuery{Id: id}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+ 		c.JsonApiErr(404, "Alert not found", nil)
+@@ -26,14 +25,14 @@ func ValidateOrgAlert(c *middleware.Context) {
+ 	}
+ }
+ 
+-func GetAlertStatesForDashboard(c *middleware.Context) Response {
++func GetAlertStatesForDashboard(c *m.ReqContext) Response {
+ 	dashboardId := c.QueryInt64("dashboardId")
+ 
+ 	if dashboardId == 0 {
+ 		return ApiError(400, "Missing query parameter dashboardId", nil)
+ 	}
+ 
+-	query := models.GetAlertStatesForDashboardQuery{
++	query := m.GetAlertStatesForDashboardQuery{
+ 		OrgId:       c.OrgId,
+ 		DashboardId: c.QueryInt64("dashboardId"),
+ 	}
+@@ -46,8 +45,8 @@ func GetAlertStatesForDashboard(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/alerts
+-func GetAlerts(c *middleware.Context) Response {
+-	query := models.GetAlertsQuery{
++func GetAlerts(c *m.ReqContext) Response {
++	query := m.GetAlertsQuery{
+ 		OrgId:       c.OrgId,
+ 		DashboardId: c.QueryInt64("dashboardId"),
+ 		PanelId:     c.QueryInt64("panelId"),
+@@ -65,14 +64,14 @@ func GetAlerts(c *middleware.Context) Response {
+ 	}
+ 
+ 	for _, alert := range query.Result {
+-		alert.Url = models.GetDashboardUrl(alert.DashboardUid, alert.DashboardSlug)
++		alert.Url = m.GetDashboardUrl(alert.DashboardUid, alert.DashboardSlug)
+ 	}
+ 
+ 	return Json(200, query.Result)
+ }
+ 
+ // POST /api/alerts/test
+-func AlertTest(c *middleware.Context, dto dtos.AlertTestCommand) Response {
++func AlertTest(c *m.ReqContext, dto dtos.AlertTestCommand) Response {
+ 	if _, idErr := dto.Dashboard.Get("id").Int64(); idErr != nil {
+ 		return ApiError(400, "The dashboard needs to be saved at least once before you can test an alert rule", nil)
+ 	}
+@@ -114,9 +113,9 @@ func AlertTest(c *middleware.Context, dto dtos.AlertTestCommand) Response {
+ }
+ 
+ // GET /api/alerts/:id
+-func GetAlert(c *middleware.Context) Response {
++func GetAlert(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":alertId")
+-	query := models.GetAlertByIdQuery{Id: id}
++	query := m.GetAlertByIdQuery{Id: id}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+ 		return ApiError(500, "List alerts failed", err)
+@@ -125,12 +124,12 @@ func GetAlert(c *middleware.Context) Response {
+ 	return Json(200, &query.Result)
+ }
+ 
+-func GetAlertNotifiers(c *middleware.Context) Response {
++func GetAlertNotifiers(c *m.ReqContext) Response {
+ 	return Json(200, alerting.GetNotifiers())
+ }
+ 
+-func GetAlertNotifications(c *middleware.Context) Response {
+-	query := &models.GetAllAlertNotificationsQuery{OrgId: c.OrgId}
++func GetAlertNotifications(c *m.ReqContext) Response {
++	query := &m.GetAllAlertNotificationsQuery{OrgId: c.OrgId}
+ 
+ 	if err := bus.Dispatch(query); err != nil {
+ 		return ApiError(500, "Failed to get alert notifications", err)
+@@ -152,8 +151,8 @@ func GetAlertNotifications(c *middleware.Context) Response {
+ 	return Json(200, result)
+ }
+ 
+-func GetAlertNotificationById(c *middleware.Context) Response {
+-	query := &models.GetAlertNotificationsQuery{
++func GetAlertNotificationById(c *m.ReqContext) Response {
++	query := &m.GetAlertNotificationsQuery{
+ 		OrgId: c.OrgId,
+ 		Id:    c.ParamsInt64("notificationId"),
+ 	}
+@@ -165,7 +164,7 @@ func GetAlertNotificationById(c *middleware.Context) Response {
+ 	return Json(200, query.Result)
+ }
+ 
+-func CreateAlertNotification(c *middleware.Context, cmd models.CreateAlertNotificationCommand) Response {
++func CreateAlertNotification(c *m.ReqContext, cmd m.CreateAlertNotificationCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 
+ 	if err := bus.Dispatch(&cmd); err != nil {
+@@ -175,7 +174,7 @@ func CreateAlertNotification(c *middleware.Context, cmd models.CreateAlertNotifi
+ 	return Json(200, cmd.Result)
+ }
+ 
+-func UpdateAlertNotification(c *middleware.Context, cmd models.UpdateAlertNotificationCommand) Response {
++func UpdateAlertNotification(c *m.ReqContext, cmd m.UpdateAlertNotificationCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 
+ 	if err := bus.Dispatch(&cmd); err != nil {
+@@ -185,8 +184,8 @@ func UpdateAlertNotification(c *middleware.Context, cmd models.UpdateAlertNotifi
+ 	return Json(200, cmd.Result)
+ }
+ 
+-func DeleteAlertNotification(c *middleware.Context) Response {
+-	cmd := models.DeleteAlertNotificationCommand{
++func DeleteAlertNotification(c *m.ReqContext) Response {
++	cmd := m.DeleteAlertNotificationCommand{
+ 		OrgId: c.OrgId,
+ 		Id:    c.ParamsInt64("notificationId"),
+ 	}
+@@ -199,7 +198,7 @@ func DeleteAlertNotification(c *middleware.Context) Response {
+ }
+ 
+ //POST /api/alert-notifications/test
+-func NotificationTest(c *middleware.Context, dto dtos.NotificationTestCommand) Response {
++func NotificationTest(c *m.ReqContext, dto dtos.NotificationTestCommand) Response {
+ 	cmd := &alerting.NotificationTestCommand{
+ 		Name:     dto.Name,
+ 		Type:     dto.Type,
+@@ -207,7 +206,7 @@ func NotificationTest(c *middleware.Context, dto dtos.NotificationTestCommand) R
+ 	}
+ 
+ 	if err := bus.Dispatch(cmd); err != nil {
+-		if err == models.ErrSmtpNotEnabled {
++		if err == m.ErrSmtpNotEnabled {
+ 			return ApiError(412, err.Error(), err)
+ 		}
+ 		return ApiError(500, "Failed to send alert notifications", err)
+@@ -217,10 +216,10 @@ func NotificationTest(c *middleware.Context, dto dtos.NotificationTestCommand) R
+ }
+ 
+ //POST /api/alerts/:alertId/pause
+-func PauseAlert(c *middleware.Context, dto dtos.PauseAlertCommand) Response {
++func PauseAlert(c *m.ReqContext, dto dtos.PauseAlertCommand) Response {
+ 	alertId := c.ParamsInt64("alertId")
+ 
+-	query := models.GetAlertByIdQuery{Id: alertId}
++	query := m.GetAlertByIdQuery{Id: alertId}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+ 		return ApiError(500, "Get Alert failed", err)
+@@ -235,7 +234,7 @@ func PauseAlert(c *middleware.Context, dto dtos.PauseAlertCommand) Response {
+ 		return ApiError(403, "Access denied to this dashboard and alert", nil)
+ 	}
+ 
+-	cmd := models.PauseAlertCommand{
++	cmd := m.PauseAlertCommand{
+ 		OrgId:    c.OrgId,
+ 		AlertIds: []int64{alertId},
+ 		Paused:   dto.Paused,
+@@ -245,10 +244,10 @@ func PauseAlert(c *middleware.Context, dto dtos.PauseAlertCommand) Response {
+ 		return ApiError(500, "", err)
+ 	}
+ 
+-	var response models.AlertStateType = models.AlertStatePending
++	var response m.AlertStateType = m.AlertStatePending
+ 	pausedState := "un-paused"
+ 	if cmd.Paused {
+-		response = models.AlertStatePaused
++		response = m.AlertStatePaused
+ 		pausedState = "paused"
+ 	}
+ 
+@@ -262,8 +261,8 @@ func PauseAlert(c *middleware.Context, dto dtos.PauseAlertCommand) Response {
+ }
+ 
+ //POST /api/admin/pause-all-alerts
+-func PauseAllAlerts(c *middleware.Context, dto dtos.PauseAllAlertsCommand) Response {
+-	updateCmd := models.PauseAllAlertCommand{
++func PauseAllAlerts(c *m.ReqContext, dto dtos.PauseAllAlertsCommand) Response {
++	updateCmd := m.PauseAllAlertCommand{
+ 		Paused: dto.Paused,
+ 	}
+ 
+@@ -271,10 +270,10 @@ func PauseAllAlerts(c *middleware.Context, dto dtos.PauseAllAlertsCommand) Respo
+ 		return ApiError(500, "Failed to pause alerts", err)
+ 	}
+ 
+-	var response models.AlertStateType = models.AlertStatePending
++	var response m.AlertStateType = m.AlertStatePending
+ 	pausedState := "un paused"
+ 	if updateCmd.Paused {
+-		response = models.AlertStatePaused
++		response = m.AlertStatePaused
+ 		pausedState = "paused"
+ 	}
+ 
+diff --git a/pkg/api/alerting_test.go b/pkg/api/alerting_test.go
+index 6b030053e22..9302ef7beca 100644
+--- a/pkg/api/alerting_test.go
++++ b/pkg/api/alerting_test.go
+@@ -5,7 +5,6 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 
+ 	. "github.com/smartystreets/goconvey/convey"
+@@ -81,7 +80,7 @@ func postAlertScenario(desc string, url string, routePattern string, role m.Role
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.UserId = TestUserID
+ 			sc.context.OrgId = TestOrgID
+diff --git a/pkg/api/annotations.go b/pkg/api/annotations.go
+index cb1a15e69eb..fb75e0bf129 100644
+--- a/pkg/api/annotations.go
++++ b/pkg/api/annotations.go
+@@ -6,14 +6,13 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/annotations"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func GetAnnotations(c *middleware.Context) Response {
++func GetAnnotations(c *m.ReqContext) Response {
+ 
+ 	query := &annotations.ItemQuery{
+ 		From:        c.QueryInt64("from") / 1000,
+@@ -52,7 +51,7 @@ func (e *CreateAnnotationError) Error() string {
+ 	return e.message
+ }
+ 
+-func PostAnnotation(c *middleware.Context, cmd dtos.PostAnnotationsCmd) Response {
++func PostAnnotation(c *m.ReqContext, cmd dtos.PostAnnotationsCmd) Response {
+ 	if canSave, err := canSaveByDashboardId(c, cmd.DashboardId); err != nil || !canSave {
+ 		return dashboardGuardianResponse(err)
+ 	}
+@@ -125,7 +124,7 @@ func formatGraphiteAnnotation(what string, data string) string {
+ 	return text
+ }
+ 
+-func PostGraphiteAnnotation(c *middleware.Context, cmd dtos.PostGraphiteAnnotationsCmd) Response {
++func PostGraphiteAnnotation(c *m.ReqContext, cmd dtos.PostGraphiteAnnotationsCmd) Response {
+ 	repo := annotations.GetRepository()
+ 
+ 	if cmd.What == "" {
+@@ -179,7 +178,7 @@ func PostGraphiteAnnotation(c *middleware.Context, cmd dtos.PostGraphiteAnnotati
+ 	})
+ }
+ 
+-func UpdateAnnotation(c *middleware.Context, cmd dtos.UpdateAnnotationsCmd) Response {
++func UpdateAnnotation(c *m.ReqContext, cmd dtos.UpdateAnnotationsCmd) Response {
+ 	annotationId := c.ParamsInt64(":annotationId")
+ 
+ 	repo := annotations.GetRepository()
+@@ -218,7 +217,7 @@ func UpdateAnnotation(c *middleware.Context, cmd dtos.UpdateAnnotationsCmd) Resp
+ 	return ApiSuccess("Annotation updated")
+ }
+ 
+-func DeleteAnnotations(c *middleware.Context, cmd dtos.DeleteAnnotationsCmd) Response {
++func DeleteAnnotations(c *m.ReqContext, cmd dtos.DeleteAnnotationsCmd) Response {
+ 	repo := annotations.GetRepository()
+ 
+ 	err := repo.Delete(&annotations.DeleteParams{
+@@ -234,7 +233,7 @@ func DeleteAnnotations(c *middleware.Context, cmd dtos.DeleteAnnotationsCmd) Res
+ 	return ApiSuccess("Annotations deleted")
+ }
+ 
+-func DeleteAnnotationById(c *middleware.Context) Response {
++func DeleteAnnotationById(c *m.ReqContext) Response {
+ 	repo := annotations.GetRepository()
+ 	annotationId := c.ParamsInt64(":annotationId")
+ 
+@@ -253,7 +252,7 @@ func DeleteAnnotationById(c *middleware.Context) Response {
+ 	return ApiSuccess("Annotation deleted")
+ }
+ 
+-func DeleteAnnotationRegion(c *middleware.Context) Response {
++func DeleteAnnotationRegion(c *m.ReqContext) Response {
+ 	repo := annotations.GetRepository()
+ 	regionId := c.ParamsInt64(":regionId")
+ 
+@@ -272,7 +271,7 @@ func DeleteAnnotationRegion(c *middleware.Context) Response {
+ 	return ApiSuccess("Annotation region deleted")
+ }
+ 
+-func canSaveByDashboardId(c *middleware.Context, dashboardId int64) (bool, error) {
++func canSaveByDashboardId(c *m.ReqContext, dashboardId int64) (bool, error) {
+ 	if dashboardId == 0 && !c.SignedInUser.HasRole(m.ROLE_EDITOR) {
+ 		return false, nil
+ 	}
+@@ -287,7 +286,7 @@ func canSaveByDashboardId(c *middleware.Context, dashboardId int64) (bool, error
+ 	return true, nil
+ }
+ 
+-func canSave(c *middleware.Context, repo annotations.Repository, annotationId int64) Response {
++func canSave(c *m.ReqContext, repo annotations.Repository, annotationId int64) Response {
+ 	items, err := repo.Find(&annotations.ItemQuery{AnnotationId: annotationId, OrgId: c.OrgId})
+ 
+ 	if err != nil || len(items) == 0 {
+@@ -303,7 +302,7 @@ func canSave(c *middleware.Context, repo annotations.Repository, annotationId in
+ 	return nil
+ }
+ 
+-func canSaveByRegionId(c *middleware.Context, repo annotations.Repository, regionId int64) Response {
++func canSaveByRegionId(c *m.ReqContext, repo annotations.Repository, regionId int64) Response {
+ 	items, err := repo.Find(&annotations.ItemQuery{RegionId: regionId, OrgId: c.OrgId})
+ 
+ 	if err != nil || len(items) == 0 {
+diff --git a/pkg/api/annotations_test.go b/pkg/api/annotations_test.go
+index 480962d8826..7c298550673 100644
+--- a/pkg/api/annotations_test.go
++++ b/pkg/api/annotations_test.go
+@@ -5,7 +5,6 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/annotations"
+ 
+@@ -200,7 +199,7 @@ func postAnnotationScenario(desc string, url string, routePattern string, role m
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.UserId = TestUserID
+ 			sc.context.OrgId = TestOrgID
+@@ -223,7 +222,7 @@ func putAnnotationScenario(desc string, url string, routePattern string, role m.
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.UserId = TestUserID
+ 			sc.context.OrgId = TestOrgID
+diff --git a/pkg/api/apikey.go b/pkg/api/apikey.go
+index b2097104aba..24ed69ec691 100644
+--- a/pkg/api/apikey.go
++++ b/pkg/api/apikey.go
+@@ -4,11 +4,10 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/components/apikeygen"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+-func GetApiKeys(c *middleware.Context) Response {
++func GetApiKeys(c *m.ReqContext) Response {
+ 	query := m.GetApiKeysQuery{OrgId: c.OrgId}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -27,7 +26,7 @@ func GetApiKeys(c *middleware.Context) Response {
+ 	return Json(200, result)
+ }
+ 
+-func DeleteApiKey(c *middleware.Context) Response {
++func DeleteApiKey(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":id")
+ 
+ 	cmd := &m.DeleteApiKeyCommand{Id: id, OrgId: c.OrgId}
+@@ -40,7 +39,7 @@ func DeleteApiKey(c *middleware.Context) Response {
+ 	return ApiSuccess("API key deleted")
+ }
+ 
+-func AddApiKey(c *middleware.Context, cmd m.AddApiKeyCommand) Response {
++func AddApiKey(c *m.ReqContext, cmd m.AddApiKeyCommand) Response {
+ 	if !cmd.Role.IsValid() {
+ 		return ApiError(400, "Invalid role specified", nil)
+ 	}
+diff --git a/pkg/api/app_routes.go b/pkg/api/app_routes.go
+index 0440c880979..8d74d96396b 100644
+--- a/pkg/api/app_routes.go
++++ b/pkg/api/app_routes.go
+@@ -56,7 +56,7 @@ func InitAppPluginRoutes(r *macaron.Macaron) {
+ }
+ 
+ func AppPluginRoute(route *plugins.AppPluginRoute, appId string) macaron.Handler {
+-	return func(c *middleware.Context) {
++	return func(c *m.ReqContext) {
+ 		path := c.Params("*")
+ 
+ 		proxy := pluginproxy.NewApiPluginProxy(c, path, route, appId)
+diff --git a/pkg/api/common.go b/pkg/api/common.go
+index bd1c8be477d..370f78f8b1d 100644
+--- a/pkg/api/common.go
++++ b/pkg/api/common.go
+@@ -4,7 +4,7 @@ import (
+ 	"encoding/json"
+ 	"net/http"
+ 
+-	"github.com/grafana/grafana/pkg/middleware"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"gopkg.in/macaron.v1"
+ )
+@@ -19,7 +19,7 @@ var (
+ )
+ 
+ type Response interface {
+-	WriteTo(ctx *middleware.Context)
++	WriteTo(ctx *m.ReqContext)
+ }
+ 
+ type NormalResponse struct {
+@@ -32,7 +32,7 @@ type NormalResponse struct {
+ 
+ func wrap(action interface{}) macaron.Handler {
+ 
+-	return func(c *middleware.Context) {
++	return func(c *m.ReqContext) {
+ 		var res Response
+ 		val, err := c.Invoke(action)
+ 		if err == nil && val != nil && len(val) > 0 {
+@@ -45,7 +45,7 @@ func wrap(action interface{}) macaron.Handler {
+ 	}
+ }
+ 
+-func (r *NormalResponse) WriteTo(ctx *middleware.Context) {
++func (r *NormalResponse) WriteTo(ctx *m.ReqContext) {
+ 	if r.err != nil {
+ 		ctx.Logger.Error(r.errMessage, "error", r.err)
+ 	}
+diff --git a/pkg/api/common_test.go b/pkg/api/common_test.go
+index 33fc1688603..e1cbd20edb3 100644
+--- a/pkg/api/common_test.go
++++ b/pkg/api/common_test.go
+@@ -8,22 +8,22 @@ import (
+ 	"github.com/go-macaron/session"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/models"
+-	macaron "gopkg.in/macaron.v1"
++	m "github.com/grafana/grafana/pkg/models"
++	"gopkg.in/macaron.v1"
+ 
+ 	. "github.com/smartystreets/goconvey/convey"
+ )
+ 
+ func loggedInUserScenario(desc string, url string, fn scenarioFunc) {
+-	loggedInUserScenarioWithRole(desc, "GET", url, url, models.ROLE_EDITOR, fn)
++	loggedInUserScenarioWithRole(desc, "GET", url, url, m.ROLE_EDITOR, fn)
+ }
+ 
+-func loggedInUserScenarioWithRole(desc string, method string, url string, routePattern string, role models.RoleType, fn scenarioFunc) {
++func loggedInUserScenarioWithRole(desc string, method string, url string, routePattern string, role m.RoleType, fn scenarioFunc) {
+ 	Convey(desc+" "+url, func() {
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.UserId = TestUserID
+ 			sc.context.OrgId = TestOrgID
+@@ -71,7 +71,7 @@ func (sc *scenarioContext) fakeReqWithParams(method, url string, queryParams map
+ 
+ type scenarioContext struct {
+ 	m              *macaron.Macaron
+-	context        *middleware.Context
++	context        *m.ReqContext
+ 	resp           *httptest.ResponseRecorder
+ 	handlerFunc    handlerFunc
+ 	defaultHandler macaron.Handler
+@@ -84,7 +84,7 @@ func (sc *scenarioContext) exec() {
+ }
+ 
+ type scenarioFunc func(c *scenarioContext)
+-type handlerFunc func(c *middleware.Context) Response
++type handlerFunc func(c *m.ReqContext) Response
+ 
+ func setupScenarioContext(url string) *scenarioContext {
+ 	sc := &scenarioContext{
+diff --git a/pkg/api/dashboard.go b/pkg/api/dashboard.go
+index 53174075c25..015047fb6de 100644
+--- a/pkg/api/dashboard.go
++++ b/pkg/api/dashboard.go
+@@ -22,7 +22,7 @@ import (
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func isDashboardStarredByUser(c *middleware.Context, dashId int64) (bool, error) {
++func isDashboardStarredByUser(c *m.ReqContext, dashId int64) (bool, error) {
+ 	if !c.IsSignedIn {
+ 		return false, nil
+ 	}
+@@ -43,7 +43,7 @@ func dashboardGuardianResponse(err error) Response {
+ 	return ApiError(403, "Access denied to this dashboard", nil)
+ }
+ 
+-func GetDashboard(c *middleware.Context) Response {
++func GetDashboard(c *m.ReqContext) Response {
+ 	dash, rsp := getDashboardHelper(c.OrgId, c.Params(":slug"), 0, c.Params(":uid"))
+ 	if rsp != nil {
+ 		return rsp
+@@ -141,7 +141,7 @@ func getDashboardHelper(orgId int64, slug string, id int64, uid string) (*m.Dash
+ 	return query.Result, nil
+ }
+ 
+-func DeleteDashboard(c *middleware.Context) Response {
++func DeleteDashboard(c *m.ReqContext) Response {
+ 	query := m.GetDashboardsBySlugQuery{OrgId: c.OrgId, Slug: c.Params(":slug")}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -173,7 +173,7 @@ func DeleteDashboard(c *middleware.Context) Response {
+ 	})
+ }
+ 
+-func DeleteDashboardByUid(c *middleware.Context) Response {
++func DeleteDashboardByUid(c *m.ReqContext) Response {
+ 	dash, rsp := getDashboardHelper(c.OrgId, "", 0, c.Params(":uid"))
+ 	if rsp != nil {
+ 		return rsp
+@@ -195,7 +195,7 @@ func DeleteDashboardByUid(c *middleware.Context) Response {
+ 	})
+ }
+ 
+-func PostDashboard(c *middleware.Context, cmd m.SaveDashboardCommand) Response {
++func PostDashboard(c *m.ReqContext, cmd m.SaveDashboardCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	cmd.UserId = c.UserId
+ 
+@@ -278,7 +278,7 @@ func PostDashboard(c *middleware.Context, cmd m.SaveDashboardCommand) Response {
+ 	})
+ }
+ 
+-func GetHomeDashboard(c *middleware.Context) Response {
++func GetHomeDashboard(c *m.ReqContext) Response {
+ 	prefsQuery := m.GetPreferencesWithDefaultsQuery{OrgId: c.OrgId, UserId: c.UserId}
+ 	if err := bus.Dispatch(&prefsQuery); err != nil {
+ 		return ApiError(500, "Failed to get preferences", err)
+@@ -338,7 +338,7 @@ func addGettingStartedPanelToHomeDashboard(dash *simplejson.Json) {
+ }
+ 
+ // GetDashboardVersions returns all dashboard versions as JSON
+-func GetDashboardVersions(c *middleware.Context) Response {
++func GetDashboardVersions(c *m.ReqContext) Response {
+ 	dashId := c.ParamsInt64(":dashboardId")
+ 
+ 	guardian := guardian.New(dashId, c.OrgId, c.SignedInUser)
+@@ -377,7 +377,7 @@ func GetDashboardVersions(c *middleware.Context) Response {
+ }
+ 
+ // GetDashboardVersion returns the dashboard version with the given ID.
+-func GetDashboardVersion(c *middleware.Context) Response {
++func GetDashboardVersion(c *m.ReqContext) Response {
+ 	dashId := c.ParamsInt64(":dashboardId")
+ 
+ 	guardian := guardian.New(dashId, c.OrgId, c.SignedInUser)
+@@ -409,7 +409,7 @@ func GetDashboardVersion(c *middleware.Context) Response {
+ }
+ 
+ // POST /api/dashboards/calculate-diff performs diffs on two dashboards
+-func CalculateDashboardDiff(c *middleware.Context, apiOptions dtos.CalculateDiffOptions) Response {
++func CalculateDashboardDiff(c *m.ReqContext, apiOptions dtos.CalculateDiffOptions) Response {
+ 
+ 	guardianBase := guardian.New(apiOptions.Base.DashboardId, c.OrgId, c.SignedInUser)
+ 	if canSave, err := guardianBase.CanSave(); err != nil || !canSave {
+@@ -454,7 +454,7 @@ func CalculateDashboardDiff(c *middleware.Context, apiOptions dtos.CalculateDiff
+ }
+ 
+ // RestoreDashboardVersion restores a dashboard to the given version.
+-func RestoreDashboardVersion(c *middleware.Context, apiCmd dtos.RestoreDashboardVersionCommand) Response {
++func RestoreDashboardVersion(c *m.ReqContext, apiCmd dtos.RestoreDashboardVersionCommand) Response {
+ 	dash, rsp := getDashboardHelper(c.OrgId, "", c.ParamsInt64(":dashboardId"), "")
+ 	if rsp != nil {
+ 		return rsp
+@@ -484,7 +484,7 @@ func RestoreDashboardVersion(c *middleware.Context, apiCmd dtos.RestoreDashboard
+ 	return PostDashboard(c, saveCmd)
+ }
+ 
+-func GetDashboardTags(c *middleware.Context) {
++func GetDashboardTags(c *m.ReqContext) {
+ 	query := m.GetDashboardTagsQuery{OrgId: c.OrgId}
+ 	err := bus.Dispatch(&query)
+ 	if err != nil {
+diff --git a/pkg/api/dashboard_permission.go b/pkg/api/dashboard_permission.go
+index 419825644c8..a62c27ab320 100644
+--- a/pkg/api/dashboard_permission.go
++++ b/pkg/api/dashboard_permission.go
+@@ -5,12 +5,11 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ )
+ 
+-func GetDashboardPermissionList(c *middleware.Context) Response {
++func GetDashboardPermissionList(c *m.ReqContext) Response {
+ 	dashId := c.ParamsInt64(":dashboardId")
+ 
+ 	_, rsp := getDashboardHelper(c.OrgId, "", dashId, "")
+@@ -38,7 +37,7 @@ func GetDashboardPermissionList(c *middleware.Context) Response {
+ 	return Json(200, acl)
+ }
+ 
+-func UpdateDashboardPermissions(c *middleware.Context, apiCmd dtos.UpdateDashboardAclCommand) Response {
++func UpdateDashboardPermissions(c *m.ReqContext, apiCmd dtos.UpdateDashboardAclCommand) Response {
+ 	dashId := c.ParamsInt64(":dashboardId")
+ 
+ 	_, rsp := getDashboardHelper(c.OrgId, "", dashId, "")
+diff --git a/pkg/api/dashboard_permission_test.go b/pkg/api/dashboard_permission_test.go
+index 03231338268..bdf80ef5241 100644
+--- a/pkg/api/dashboard_permission_test.go
++++ b/pkg/api/dashboard_permission_test.go
+@@ -6,7 +6,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ 
+@@ -195,7 +194,7 @@ func updateDashboardPermissionScenario(desc string, url string, routePattern str
+ 
+ 		sc := setupScenarioContext(url)
+ 
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.OrgId = TestOrgID
+ 			sc.context.UserId = TestUserID
+diff --git a/pkg/api/dashboard_snapshot.go b/pkg/api/dashboard_snapshot.go
+index c10302faf32..4656940d2bb 100644
+--- a/pkg/api/dashboard_snapshot.go
++++ b/pkg/api/dashboard_snapshot.go
+@@ -6,14 +6,13 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func GetSharingOptions(c *middleware.Context) {
++func GetSharingOptions(c *m.ReqContext) {
+ 	c.JSON(200, util.DynMap{
+ 		"externalSnapshotURL":  setting.ExternalSnapshotUrl,
+ 		"externalSnapshotName": setting.ExternalSnapshotName,
+@@ -21,7 +20,7 @@ func GetSharingOptions(c *middleware.Context) {
+ 	})
+ }
+ 
+-func CreateDashboardSnapshot(c *middleware.Context, cmd m.CreateDashboardSnapshotCommand) {
++func CreateDashboardSnapshot(c *m.ReqContext, cmd m.CreateDashboardSnapshotCommand) {
+ 	if cmd.Name == "" {
+ 		cmd.Name = "Unnamed snapshot"
+ 	}
+@@ -58,7 +57,7 @@ func CreateDashboardSnapshot(c *middleware.Context, cmd m.CreateDashboardSnapsho
+ }
+ 
+ // GET /api/snapshots/:key
+-func GetDashboardSnapshot(c *middleware.Context) {
++func GetDashboardSnapshot(c *m.ReqContext) {
+ 	key := c.Params(":key")
+ 	query := &m.GetDashboardSnapshotQuery{Key: key}
+ 
+@@ -93,7 +92,7 @@ func GetDashboardSnapshot(c *middleware.Context) {
+ }
+ 
+ // GET /api/snapshots-delete/:key
+-func DeleteDashboardSnapshot(c *middleware.Context) Response {
++func DeleteDashboardSnapshot(c *m.ReqContext) Response {
+ 	key := c.Params(":key")
+ 
+ 	query := &m.GetDashboardSnapshotQuery{DeleteKey: key}
+@@ -129,7 +128,7 @@ func DeleteDashboardSnapshot(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/dashboard/snapshots
+-func SearchDashboardSnapshots(c *middleware.Context) Response {
++func SearchDashboardSnapshots(c *m.ReqContext) Response {
+ 	query := c.Query("query")
+ 	limit := c.QueryInt("limit")
+ 
+diff --git a/pkg/api/dashboard_test.go b/pkg/api/dashboard_test.go
+index 3857fa0b9e1..6c5b4e4c102 100644
+--- a/pkg/api/dashboard_test.go
++++ b/pkg/api/dashboard_test.go
+@@ -8,7 +8,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/dashboards"
+ 	"github.com/grafana/grafana/pkg/setting"
+@@ -862,7 +861,7 @@ func postDashboardScenario(desc string, url string, routePattern string, mock *d
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.SignedInUser = &m.SignedInUser{OrgId: cmd.OrgId, UserId: cmd.UserId}
+ 
+@@ -887,7 +886,7 @@ func postDiffScenario(desc string, url string, routePattern string, cmd dtos.Cal
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.SignedInUser = &m.SignedInUser{
+ 				OrgId:  TestOrgID,
+diff --git a/pkg/api/dataproxy.go b/pkg/api/dataproxy.go
+index 8a712f99804..c6fe8b6cd8c 100644
+--- a/pkg/api/dataproxy.go
++++ b/pkg/api/dataproxy.go
+@@ -7,7 +7,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/pluginproxy"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ )
+@@ -35,7 +34,7 @@ func (hs *HttpServer) getDatasourceById(id int64, orgId int64, nocache bool) (*m
+ 	return query.Result, nil
+ }
+ 
+-func (hs *HttpServer) ProxyDataSourceRequest(c *middleware.Context) {
++func (hs *HttpServer) ProxyDataSourceRequest(c *m.ReqContext) {
+ 	c.TimeRequest(metrics.M_DataSource_ProxyReq_Timer)
+ 
+ 	nocache := c.Req.Header.Get(HeaderNameNoBackendCache) == "true"
+diff --git a/pkg/api/datasources.go b/pkg/api/datasources.go
+index b5c5f9cb834..ed8fc5d2a66 100644
+--- a/pkg/api/datasources.go
++++ b/pkg/api/datasources.go
+@@ -5,13 +5,12 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func GetDataSources(c *middleware.Context) Response {
++func GetDataSources(c *m.ReqContext) Response {
+ 	query := m.GetDataSourcesQuery{OrgId: c.OrgId}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -50,7 +49,7 @@ func GetDataSources(c *middleware.Context) Response {
+ 	return Json(200, &result)
+ }
+ 
+-func GetDataSourceById(c *middleware.Context) Response {
++func GetDataSourceById(c *m.ReqContext) Response {
+ 	query := m.GetDataSourceByIdQuery{
+ 		Id:    c.ParamsInt64(":id"),
+ 		OrgId: c.OrgId,
+@@ -69,7 +68,7 @@ func GetDataSourceById(c *middleware.Context) Response {
+ 	return Json(200, &dtos)
+ }
+ 
+-func DeleteDataSourceById(c *middleware.Context) Response {
++func DeleteDataSourceById(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":id")
+ 
+ 	if id <= 0 {
+@@ -95,7 +94,7 @@ func DeleteDataSourceById(c *middleware.Context) Response {
+ 	return ApiSuccess("Data source deleted")
+ }
+ 
+-func DeleteDataSourceByName(c *middleware.Context) Response {
++func DeleteDataSourceByName(c *m.ReqContext) Response {
+ 	name := c.Params(":name")
+ 
+ 	if name == "" {
+@@ -120,7 +119,7 @@ func DeleteDataSourceByName(c *middleware.Context) Response {
+ 	return ApiSuccess("Data source deleted")
+ }
+ 
+-func AddDataSource(c *middleware.Context, cmd m.AddDataSourceCommand) Response {
++func AddDataSource(c *m.ReqContext, cmd m.AddDataSourceCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 
+ 	if err := bus.Dispatch(&cmd); err != nil {
+@@ -140,7 +139,7 @@ func AddDataSource(c *middleware.Context, cmd m.AddDataSourceCommand) Response {
+ 	})
+ }
+ 
+-func UpdateDataSource(c *middleware.Context, cmd m.UpdateDataSourceCommand) Response {
++func UpdateDataSource(c *m.ReqContext, cmd m.UpdateDataSourceCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	cmd.Id = c.ParamsInt64(":id")
+ 
+@@ -205,7 +204,7 @@ func getRawDataSourceById(id int64, orgId int64) (*m.DataSource, error) {
+ }
+ 
+ // Get /api/datasources/name/:name
+-func GetDataSourceByName(c *middleware.Context) Response {
++func GetDataSourceByName(c *m.ReqContext) Response {
+ 	query := m.GetDataSourceByNameQuery{Name: c.Params(":name"), OrgId: c.OrgId}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -221,7 +220,7 @@ func GetDataSourceByName(c *middleware.Context) Response {
+ }
+ 
+ // Get /api/datasources/id/:name
+-func GetDataSourceIdByName(c *middleware.Context) Response {
++func GetDataSourceIdByName(c *m.ReqContext) Response {
+ 	query := m.GetDataSourceByNameQuery{Name: c.Params(":name"), OrgId: c.OrgId}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+diff --git a/pkg/api/folder.go b/pkg/api/folder.go
+index e3c4f127569..143892fa6e8 100644
+--- a/pkg/api/folder.go
++++ b/pkg/api/folder.go
+@@ -4,14 +4,13 @@ import (
+ 	"fmt"
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/dashboards"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func GetFolders(c *middleware.Context) Response {
++func GetFolders(c *m.ReqContext) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	folders, err := s.GetFolders(c.QueryInt("limit"))
+ 
+@@ -32,7 +31,7 @@ func GetFolders(c *middleware.Context) Response {
+ 	return Json(200, result)
+ }
+ 
+-func GetFolderByUid(c *middleware.Context) Response {
++func GetFolderByUid(c *m.ReqContext) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	folder, err := s.GetFolderByUid(c.Params(":uid"))
+ 
+@@ -44,7 +43,7 @@ func GetFolderByUid(c *middleware.Context) Response {
+ 	return Json(200, toFolderDto(g, folder))
+ }
+ 
+-func GetFolderById(c *middleware.Context) Response {
++func GetFolderById(c *m.ReqContext) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	folder, err := s.GetFolderById(c.ParamsInt64(":id"))
+ 	if err != nil {
+@@ -55,7 +54,7 @@ func GetFolderById(c *middleware.Context) Response {
+ 	return Json(200, toFolderDto(g, folder))
+ }
+ 
+-func CreateFolder(c *middleware.Context, cmd m.CreateFolderCommand) Response {
++func CreateFolder(c *m.ReqContext, cmd m.CreateFolderCommand) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	err := s.CreateFolder(&cmd)
+ 	if err != nil {
+@@ -66,7 +65,7 @@ func CreateFolder(c *middleware.Context, cmd m.CreateFolderCommand) Response {
+ 	return Json(200, toFolderDto(g, cmd.Result))
+ }
+ 
+-func UpdateFolder(c *middleware.Context, cmd m.UpdateFolderCommand) Response {
++func UpdateFolder(c *m.ReqContext, cmd m.UpdateFolderCommand) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	err := s.UpdateFolder(c.Params(":uid"), &cmd)
+ 	if err != nil {
+@@ -77,7 +76,7 @@ func UpdateFolder(c *middleware.Context, cmd m.UpdateFolderCommand) Response {
+ 	return Json(200, toFolderDto(g, cmd.Result))
+ }
+ 
+-func DeleteFolder(c *middleware.Context) Response {
++func DeleteFolder(c *m.ReqContext) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	f, err := s.DeleteFolder(c.Params(":uid"))
+ 	if err != nil {
+diff --git a/pkg/api/folder_permission.go b/pkg/api/folder_permission.go
+index 7c8aba87337..1b04eb20e53 100644
+--- a/pkg/api/folder_permission.go
++++ b/pkg/api/folder_permission.go
+@@ -5,13 +5,12 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/dashboards"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+ )
+ 
+-func GetFolderPermissionList(c *middleware.Context) Response {
++func GetFolderPermissionList(c *m.ReqContext) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	folder, err := s.GetFolderByUid(c.Params(":uid"))
+ 
+@@ -42,7 +41,7 @@ func GetFolderPermissionList(c *middleware.Context) Response {
+ 	return Json(200, acl)
+ }
+ 
+-func UpdateFolderPermissions(c *middleware.Context, apiCmd dtos.UpdateDashboardAclCommand) Response {
++func UpdateFolderPermissions(c *m.ReqContext, apiCmd dtos.UpdateDashboardAclCommand) Response {
+ 	s := dashboards.NewFolderService(c.OrgId, c.SignedInUser)
+ 	folder, err := s.GetFolderByUid(c.Params(":uid"))
+ 
+diff --git a/pkg/api/folder_permission_test.go b/pkg/api/folder_permission_test.go
+index 552577963b4..00d025fdce2 100644
+--- a/pkg/api/folder_permission_test.go
++++ b/pkg/api/folder_permission_test.go
+@@ -6,7 +6,6 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/dashboards"
+ 	"github.com/grafana/grafana/pkg/services/guardian"
+@@ -227,7 +226,7 @@ func updateFolderPermissionScenario(desc string, url string, routePattern string
+ 
+ 		sc := setupScenarioContext(url)
+ 
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.OrgId = TestOrgID
+ 			sc.context.UserId = TestUserID
+diff --git a/pkg/api/folder_test.go b/pkg/api/folder_test.go
+index 0ab3cc7d7c9..7cefdcf8544 100644
+--- a/pkg/api/folder_test.go
++++ b/pkg/api/folder_test.go
+@@ -7,11 +7,8 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/models"
+-	"github.com/grafana/grafana/pkg/services/dashboards"
+-
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/dashboards"
+ 
+ 	. "github.com/smartystreets/goconvey/convey"
+ )
+@@ -155,7 +152,7 @@ func createFolderScenario(desc string, url string, routePattern string, mock *fa
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.SignedInUser = &m.SignedInUser{OrgId: TestOrgID, UserId: TestUserID}
+ 
+@@ -184,7 +181,7 @@ func updateFolderScenario(desc string, url string, routePattern string, mock *fa
+ 		defer bus.ClearBusHandlers()
+ 
+ 		sc := setupScenarioContext(url)
+-		sc.defaultHandler = wrap(func(c *middleware.Context) Response {
++		sc.defaultHandler = wrap(func(c *m.ReqContext) Response {
+ 			sc.context = c
+ 			sc.context.SignedInUser = &m.SignedInUser{OrgId: TestOrgID, UserId: TestUserID}
+ 
+@@ -205,50 +202,50 @@ func updateFolderScenario(desc string, url string, routePattern string, mock *fa
+ }
+ 
+ type fakeFolderService struct {
+-	GetFoldersResult     []*models.Folder
++	GetFoldersResult     []*m.Folder
+ 	GetFoldersError      error
+-	GetFolderByUidResult *models.Folder
++	GetFolderByUidResult *m.Folder
+ 	GetFolderByUidError  error
+-	GetFolderByIdResult  *models.Folder
++	GetFolderByIdResult  *m.Folder
+ 	GetFolderByIdError   error
+-	CreateFolderResult   *models.Folder
++	CreateFolderResult   *m.Folder
+ 	CreateFolderError    error
+-	UpdateFolderResult   *models.Folder
++	UpdateFolderResult   *m.Folder
+ 	UpdateFolderError    error
+-	DeleteFolderResult   *models.Folder
++	DeleteFolderResult   *m.Folder
+ 	DeleteFolderError    error
+ 	DeletedFolderUids    []string
+ }
+ 
+-func (s *fakeFolderService) GetFolders(limit int) ([]*models.Folder, error) {
++func (s *fakeFolderService) GetFolders(limit int) ([]*m.Folder, error) {
+ 	return s.GetFoldersResult, s.GetFoldersError
+ }
+ 
+-func (s *fakeFolderService) GetFolderById(id int64) (*models.Folder, error) {
++func (s *fakeFolderService) GetFolderById(id int64) (*m.Folder, error) {
+ 	return s.GetFolderByIdResult, s.GetFolderByIdError
+ }
+ 
+-func (s *fakeFolderService) GetFolderByUid(uid string) (*models.Folder, error) {
++func (s *fakeFolderService) GetFolderByUid(uid string) (*m.Folder, error) {
+ 	return s.GetFolderByUidResult, s.GetFolderByUidError
+ }
+ 
+-func (s *fakeFolderService) CreateFolder(cmd *models.CreateFolderCommand) error {
++func (s *fakeFolderService) CreateFolder(cmd *m.CreateFolderCommand) error {
+ 	cmd.Result = s.CreateFolderResult
+ 	return s.CreateFolderError
+ }
+ 
+-func (s *fakeFolderService) UpdateFolder(existingUid string, cmd *models.UpdateFolderCommand) error {
++func (s *fakeFolderService) UpdateFolder(existingUid string, cmd *m.UpdateFolderCommand) error {
+ 	cmd.Result = s.UpdateFolderResult
+ 	return s.UpdateFolderError
+ }
+ 
+-func (s *fakeFolderService) DeleteFolder(uid string) (*models.Folder, error) {
++func (s *fakeFolderService) DeleteFolder(uid string) (*m.Folder, error) {
+ 	s.DeletedFolderUids = append(s.DeletedFolderUids, uid)
+ 	return s.DeleteFolderResult, s.DeleteFolderError
+ }
+ 
+ func mockFolderService(mock *fakeFolderService) {
+-	dashboards.NewFolderService = func(orgId int64, user *models.SignedInUser) dashboards.FolderService {
++	dashboards.NewFolderService = func(orgId int64, user *m.SignedInUser) dashboards.FolderService {
+ 		return mock
+ 	}
+ }
+diff --git a/pkg/api/frontendsettings.go b/pkg/api/frontendsettings.go
+index 591dcc62344..5cd52122c3f 100644
+--- a/pkg/api/frontendsettings.go
++++ b/pkg/api/frontendsettings.go
+@@ -5,14 +5,13 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func getFrontendSettingsMap(c *middleware.Context) (map[string]interface{}, error) {
++func getFrontendSettingsMap(c *m.ReqContext) (map[string]interface{}, error) {
+ 	orgDataSources := make([]*m.DataSource, 0)
+ 
+ 	if c.OrgId != 0 {
+@@ -180,7 +179,7 @@ func getPanelSort(id string) int {
+ 	return sort
+ }
+ 
+-func GetFrontendSettings(c *middleware.Context) {
++func GetFrontendSettings(c *m.ReqContext) {
+ 	settings, err := getFrontendSettingsMap(c)
+ 	if err != nil {
+ 		c.JsonApiErr(400, "Failed to get frontend settings", err)
+diff --git a/pkg/api/grafana_com_proxy.go b/pkg/api/grafana_com_proxy.go
+index a2a446b48eb..afd3bb9bf8e 100644
+--- a/pkg/api/grafana_com_proxy.go
++++ b/pkg/api/grafana_com_proxy.go
+@@ -7,7 +7,7 @@ import (
+ 	"net/url"
+ 	"time"
+ 
+-	"github.com/grafana/grafana/pkg/middleware"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+@@ -41,7 +41,7 @@ func ReverseProxyGnetReq(proxyPath string) *httputil.ReverseProxy {
+ 	return &httputil.ReverseProxy{Director: director}
+ }
+ 
+-func ProxyGnetRequest(c *middleware.Context) {
++func ProxyGnetRequest(c *m.ReqContext) {
+ 	proxyPath := c.Params("*")
+ 	proxy := ReverseProxyGnetReq(proxyPath)
+ 	proxy.Transport = grafanaComProxyTransport
+diff --git a/pkg/api/index.go b/pkg/api/index.go
+index dbfe1414246..e50c59e082a 100644
+--- a/pkg/api/index.go
++++ b/pkg/api/index.go
+@@ -6,13 +6,12 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func setIndexViewData(c *middleware.Context) (*dtos.IndexViewData, error) {
++func setIndexViewData(c *m.ReqContext) (*dtos.IndexViewData, error) {
+ 	settings, err := getFrontendSettingsMap(c)
+ 	if err != nil {
+ 		return nil, err
+@@ -299,7 +298,7 @@ func setIndexViewData(c *middleware.Context) (*dtos.IndexViewData, error) {
+ 	return &data, nil
+ }
+ 
+-func Index(c *middleware.Context) {
++func Index(c *m.ReqContext) {
+ 	if data, err := setIndexViewData(c); err != nil {
+ 		c.Handle(500, "Failed to get settings", err)
+ 		return
+@@ -308,7 +307,7 @@ func Index(c *middleware.Context) {
+ 	}
+ }
+ 
+-func NotFoundHandler(c *middleware.Context) {
++func NotFoundHandler(c *m.ReqContext) {
+ 	if c.IsApiRequest() {
+ 		c.JsonApiErr(404, "Not found", nil)
+ 		return
+diff --git a/pkg/api/login.go b/pkg/api/login.go
+index b6855af7baf..2ca2ce5a3e2 100644
+--- a/pkg/api/login.go
++++ b/pkg/api/login.go
+@@ -8,8 +8,8 @@ import (
+ 	"github.com/grafana/grafana/pkg/log"
+ 	"github.com/grafana/grafana/pkg/login"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+@@ -17,7 +17,7 @@ const (
+ 	VIEW_INDEX = "index"
+ )
+ 
+-func LoginView(c *middleware.Context) {
++func LoginView(c *m.ReqContext) {
+ 	viewData, err := setIndexViewData(c)
+ 	if err != nil {
+ 		c.Handle(500, "Failed to get settings", err)
+@@ -53,7 +53,7 @@ func LoginView(c *middleware.Context) {
+ 	c.Redirect(setting.AppSubUrl + "/")
+ }
+ 
+-func tryLoginUsingRememberCookie(c *middleware.Context) bool {
++func tryLoginUsingRememberCookie(c *m.ReqContext) bool {
+ 	// Check auto-login.
+ 	uname := c.GetCookie(setting.CookieUserName)
+ 	if len(uname) == 0 {
+@@ -87,7 +87,7 @@ func tryLoginUsingRememberCookie(c *middleware.Context) bool {
+ 	return true
+ }
+ 
+-func LoginApiPing(c *middleware.Context) {
++func LoginApiPing(c *m.ReqContext) {
+ 	if !tryLoginUsingRememberCookie(c) {
+ 		c.JsonApiErr(401, "Unauthorized", nil)
+ 		return
+@@ -96,7 +96,7 @@ func LoginApiPing(c *middleware.Context) {
+ 	c.JsonOK("Logged in")
+ }
+ 
+-func LoginPost(c *middleware.Context, cmd dtos.LoginCommand) Response {
++func LoginPost(c *m.ReqContext, cmd dtos.LoginCommand) Response {
+ 	if setting.DisableLoginForm {
+ 		return ApiError(401, "Login is disabled", nil)
+ 	}
+@@ -133,7 +133,7 @@ func LoginPost(c *middleware.Context, cmd dtos.LoginCommand) Response {
+ 	return Json(200, result)
+ }
+ 
+-func loginUserWithUser(user *m.User, c *middleware.Context) {
++func loginUserWithUser(user *m.User, c *m.ReqContext) {
+ 	if user == nil {
+ 		log.Error(3, "User login with nil user")
+ 	}
+@@ -146,13 +146,13 @@ func loginUserWithUser(user *m.User, c *middleware.Context) {
+ 		c.SetSuperSecureCookie(user.Rands+user.Password, setting.CookieRememberName, user.Login, days, setting.AppSubUrl+"/")
+ 	}
+ 
+-	c.Session.RegenerateId(c)
+-	c.Session.Set(middleware.SESS_KEY_USERID, user.Id)
++	c.Session.RegenerateId(c.Context)
++	c.Session.Set(session.SESS_KEY_USERID, user.Id)
+ }
+ 
+-func Logout(c *middleware.Context) {
++func Logout(c *m.ReqContext) {
+ 	c.SetCookie(setting.CookieUserName, "", -1, setting.AppSubUrl+"/")
+ 	c.SetCookie(setting.CookieRememberName, "", -1, setting.AppSubUrl+"/")
+-	c.Session.Destory(c)
++	c.Session.Destory(c.Context)
+ 	c.Redirect(setting.AppSubUrl + "/login")
+ }
+diff --git a/pkg/api/login_oauth.go b/pkg/api/login_oauth.go
+index 341ff212f10..d9018885161 100644
+--- a/pkg/api/login_oauth.go
++++ b/pkg/api/login_oauth.go
+@@ -19,6 +19,7 @@ import (
+ 	"github.com/grafana/grafana/pkg/metrics"
+ 	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/social"
+ )
+@@ -38,7 +39,7 @@ func GenStateString() string {
+ 	return base64.URLEncoding.EncodeToString(rnd)
+ }
+ 
+-func OAuthLogin(ctx *middleware.Context) {
++func OAuthLogin(ctx *m.ReqContext) {
+ 	if setting.OAuthService == nil {
+ 		ctx.Handle(404, "OAuth not enabled", nil)
+ 		return
+@@ -62,7 +63,7 @@ func OAuthLogin(ctx *middleware.Context) {
+ 	code := ctx.Query("code")
+ 	if code == "" {
+ 		state := GenStateString()
+-		ctx.Session.Set(middleware.SESS_KEY_OAUTH_STATE, state)
++		ctx.Session.Set(session.SESS_KEY_OAUTH_STATE, state)
+ 		if setting.OAuthService.OAuthInfos[name].HostedDomain == "" {
+ 			ctx.Redirect(connect.AuthCodeURL(state, oauth2.AccessTypeOnline))
+ 		} else {
+@@ -71,7 +72,7 @@ func OAuthLogin(ctx *middleware.Context) {
+ 		return
+ 	}
+ 
+-	savedState, ok := ctx.Session.Get(middleware.SESS_KEY_OAUTH_STATE).(string)
++	savedState, ok := ctx.Session.Get(session.SESS_KEY_OAUTH_STATE).(string)
+ 	if !ok {
+ 		ctx.Handle(500, "login.OAuthLogin(missing saved state)", nil)
+ 		return
+@@ -208,7 +209,7 @@ func OAuthLogin(ctx *middleware.Context) {
+ 	ctx.Redirect(setting.AppSubUrl + "/")
+ }
+ 
+-func redirectWithError(ctx *middleware.Context, err error, v ...interface{}) {
++func redirectWithError(ctx *m.ReqContext, err error, v ...interface{}) {
+ 	ctx.Logger.Error(err.Error(), v...)
+ 	ctx.Session.Set("loginError", err.Error())
+ 	ctx.Redirect(setting.AppSubUrl + "/login")
+diff --git a/pkg/api/metrics.go b/pkg/api/metrics.go
+index 717565cd4a1..5d395d655a9 100644
+--- a/pkg/api/metrics.go
++++ b/pkg/api/metrics.go
+@@ -6,15 +6,14 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/models"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/tsdb"
+ 	"github.com/grafana/grafana/pkg/tsdb/testdata"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // POST /api/tsdb/query
+-func QueryMetrics(c *middleware.Context, reqDto dtos.MetricRequest) Response {
++func QueryMetrics(c *m.ReqContext, reqDto dtos.MetricRequest) Response {
+ 	timeRange := tsdb.NewTimeRange(reqDto.From, reqDto.To)
+ 
+ 	if len(reqDto.Queries) == 0 {
+@@ -26,7 +25,7 @@ func QueryMetrics(c *middleware.Context, reqDto dtos.MetricRequest) Response {
+ 		return ApiError(400, "Query missing datasourceId", nil)
+ 	}
+ 
+-	dsQuery := models.GetDataSourceByIdQuery{Id: dsId, OrgId: c.OrgId}
++	dsQuery := m.GetDataSourceByIdQuery{Id: dsId, OrgId: c.OrgId}
+ 	if err := bus.Dispatch(&dsQuery); err != nil {
+ 		return ApiError(500, "failed to fetch data source", err)
+ 	}
+@@ -61,7 +60,7 @@ func QueryMetrics(c *middleware.Context, reqDto dtos.MetricRequest) Response {
+ }
+ 
+ // GET /api/tsdb/testdata/scenarios
+-func GetTestDataScenarios(c *middleware.Context) Response {
++func GetTestDataScenarios(c *m.ReqContext) Response {
+ 	result := make([]interface{}, 0)
+ 
+ 	for _, scenario := range testdata.ScenarioRegistry {
+@@ -77,14 +76,14 @@ func GetTestDataScenarios(c *middleware.Context) Response {
+ }
+ 
+ // Genereates a index out of range error
+-func GenerateError(c *middleware.Context) Response {
++func GenerateError(c *m.ReqContext) Response {
+ 	var array []string
+ 	return Json(200, array[20])
+ }
+ 
+ // GET /api/tsdb/testdata/gensql
+-func GenerateSqlTestData(c *middleware.Context) Response {
+-	if err := bus.Dispatch(&models.InsertSqlTestDataCommand{}); err != nil {
++func GenerateSqlTestData(c *m.ReqContext) Response {
++	if err := bus.Dispatch(&m.InsertSqlTestDataCommand{}); err != nil {
+ 		return ApiError(500, "Failed to insert test data", err)
+ 	}
+ 
+@@ -92,7 +91,7 @@ func GenerateSqlTestData(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/tsdb/testdata/random-walk
+-func GetTestDataRandomWalk(c *middleware.Context) Response {
++func GetTestDataRandomWalk(c *m.ReqContext) Response {
+ 	from := c.Query("from")
+ 	to := c.Query("to")
+ 	intervalMs := c.QueryInt64("intervalMs")
+@@ -100,7 +99,7 @@ func GetTestDataRandomWalk(c *middleware.Context) Response {
+ 	timeRange := tsdb.NewTimeRange(from, to)
+ 	request := &tsdb.TsdbQuery{TimeRange: timeRange}
+ 
+-	dsInfo := &models.DataSource{Type: "grafana-testdata-datasource"}
++	dsInfo := &m.DataSource{Type: "grafana-testdata-datasource"}
+ 	request.Queries = append(request.Queries, &tsdb.Query{
+ 		RefId:      "A",
+ 		IntervalMs: intervalMs,
+diff --git a/pkg/api/org.go b/pkg/api/org.go
+index bddfebf80ce..5f20559dbbe 100644
+--- a/pkg/api/org.go
++++ b/pkg/api/org.go
+@@ -4,24 +4,23 @@ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // GET /api/org
+-func GetOrgCurrent(c *middleware.Context) Response {
++func GetOrgCurrent(c *m.ReqContext) Response {
+ 	return getOrgHelper(c.OrgId)
+ }
+ 
+ // GET /api/orgs/:orgId
+-func GetOrgById(c *middleware.Context) Response {
++func GetOrgById(c *m.ReqContext) Response {
+ 	return getOrgHelper(c.ParamsInt64(":orgId"))
+ }
+ 
+ // Get /api/orgs/name/:name
+-func GetOrgByName(c *middleware.Context) Response {
++func GetOrgByName(c *m.ReqContext) Response {
+ 	query := m.GetOrgByNameQuery{Name: c.Params(":name")}
+ 	if err := bus.Dispatch(&query); err != nil {
+ 		if err == m.ErrOrgNotFound {
+@@ -76,7 +75,7 @@ func getOrgHelper(orgId int64) Response {
+ }
+ 
+ // POST /api/orgs
+-func CreateOrg(c *middleware.Context, cmd m.CreateOrgCommand) Response {
++func CreateOrg(c *m.ReqContext, cmd m.CreateOrgCommand) Response {
+ 	if !c.IsSignedIn || (!setting.AllowUserOrgCreate && !c.IsGrafanaAdmin) {
+ 		return ApiError(403, "Access denied", nil)
+ 	}
+@@ -98,12 +97,12 @@ func CreateOrg(c *middleware.Context, cmd m.CreateOrgCommand) Response {
+ }
+ 
+ // PUT /api/org
+-func UpdateOrgCurrent(c *middleware.Context, form dtos.UpdateOrgForm) Response {
++func UpdateOrgCurrent(c *m.ReqContext, form dtos.UpdateOrgForm) Response {
+ 	return updateOrgHelper(form, c.OrgId)
+ }
+ 
+ // PUT /api/orgs/:orgId
+-func UpdateOrg(c *middleware.Context, form dtos.UpdateOrgForm) Response {
++func UpdateOrg(c *m.ReqContext, form dtos.UpdateOrgForm) Response {
+ 	return updateOrgHelper(form, c.ParamsInt64(":orgId"))
+ }
+ 
+@@ -120,12 +119,12 @@ func updateOrgHelper(form dtos.UpdateOrgForm, orgId int64) Response {
+ }
+ 
+ // PUT /api/org/address
+-func UpdateOrgAddressCurrent(c *middleware.Context, form dtos.UpdateOrgAddressForm) Response {
++func UpdateOrgAddressCurrent(c *m.ReqContext, form dtos.UpdateOrgAddressForm) Response {
+ 	return updateOrgAddressHelper(form, c.OrgId)
+ }
+ 
+ // PUT /api/orgs/:orgId/address
+-func UpdateOrgAddress(c *middleware.Context, form dtos.UpdateOrgAddressForm) Response {
++func UpdateOrgAddress(c *m.ReqContext, form dtos.UpdateOrgAddressForm) Response {
+ 	return updateOrgAddressHelper(form, c.ParamsInt64(":orgId"))
+ }
+ 
+@@ -150,7 +149,7 @@ func updateOrgAddressHelper(form dtos.UpdateOrgAddressForm, orgId int64) Respons
+ }
+ 
+ // GET /api/orgs/:orgId
+-func DeleteOrgById(c *middleware.Context) Response {
++func DeleteOrgById(c *m.ReqContext) Response {
+ 	if err := bus.Dispatch(&m.DeleteOrgCommand{Id: c.ParamsInt64(":orgId")}); err != nil {
+ 		if err == m.ErrOrgNotFound {
+ 			return ApiError(404, "Failed to delete organization. ID not found", nil)
+@@ -160,7 +159,7 @@ func DeleteOrgById(c *middleware.Context) Response {
+ 	return ApiSuccess("Organization deleted")
+ }
+ 
+-func SearchOrgs(c *middleware.Context) Response {
++func SearchOrgs(c *m.ReqContext) Response {
+ 	query := m.SearchOrgsQuery{
+ 		Query: c.Query("query"),
+ 		Name:  c.Query("name"),
+diff --git a/pkg/api/org_invite.go b/pkg/api/org_invite.go
+index 57d9913d2eb..6a727dd95cc 100644
+--- a/pkg/api/org_invite.go
++++ b/pkg/api/org_invite.go
+@@ -7,13 +7,12 @@ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/events"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func GetPendingOrgInvites(c *middleware.Context) Response {
++func GetPendingOrgInvites(c *m.ReqContext) Response {
+ 	query := m.GetTempUsersQuery{OrgId: c.OrgId, Status: m.TmpUserInvitePending}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -27,7 +26,7 @@ func GetPendingOrgInvites(c *middleware.Context) Response {
+ 	return Json(200, query.Result)
+ }
+ 
+-func AddOrgInvite(c *middleware.Context, inviteDto dtos.AddInviteForm) Response {
++func AddOrgInvite(c *m.ReqContext, inviteDto dtos.AddInviteForm) Response {
+ 	if !inviteDto.Role.IsValid() {
+ 		return ApiError(400, "Invalid role specified", nil)
+ 	}
+@@ -89,7 +88,7 @@ func AddOrgInvite(c *middleware.Context, inviteDto dtos.AddInviteForm) Response
+ 	return ApiSuccess(fmt.Sprintf("Created invite for %s", inviteDto.LoginOrEmail))
+ }
+ 
+-func inviteExistingUserToOrg(c *middleware.Context, user *m.User, inviteDto *dtos.AddInviteForm) Response {
++func inviteExistingUserToOrg(c *m.ReqContext, user *m.User, inviteDto *dtos.AddInviteForm) Response {
+ 	// user exists, add org role
+ 	createOrgUserCmd := m.AddOrgUserCommand{OrgId: c.OrgId, UserId: user.Id, Role: inviteDto.Role}
+ 	if err := bus.Dispatch(&createOrgUserCmd); err != nil {
+@@ -119,7 +118,7 @@ func inviteExistingUserToOrg(c *middleware.Context, user *m.User, inviteDto *dto
+ 	}
+ }
+ 
+-func RevokeInvite(c *middleware.Context) Response {
++func RevokeInvite(c *m.ReqContext) Response {
+ 	if ok, rsp := updateTempUserStatus(c.Params(":code"), m.TmpUserRevoked); !ok {
+ 		return rsp
+ 	}
+@@ -127,7 +126,7 @@ func RevokeInvite(c *middleware.Context) Response {
+ 	return ApiSuccess("Invite revoked")
+ }
+ 
+-func GetInviteInfoByCode(c *middleware.Context) Response {
++func GetInviteInfoByCode(c *m.ReqContext) Response {
+ 	query := m.GetTempUserByCodeQuery{Code: c.Params(":code")}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -147,7 +146,7 @@ func GetInviteInfoByCode(c *middleware.Context) Response {
+ 	})
+ }
+ 
+-func CompleteInvite(c *middleware.Context, completeInvite dtos.CompleteInviteForm) Response {
++func CompleteInvite(c *m.ReqContext, completeInvite dtos.CompleteInviteForm) Response {
+ 	query := m.GetTempUserByCodeQuery{Code: completeInvite.InviteCode}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+diff --git a/pkg/api/org_users.go b/pkg/api/org_users.go
+index 433b9f2bd66..6d7c2bb94bd 100644
+--- a/pkg/api/org_users.go
++++ b/pkg/api/org_users.go
+@@ -3,18 +3,17 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+ // POST /api/org/users
+-func AddOrgUserToCurrentOrg(c *middleware.Context, cmd m.AddOrgUserCommand) Response {
++func AddOrgUserToCurrentOrg(c *m.ReqContext, cmd m.AddOrgUserCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	return addOrgUserHelper(cmd)
+ }
+ 
+ // POST /api/orgs/:orgId/users
+-func AddOrgUser(c *middleware.Context, cmd m.AddOrgUserCommand) Response {
++func AddOrgUser(c *m.ReqContext, cmd m.AddOrgUserCommand) Response {
+ 	cmd.OrgId = c.ParamsInt64(":orgId")
+ 	return addOrgUserHelper(cmd)
+ }
+@@ -45,12 +44,12 @@ func addOrgUserHelper(cmd m.AddOrgUserCommand) Response {
+ }
+ 
+ // GET /api/org/users
+-func GetOrgUsersForCurrentOrg(c *middleware.Context) Response {
++func GetOrgUsersForCurrentOrg(c *m.ReqContext) Response {
+ 	return getOrgUsersHelper(c.OrgId, c.Params("query"), c.ParamsInt("limit"))
+ }
+ 
+ // GET /api/orgs/:orgId/users
+-func GetOrgUsers(c *middleware.Context) Response {
++func GetOrgUsers(c *m.ReqContext) Response {
+ 	return getOrgUsersHelper(c.ParamsInt64(":orgId"), "", 0)
+ }
+ 
+@@ -73,14 +72,14 @@ func getOrgUsersHelper(orgId int64, query string, limit int) Response {
+ }
+ 
+ // PATCH /api/org/users/:userId
+-func UpdateOrgUserForCurrentOrg(c *middleware.Context, cmd m.UpdateOrgUserCommand) Response {
++func UpdateOrgUserForCurrentOrg(c *m.ReqContext, cmd m.UpdateOrgUserCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	cmd.UserId = c.ParamsInt64(":userId")
+ 	return updateOrgUserHelper(cmd)
+ }
+ 
+ // PATCH /api/orgs/:orgId/users/:userId
+-func UpdateOrgUser(c *middleware.Context, cmd m.UpdateOrgUserCommand) Response {
++func UpdateOrgUser(c *m.ReqContext, cmd m.UpdateOrgUserCommand) Response {
+ 	cmd.OrgId = c.ParamsInt64(":orgId")
+ 	cmd.UserId = c.ParamsInt64(":userId")
+ 	return updateOrgUserHelper(cmd)
+@@ -102,13 +101,13 @@ func updateOrgUserHelper(cmd m.UpdateOrgUserCommand) Response {
+ }
+ 
+ // DELETE /api/org/users/:userId
+-func RemoveOrgUserForCurrentOrg(c *middleware.Context) Response {
++func RemoveOrgUserForCurrentOrg(c *m.ReqContext) Response {
+ 	userId := c.ParamsInt64(":userId")
+ 	return removeOrgUserHelper(c.OrgId, userId)
+ }
+ 
+ // DELETE /api/orgs/:orgId/users/:userId
+-func RemoveOrgUser(c *middleware.Context) Response {
++func RemoveOrgUser(c *m.ReqContext) Response {
+ 	userId := c.ParamsInt64(":userId")
+ 	orgId := c.ParamsInt64(":orgId")
+ 	return removeOrgUserHelper(orgId, userId)
+diff --git a/pkg/api/password.go b/pkg/api/password.go
+index e71f1317ee4..31ea5d91b34 100644
+--- a/pkg/api/password.go
++++ b/pkg/api/password.go
+@@ -3,12 +3,11 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func SendResetPasswordEmail(c *middleware.Context, form dtos.SendResetPasswordEmailForm) Response {
++func SendResetPasswordEmail(c *m.ReqContext, form dtos.SendResetPasswordEmailForm) Response {
+ 	userQuery := m.GetUserByLoginQuery{LoginOrEmail: form.UserOrEmail}
+ 
+ 	if err := bus.Dispatch(&userQuery); err != nil {
+@@ -24,7 +23,7 @@ func SendResetPasswordEmail(c *middleware.Context, form dtos.SendResetPasswordEm
+ 	return ApiSuccess("Email sent")
+ }
+ 
+-func ResetPassword(c *middleware.Context, form dtos.ResetUserPasswordForm) Response {
++func ResetPassword(c *m.ReqContext, form dtos.ResetUserPasswordForm) Response {
+ 	query := m.ValidateResetPasswordCodeQuery{Code: form.Code}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+diff --git a/pkg/api/playlist.go b/pkg/api/playlist.go
+index 040aef0474e..45de40ce337 100644
+--- a/pkg/api/playlist.go
++++ b/pkg/api/playlist.go
+@@ -3,11 +3,10 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	_ "github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+-func ValidateOrgPlaylist(c *middleware.Context) {
++func ValidateOrgPlaylist(c *m.ReqContext) {
+ 	id := c.ParamsInt64(":id")
+ 	query := m.GetPlaylistByIdQuery{Id: id}
+ 	err := bus.Dispatch(&query)
+@@ -40,7 +39,7 @@ func ValidateOrgPlaylist(c *middleware.Context) {
+ 	}
+ }
+ 
+-func SearchPlaylists(c *middleware.Context) Response {
++func SearchPlaylists(c *m.ReqContext) Response {
+ 	query := c.Query("query")
+ 	limit := c.QueryInt("limit")
+ 
+@@ -62,7 +61,7 @@ func SearchPlaylists(c *middleware.Context) Response {
+ 	return Json(200, searchQuery.Result)
+ }
+ 
+-func GetPlaylist(c *middleware.Context) Response {
++func GetPlaylist(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":id")
+ 	cmd := m.GetPlaylistByIdQuery{Id: id}
+ 
+@@ -115,7 +114,7 @@ func LoadPlaylistItems(id int64) ([]m.PlaylistItem, error) {
+ 	return *itemQuery.Result, nil
+ }
+ 
+-func GetPlaylistItems(c *middleware.Context) Response {
++func GetPlaylistItems(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":id")
+ 
+ 	playlistDTOs, err := LoadPlaylistItemDTOs(id)
+@@ -127,7 +126,7 @@ func GetPlaylistItems(c *middleware.Context) Response {
+ 	return Json(200, playlistDTOs)
+ }
+ 
+-func GetPlaylistDashboards(c *middleware.Context) Response {
++func GetPlaylistDashboards(c *m.ReqContext) Response {
+ 	playlistId := c.ParamsInt64(":id")
+ 
+ 	playlists, err := LoadPlaylistDashboards(c.OrgId, c.SignedInUser, playlistId)
+@@ -138,7 +137,7 @@ func GetPlaylistDashboards(c *middleware.Context) Response {
+ 	return Json(200, playlists)
+ }
+ 
+-func DeletePlaylist(c *middleware.Context) Response {
++func DeletePlaylist(c *m.ReqContext) Response {
+ 	id := c.ParamsInt64(":id")
+ 
+ 	cmd := m.DeletePlaylistCommand{Id: id, OrgId: c.OrgId}
+@@ -149,7 +148,7 @@ func DeletePlaylist(c *middleware.Context) Response {
+ 	return Json(200, "")
+ }
+ 
+-func CreatePlaylist(c *middleware.Context, cmd m.CreatePlaylistCommand) Response {
++func CreatePlaylist(c *m.ReqContext, cmd m.CreatePlaylistCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 
+ 	if err := bus.Dispatch(&cmd); err != nil {
+@@ -159,7 +158,7 @@ func CreatePlaylist(c *middleware.Context, cmd m.CreatePlaylistCommand) Response
+ 	return Json(200, cmd.Result)
+ }
+ 
+-func UpdatePlaylist(c *middleware.Context, cmd m.UpdatePlaylistCommand) Response {
++func UpdatePlaylist(c *m.ReqContext, cmd m.UpdatePlaylistCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 
+ 	if err := bus.Dispatch(&cmd); err != nil {
+diff --git a/pkg/api/pluginproxy/ds_proxy.go b/pkg/api/pluginproxy/ds_proxy.go
+index 5f4ec632c4d..ee2eba3b3b4 100644
+--- a/pkg/api/pluginproxy/ds_proxy.go
++++ b/pkg/api/pluginproxy/ds_proxy.go
+@@ -18,7 +18,6 @@ import (
+ 	"github.com/opentracing/opentracing-go"
+ 
+ 	"github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/setting"
+@@ -42,14 +41,14 @@ type jwtToken struct {
+ 
+ type DataSourceProxy struct {
+ 	ds        *m.DataSource
+-	ctx       *middleware.Context
++	ctx       *m.ReqContext
+ 	targetUrl *url.URL
+ 	proxyPath string
+ 	route     *plugins.AppPluginRoute
+ 	plugin    *plugins.DataSourcePlugin
+ }
+ 
+-func NewDataSourceProxy(ds *m.DataSource, plugin *plugins.DataSourcePlugin, ctx *middleware.Context, proxyPath string) *DataSourceProxy {
++func NewDataSourceProxy(ds *m.DataSource, plugin *plugins.DataSourcePlugin, ctx *m.ReqContext, proxyPath string) *DataSourceProxy {
+ 	targetUrl, _ := url.Parse(ds.Url)
+ 
+ 	return &DataSourceProxy{
+@@ -255,7 +254,7 @@ func (proxy *DataSourceProxy) logRequest() {
+ 		"body", body)
+ }
+ 
+-func checkWhiteList(c *middleware.Context, host string) bool {
++func checkWhiteList(c *m.ReqContext, host string) bool {
+ 	if host != "" && len(setting.DataProxyWhiteList) > 0 {
+ 		if _, exists := setting.DataProxyWhiteList[host]; !exists {
+ 			c.JsonApiErr(403, "Data proxy hostname and ip are not included in whitelist", nil)
+diff --git a/pkg/api/pluginproxy/ds_proxy_test.go b/pkg/api/pluginproxy/ds_proxy_test.go
+index a7a869b2a9f..3cf67d9178a 100644
+--- a/pkg/api/pluginproxy/ds_proxy_test.go
++++ b/pkg/api/pluginproxy/ds_proxy_test.go
+@@ -8,7 +8,6 @@ import (
+ 	macaron "gopkg.in/macaron.v1"
+ 
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/setting"
+@@ -61,7 +60,7 @@ func TestDSRouteRule(t *testing.T) {
+ 			}
+ 
+ 			req, _ := http.NewRequest("GET", "http://localhost/asd", nil)
+-			ctx := &middleware.Context{
++			ctx := &m.ReqContext{
+ 				Context: &macaron.Context{
+ 					Req: macaron.Request{Request: req},
+ 				},
+@@ -104,7 +103,7 @@ func TestDSRouteRule(t *testing.T) {
+ 		Convey("When proxying graphite", func() {
+ 			plugin := &plugins.DataSourcePlugin{}
+ 			ds := &m.DataSource{Url: "htttp://graphite:8080", Type: m.DS_GRAPHITE}
+-			ctx := &middleware.Context{}
++			ctx := &m.ReqContext{}
+ 
+ 			proxy := NewDataSourceProxy(ds, plugin, ctx, "/render")
+ 
+@@ -130,7 +129,7 @@ func TestDSRouteRule(t *testing.T) {
+ 				Password: "password",
+ 			}
+ 
+-			ctx := &middleware.Context{}
++			ctx := &m.ReqContext{}
+ 			proxy := NewDataSourceProxy(ds, plugin, ctx, "")
+ 
+ 			requestUrl, _ := url.Parse("http://grafana.com/sub")
+@@ -160,7 +159,7 @@ func TestDSRouteRule(t *testing.T) {
+ 				JsonData: json,
+ 			}
+ 
+-			ctx := &middleware.Context{}
++			ctx := &m.ReqContext{}
+ 			proxy := NewDataSourceProxy(ds, plugin, ctx, "")
+ 
+ 			requestUrl, _ := url.Parse("http://grafana.com/sub")
+@@ -186,7 +185,7 @@ func TestDSRouteRule(t *testing.T) {
+ 				JsonData: json,
+ 			}
+ 
+-			ctx := &middleware.Context{}
++			ctx := &m.ReqContext{}
+ 			proxy := NewDataSourceProxy(ds, plugin, ctx, "")
+ 
+ 			requestUrl, _ := url.Parse("http://grafana.com/sub")
+diff --git a/pkg/api/pluginproxy/pluginproxy.go b/pkg/api/pluginproxy/pluginproxy.go
+index 59138884228..eb78250838a 100644
+--- a/pkg/api/pluginproxy/pluginproxy.go
++++ b/pkg/api/pluginproxy/pluginproxy.go
+@@ -9,7 +9,6 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/log"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/util"
+@@ -38,7 +37,7 @@ func getHeaders(route *plugins.AppPluginRoute, orgId int64, appId string) (http.
+ 	return result, err
+ }
+ 
+-func NewApiPluginProxy(ctx *middleware.Context, proxyPath string, route *plugins.AppPluginRoute, appId string) *httputil.ReverseProxy {
++func NewApiPluginProxy(ctx *m.ReqContext, proxyPath string, route *plugins.AppPluginRoute, appId string) *httputil.ReverseProxy {
+ 	targetUrl, _ := url.Parse(route.Url)
+ 
+ 	director := func(req *http.Request) {
+diff --git a/pkg/api/plugins.go b/pkg/api/plugins.go
+index e8c21541339..bc38f4a7775 100644
+--- a/pkg/api/plugins.go
++++ b/pkg/api/plugins.go
+@@ -5,13 +5,12 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/plugins"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func GetPluginList(c *middleware.Context) Response {
++func GetPluginList(c *m.ReqContext) Response {
+ 	typeFilter := c.Query("type")
+ 	enabledFilter := c.Query("enabled")
+ 	embeddedFilter := c.Query("embedded")
+@@ -79,7 +78,7 @@ func GetPluginList(c *middleware.Context) Response {
+ 	return Json(200, result)
+ }
+ 
+-func GetPluginSettingById(c *middleware.Context) Response {
++func GetPluginSettingById(c *m.ReqContext) Response {
+ 	pluginId := c.Params(":pluginId")
+ 
+ 	if def, exists := plugins.Plugins[pluginId]; !exists {
+@@ -116,7 +115,7 @@ func GetPluginSettingById(c *middleware.Context) Response {
+ 	}
+ }
+ 
+-func UpdatePluginSetting(c *middleware.Context, cmd m.UpdatePluginSettingCmd) Response {
++func UpdatePluginSetting(c *m.ReqContext, cmd m.UpdatePluginSettingCmd) Response {
+ 	pluginId := c.Params(":pluginId")
+ 
+ 	cmd.OrgId = c.OrgId
+@@ -133,7 +132,7 @@ func UpdatePluginSetting(c *middleware.Context, cmd m.UpdatePluginSettingCmd) Re
+ 	return ApiSuccess("Plugin settings updated")
+ }
+ 
+-func GetPluginDashboards(c *middleware.Context) Response {
++func GetPluginDashboards(c *m.ReqContext) Response {
+ 	pluginId := c.Params(":pluginId")
+ 
+ 	if list, err := plugins.GetPluginDashboards(c.OrgId, pluginId); err != nil {
+@@ -147,7 +146,7 @@ func GetPluginDashboards(c *middleware.Context) Response {
+ 	}
+ }
+ 
+-func GetPluginMarkdown(c *middleware.Context) Response {
++func GetPluginMarkdown(c *m.ReqContext) Response {
+ 	pluginId := c.Params(":pluginId")
+ 	name := c.Params(":name")
+ 
+@@ -164,7 +163,7 @@ func GetPluginMarkdown(c *middleware.Context) Response {
+ 	}
+ }
+ 
+-func ImportDashboard(c *middleware.Context, apiCmd dtos.ImportDashboardCommand) Response {
++func ImportDashboard(c *m.ReqContext, apiCmd dtos.ImportDashboardCommand) Response {
+ 
+ 	cmd := plugins.ImportDashboardCommand{
+ 		OrgId:     c.OrgId,
+diff --git a/pkg/api/preferences.go b/pkg/api/preferences.go
+index 795b8994470..eb0ffa14b39 100644
+--- a/pkg/api/preferences.go
++++ b/pkg/api/preferences.go
+@@ -3,12 +3,11 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+ // POST /api/preferences/set-home-dash
+-func SetHomeDashboard(c *middleware.Context, cmd m.SavePreferencesCommand) Response {
++func SetHomeDashboard(c *m.ReqContext, cmd m.SavePreferencesCommand) Response {
+ 
+ 	cmd.UserId = c.UserId
+ 	cmd.OrgId = c.OrgId
+@@ -21,7 +20,7 @@ func SetHomeDashboard(c *middleware.Context, cmd m.SavePreferencesCommand) Respo
+ }
+ 
+ // GET /api/user/preferences
+-func GetUserPreferences(c *middleware.Context) Response {
++func GetUserPreferences(c *m.ReqContext) Response {
+ 	return getPreferencesFor(c.OrgId, c.UserId)
+ }
+ 
+@@ -42,7 +41,7 @@ func getPreferencesFor(orgId int64, userId int64) Response {
+ }
+ 
+ // PUT /api/user/preferences
+-func UpdateUserPreferences(c *middleware.Context, dtoCmd dtos.UpdatePrefsCmd) Response {
++func UpdateUserPreferences(c *m.ReqContext, dtoCmd dtos.UpdatePrefsCmd) Response {
+ 	return updatePreferencesFor(c.OrgId, c.UserId, &dtoCmd)
+ }
+ 
+@@ -63,11 +62,11 @@ func updatePreferencesFor(orgId int64, userId int64, dtoCmd *dtos.UpdatePrefsCmd
+ }
+ 
+ // GET /api/org/preferences
+-func GetOrgPreferences(c *middleware.Context) Response {
++func GetOrgPreferences(c *m.ReqContext) Response {
+ 	return getPreferencesFor(c.OrgId, 0)
+ }
+ 
+ // PUT /api/org/preferences
+-func UpdateOrgPreferences(c *middleware.Context, dtoCmd dtos.UpdatePrefsCmd) Response {
++func UpdateOrgPreferences(c *m.ReqContext, dtoCmd dtos.UpdatePrefsCmd) Response {
+ 	return updatePreferencesFor(c.OrgId, 0, &dtoCmd)
+ }
+diff --git a/pkg/api/quota.go b/pkg/api/quota.go
+index d8585435430..f92acaf470f 100644
+--- a/pkg/api/quota.go
++++ b/pkg/api/quota.go
+@@ -2,12 +2,11 @@ package api
+ 
+ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func GetOrgQuotas(c *middleware.Context) Response {
++func GetOrgQuotas(c *m.ReqContext) Response {
+ 	if !setting.Quota.Enabled {
+ 		return ApiError(404, "Quotas not enabled", nil)
+ 	}
+@@ -20,7 +19,7 @@ func GetOrgQuotas(c *middleware.Context) Response {
+ 	return Json(200, query.Result)
+ }
+ 
+-func UpdateOrgQuota(c *middleware.Context, cmd m.UpdateOrgQuotaCmd) Response {
++func UpdateOrgQuota(c *m.ReqContext, cmd m.UpdateOrgQuotaCmd) Response {
+ 	if !setting.Quota.Enabled {
+ 		return ApiError(404, "Quotas not enabled", nil)
+ 	}
+@@ -37,7 +36,7 @@ func UpdateOrgQuota(c *middleware.Context, cmd m.UpdateOrgQuotaCmd) Response {
+ 	return ApiSuccess("Organization quota updated")
+ }
+ 
+-func GetUserQuotas(c *middleware.Context) Response {
++func GetUserQuotas(c *m.ReqContext) Response {
+ 	if !setting.Quota.Enabled {
+ 		return ApiError(404, "Quotas not enabled", nil)
+ 	}
+@@ -50,7 +49,7 @@ func GetUserQuotas(c *middleware.Context) Response {
+ 	return Json(200, query.Result)
+ }
+ 
+-func UpdateUserQuota(c *middleware.Context, cmd m.UpdateUserQuotaCmd) Response {
++func UpdateUserQuota(c *m.ReqContext, cmd m.UpdateUserQuotaCmd) Response {
+ 	if !setting.Quota.Enabled {
+ 		return ApiError(404, "Quotas not enabled", nil)
+ 	}
+diff --git a/pkg/api/render.go b/pkg/api/render.go
+index 65733cfab15..6e948ed294c 100644
+--- a/pkg/api/render.go
++++ b/pkg/api/render.go
+@@ -5,11 +5,11 @@ import (
+ 	"net/http"
+ 
+ 	"github.com/grafana/grafana/pkg/components/renderer"
+-	"github.com/grafana/grafana/pkg/middleware"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+-func RenderToPng(c *middleware.Context) {
++func RenderToPng(c *m.ReqContext) {
+ 	queryReader, err := util.NewUrlQueryReader(c.Req.URL)
+ 	if err != nil {
+ 		c.Handle(400, "Render parameters error", err)
+diff --git a/pkg/api/search.go b/pkg/api/search.go
+index f79385d83f8..c8a0a5592bb 100644
+--- a/pkg/api/search.go
++++ b/pkg/api/search.go
+@@ -5,25 +5,24 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+-	"github.com/grafana/grafana/pkg/models"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/search"
+ )
+ 
+-func Search(c *middleware.Context) {
++func Search(c *m.ReqContext) {
+ 	query := c.Query("query")
+ 	tags := c.QueryStrings("tag")
+ 	starred := c.Query("starred")
+ 	limit := c.QueryInt("limit")
+ 	dashboardType := c.Query("type")
+-	permission := models.PERMISSION_VIEW
++	permission := m.PERMISSION_VIEW
+ 
+ 	if limit == 0 {
+ 		limit = 1000
+ 	}
+ 
+ 	if c.Query("permission") == "Edit" {
+-		permission = models.PERMISSION_EDIT
++		permission = m.PERMISSION_EDIT
+ 	}
+ 
+ 	dbids := make([]int64, 0)
+diff --git a/pkg/api/signup.go b/pkg/api/signup.go
+index 36ece023087..838d2f9c0af 100644
+--- a/pkg/api/signup.go
++++ b/pkg/api/signup.go
+@@ -5,14 +5,13 @@ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	"github.com/grafana/grafana/pkg/events"
+ 	"github.com/grafana/grafana/pkg/metrics"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // GET /api/user/signup/options
+-func GetSignUpOptions(c *middleware.Context) Response {
++func GetSignUpOptions(c *m.ReqContext) Response {
+ 	return Json(200, util.DynMap{
+ 		"verifyEmailEnabled": setting.VerifyEmailEnabled,
+ 		"autoAssignOrg":      setting.AutoAssignOrg,
+@@ -20,7 +19,7 @@ func GetSignUpOptions(c *middleware.Context) Response {
+ }
+ 
+ // POST /api/user/signup
+-func SignUp(c *middleware.Context, form dtos.SignUpForm) Response {
++func SignUp(c *m.ReqContext, form dtos.SignUpForm) Response {
+ 	if !setting.AllowUserSignUp {
+ 		return ApiError(401, "User signup is disabled", nil)
+ 	}
+@@ -52,7 +51,7 @@ func SignUp(c *middleware.Context, form dtos.SignUpForm) Response {
+ 	return Json(200, util.DynMap{"status": "SignUpCreated"})
+ }
+ 
+-func SignUpStep2(c *middleware.Context, form dtos.SignUpStep2Form) Response {
++func SignUpStep2(c *m.ReqContext, form dtos.SignUpStep2Form) Response {
+ 	if !setting.AllowUserSignUp {
+ 		return ApiError(401, "User signup is disabled", nil)
+ 	}
+diff --git a/pkg/api/stars.go b/pkg/api/stars.go
+index c6f9d037eba..5361f64eea6 100644
+--- a/pkg/api/stars.go
++++ b/pkg/api/stars.go
+@@ -2,11 +2,10 @@ package api
+ 
+ import (
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+-func StarDashboard(c *middleware.Context) Response {
++func StarDashboard(c *m.ReqContext) Response {
+ 	if !c.IsSignedIn {
+ 		return ApiError(412, "You need to sign in to star dashboards", nil)
+ 	}
+@@ -24,7 +23,7 @@ func StarDashboard(c *middleware.Context) Response {
+ 	return ApiSuccess("Dashboard starred!")
+ }
+ 
+-func UnstarDashboard(c *middleware.Context) Response {
++func UnstarDashboard(c *m.ReqContext) Response {
+ 
+ 	cmd := m.UnstarDashboardCommand{UserId: c.UserId, DashboardId: c.ParamsInt64(":id")}
+ 
+diff --git a/pkg/api/team.go b/pkg/api/team.go
+index f11eca68b91..316adfc4e7c 100644
+--- a/pkg/api/team.go
++++ b/pkg/api/team.go
+@@ -3,13 +3,12 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // POST /api/teams
+-func CreateTeam(c *middleware.Context, cmd m.CreateTeamCommand) Response {
++func CreateTeam(c *m.ReqContext, cmd m.CreateTeamCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	if err := bus.Dispatch(&cmd); err != nil {
+ 		if err == m.ErrTeamNameTaken {
+@@ -25,7 +24,7 @@ func CreateTeam(c *middleware.Context, cmd m.CreateTeamCommand) Response {
+ }
+ 
+ // PUT /api/teams/:teamId
+-func UpdateTeam(c *middleware.Context, cmd m.UpdateTeamCommand) Response {
++func UpdateTeam(c *m.ReqContext, cmd m.UpdateTeamCommand) Response {
+ 	cmd.OrgId = c.OrgId
+ 	cmd.Id = c.ParamsInt64(":teamId")
+ 	if err := bus.Dispatch(&cmd); err != nil {
+@@ -39,7 +38,7 @@ func UpdateTeam(c *middleware.Context, cmd m.UpdateTeamCommand) Response {
+ }
+ 
+ // DELETE /api/teams/:teamId
+-func DeleteTeamById(c *middleware.Context) Response {
++func DeleteTeamById(c *m.ReqContext) Response {
+ 	if err := bus.Dispatch(&m.DeleteTeamCommand{OrgId: c.OrgId, Id: c.ParamsInt64(":teamId")}); err != nil {
+ 		if err == m.ErrTeamNotFound {
+ 			return ApiError(404, "Failed to delete Team. ID not found", nil)
+@@ -50,7 +49,7 @@ func DeleteTeamById(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/teams/search
+-func SearchTeams(c *middleware.Context) Response {
++func SearchTeams(c *m.ReqContext) Response {
+ 	perPage := c.QueryInt("perpage")
+ 	if perPage <= 0 {
+ 		perPage = 1000
+@@ -83,7 +82,7 @@ func SearchTeams(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/teams/:teamId
+-func GetTeamById(c *middleware.Context) Response {
++func GetTeamById(c *m.ReqContext) Response {
+ 	query := m.GetTeamByIdQuery{OrgId: c.OrgId, Id: c.ParamsInt64(":teamId")}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+diff --git a/pkg/api/team_members.go b/pkg/api/team_members.go
+index 8586ac04fdb..4fb05b016e3 100644
+--- a/pkg/api/team_members.go
++++ b/pkg/api/team_members.go
+@@ -3,13 +3,12 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // GET /api/teams/:teamId/members
+-func GetTeamMembers(c *middleware.Context) Response {
++func GetTeamMembers(c *m.ReqContext) Response {
+ 	query := m.GetTeamMembersQuery{OrgId: c.OrgId, TeamId: c.ParamsInt64(":teamId")}
+ 
+ 	if err := bus.Dispatch(&query); err != nil {
+@@ -24,7 +23,7 @@ func GetTeamMembers(c *middleware.Context) Response {
+ }
+ 
+ // POST /api/teams/:teamId/members
+-func AddTeamMember(c *middleware.Context, cmd m.AddTeamMemberCommand) Response {
++func AddTeamMember(c *m.ReqContext, cmd m.AddTeamMemberCommand) Response {
+ 	cmd.TeamId = c.ParamsInt64(":teamId")
+ 	cmd.OrgId = c.OrgId
+ 
+@@ -46,7 +45,7 @@ func AddTeamMember(c *middleware.Context, cmd m.AddTeamMemberCommand) Response {
+ }
+ 
+ // DELETE /api/teams/:teamId/members/:userId
+-func RemoveTeamMember(c *middleware.Context) Response {
++func RemoveTeamMember(c *m.ReqContext) Response {
+ 	if err := bus.Dispatch(&m.RemoveTeamMemberCommand{OrgId: c.OrgId, TeamId: c.ParamsInt64(":teamId"), UserId: c.ParamsInt64(":userId")}); err != nil {
+ 		if err == m.ErrTeamNotFound {
+ 			return ApiError(404, "Team not found", nil)
+diff --git a/pkg/api/user.go b/pkg/api/user.go
+index 9a041d30272..b8483316b9d 100644
+--- a/pkg/api/user.go
++++ b/pkg/api/user.go
+@@ -3,19 +3,18 @@ package api
+ import (
+ 	"github.com/grafana/grafana/pkg/api/dtos"
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/middleware"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ )
+ 
+ // GET /api/user  (current authenticated user)
+-func GetSignedInUser(c *middleware.Context) Response {
++func GetSignedInUser(c *m.ReqContext) Response {
+ 	return getUserUserProfile(c.UserId)
+ }
+ 
+ // GET /api/users/:id
+-func GetUserById(c *middleware.Context) Response {
++func GetUserById(c *m.ReqContext) Response {
+ 	return getUserUserProfile(c.ParamsInt64(":id"))
+ }
+ 
+@@ -33,7 +32,7 @@ func getUserUserProfile(userId int64) Response {
+ }
+ 
+ // GET /api/users/lookup
+-func GetUserByLoginOrEmail(c *middleware.Context) Response {
++func GetUserByLoginOrEmail(c *m.ReqContext) Response {
+ 	query := m.GetUserByLoginQuery{LoginOrEmail: c.Query("loginOrEmail")}
+ 	if err := bus.Dispatch(&query); err != nil {
+ 		if err == m.ErrUserNotFound {
+@@ -55,7 +54,7 @@ func GetUserByLoginOrEmail(c *middleware.Context) Response {
+ }
+ 
+ // POST /api/user
+-func UpdateSignedInUser(c *middleware.Context, cmd m.UpdateUserCommand) Response {
++func UpdateSignedInUser(c *m.ReqContext, cmd m.UpdateUserCommand) Response {
+ 	if setting.AuthProxyEnabled {
+ 		if setting.AuthProxyHeaderProperty == "email" && cmd.Email != c.Email {
+ 			return ApiError(400, "Not allowed to change email when auth proxy is using email property", nil)
+@@ -69,13 +68,13 @@ func UpdateSignedInUser(c *middleware.Context, cmd m.UpdateUserCommand) Response
+ }
+ 
+ // POST /api/users/:id
+-func UpdateUser(c *middleware.Context, cmd m.UpdateUserCommand) Response {
++func UpdateUser(c *m.ReqContext, cmd m.UpdateUserCommand) Response {
+ 	cmd.UserId = c.ParamsInt64(":id")
+ 	return handleUpdateUser(cmd)
+ }
+ 
+ //POST /api/users/:id/using/:orgId
+-func UpdateUserActiveOrg(c *middleware.Context) Response {
++func UpdateUserActiveOrg(c *m.ReqContext) Response {
+ 	userId := c.ParamsInt64(":id")
+ 	orgId := c.ParamsInt64(":orgId")
+ 
+@@ -108,12 +107,12 @@ func handleUpdateUser(cmd m.UpdateUserCommand) Response {
+ }
+ 
+ // GET /api/user/orgs
+-func GetSignedInUserOrgList(c *middleware.Context) Response {
++func GetSignedInUserOrgList(c *m.ReqContext) Response {
+ 	return getUserOrgList(c.UserId)
+ }
+ 
+ // GET /api/user/:id/orgs
+-func GetUserOrgList(c *middleware.Context) Response {
++func GetUserOrgList(c *m.ReqContext) Response {
+ 	return getUserOrgList(c.ParamsInt64(":id"))
+ }
+ 
+@@ -146,7 +145,7 @@ func validateUsingOrg(userId int64, orgId int64) bool {
+ }
+ 
+ // POST /api/user/using/:id
+-func UserSetUsingOrg(c *middleware.Context) Response {
++func UserSetUsingOrg(c *m.ReqContext) Response {
+ 	orgId := c.ParamsInt64(":id")
+ 
+ 	if !validateUsingOrg(c.UserId, orgId) {
+@@ -163,7 +162,7 @@ func UserSetUsingOrg(c *middleware.Context) Response {
+ }
+ 
+ // GET /profile/switch-org/:id
+-func ChangeActiveOrgAndRedirectToHome(c *middleware.Context) {
++func ChangeActiveOrgAndRedirectToHome(c *m.ReqContext) {
+ 	orgId := c.ParamsInt64(":id")
+ 
+ 	if !validateUsingOrg(c.UserId, orgId) {
+@@ -179,7 +178,7 @@ func ChangeActiveOrgAndRedirectToHome(c *middleware.Context) {
+ 	c.Redirect(setting.AppSubUrl + "/")
+ }
+ 
+-func ChangeUserPassword(c *middleware.Context, cmd m.ChangeUserPasswordCommand) Response {
++func ChangeUserPassword(c *m.ReqContext, cmd m.ChangeUserPasswordCommand) Response {
+ 	if setting.LdapEnabled || setting.AuthProxyEnabled {
+ 		return ApiError(400, "Not allowed to change password when LDAP or Auth Proxy is enabled", nil)
+ 	}
+@@ -211,7 +210,7 @@ func ChangeUserPassword(c *middleware.Context, cmd m.ChangeUserPasswordCommand)
+ }
+ 
+ // GET /api/users
+-func SearchUsers(c *middleware.Context) Response {
++func SearchUsers(c *m.ReqContext) Response {
+ 	query, err := searchUser(c)
+ 	if err != nil {
+ 		return ApiError(500, "Failed to fetch users", err)
+@@ -221,7 +220,7 @@ func SearchUsers(c *middleware.Context) Response {
+ }
+ 
+ // GET /api/users/search
+-func SearchUsersWithPaging(c *middleware.Context) Response {
++func SearchUsersWithPaging(c *m.ReqContext) Response {
+ 	query, err := searchUser(c)
+ 	if err != nil {
+ 		return ApiError(500, "Failed to fetch users", err)
+@@ -230,7 +229,7 @@ func SearchUsersWithPaging(c *middleware.Context) Response {
+ 	return Json(200, query.Result)
+ }
+ 
+-func searchUser(c *middleware.Context) (*m.SearchUsersQuery, error) {
++func searchUser(c *m.ReqContext) (*m.SearchUsersQuery, error) {
+ 	perPage := c.QueryInt("perpage")
+ 	if perPage <= 0 {
+ 		perPage = 1000
+@@ -258,7 +257,7 @@ func searchUser(c *middleware.Context) (*m.SearchUsersQuery, error) {
+ 	return query, nil
+ }
+ 
+-func SetHelpFlag(c *middleware.Context) Response {
++func SetHelpFlag(c *m.ReqContext) Response {
+ 	flag := c.ParamsInt64(":id")
+ 
+ 	bitmask := &c.HelpFlags1
+@@ -276,7 +275,7 @@ func SetHelpFlag(c *middleware.Context) Response {
+ 	return Json(200, &util.DynMap{"message": "Help flag set", "helpFlags1": cmd.HelpFlags1})
+ }
+ 
+-func ClearHelpFlags(c *middleware.Context) Response {
++func ClearHelpFlags(c *m.ReqContext) Response {
+ 	cmd := m.SetUserHelpFlagCommand{
+ 		UserId:     c.UserId,
+ 		HelpFlags1: m.HelpFlags1(0),
+diff --git a/pkg/middleware/auth.go b/pkg/middleware/auth.go
+index 65697a616ea..d6c377bc9ac 100644
+--- a/pkg/middleware/auth.go
++++ b/pkg/middleware/auth.go
+@@ -7,6 +7,7 @@ import (
+ 	"gopkg.in/macaron.v1"
+ 
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+@@ -15,8 +16,8 @@ type AuthOptions struct {
+ 	ReqSignedIn     bool
+ }
+ 
+-func getRequestUserId(c *Context) int64 {
+-	userId := c.Session.Get(SESS_KEY_USERID)
++func getRequestUserId(c *m.ReqContext) int64 {
++	userId := c.Session.Get(session.SESS_KEY_USERID)
+ 
+ 	if userId != nil {
+ 		return userId.(int64)
+@@ -25,7 +26,7 @@ func getRequestUserId(c *Context) int64 {
+ 	return 0
+ }
+ 
+-func getApiKey(c *Context) string {
++func getApiKey(c *m.ReqContext) string {
+ 	header := c.Req.Header.Get("Authorization")
+ 	parts := strings.SplitN(header, " ", 2)
+ 	if len(parts) == 2 && parts[0] == "Bearer" {
+@@ -36,7 +37,7 @@ func getApiKey(c *Context) string {
+ 	return ""
+ }
+ 
+-func accessForbidden(c *Context) {
++func accessForbidden(c *m.ReqContext) {
+ 	if c.IsApiRequest() {
+ 		c.JsonApiErr(403, "Permission denied", nil)
+ 		return
+@@ -45,7 +46,7 @@ func accessForbidden(c *Context) {
+ 	c.Redirect(setting.AppSubUrl + "/")
+ }
+ 
+-func notAuthorized(c *Context) {
++func notAuthorized(c *m.ReqContext) {
+ 	if c.IsApiRequest() {
+ 		c.JsonApiErr(401, "Unauthorized", nil)
+ 		return
+@@ -57,7 +58,7 @@ func notAuthorized(c *Context) {
+ }
+ 
+ func RoleAuth(roles ...m.RoleType) macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		ok := false
+ 		for _, role := range roles {
+ 			if role == c.OrgRole {
+@@ -72,7 +73,7 @@ func RoleAuth(roles ...m.RoleType) macaron.Handler {
+ }
+ 
+ func Auth(options *AuthOptions) macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		if !c.IsSignedIn && options.ReqSignedIn && !c.AllowAnonymous {
+ 			notAuthorized(c)
+ 			return
+diff --git a/pkg/middleware/auth_proxy.go b/pkg/middleware/auth_proxy.go
+index 3247805ec09..4d2a7a98908 100644
+--- a/pkg/middleware/auth_proxy.go
++++ b/pkg/middleware/auth_proxy.go
+@@ -10,10 +10,11 @@ import (
+ 	"github.com/grafana/grafana/pkg/log"
+ 	"github.com/grafana/grafana/pkg/login"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+-func initContextWithAuthProxy(ctx *Context, orgId int64) bool {
++func initContextWithAuthProxy(ctx *m.ReqContext, orgId int64) bool {
+ 	if !setting.AuthProxyEnabled {
+ 		return false
+ 	}
+@@ -58,7 +59,7 @@ func initContextWithAuthProxy(ctx *Context, orgId int64) bool {
+ 	}
+ 
+ 	// initialize session
+-	if err := ctx.Session.Start(ctx); err != nil {
++	if err := ctx.Session.Start(ctx.Context); err != nil {
+ 		log.Error(3, "Failed to start session", err)
+ 		return false
+ 	}
+@@ -66,12 +67,12 @@ func initContextWithAuthProxy(ctx *Context, orgId int64) bool {
+ 	// Make sure that we cannot share a session between different users!
+ 	if getRequestUserId(ctx) > 0 && getRequestUserId(ctx) != query.Result.UserId {
+ 		// remove session
+-		if err := ctx.Session.Destory(ctx); err != nil {
++		if err := ctx.Session.Destory(ctx.Context); err != nil {
+ 			log.Error(3, "Failed to destroy session, err")
+ 		}
+ 
+ 		// initialize a new session
+-		if err := ctx.Session.Start(ctx); err != nil {
++		if err := ctx.Session.Start(ctx.Context); err != nil {
+ 			log.Error(3, "Failed to start session", err)
+ 		}
+ 	}
+@@ -89,17 +90,17 @@ func initContextWithAuthProxy(ctx *Context, orgId int64) bool {
+ 
+ 	ctx.SignedInUser = query.Result
+ 	ctx.IsSignedIn = true
+-	ctx.Session.Set(SESS_KEY_USERID, ctx.UserId)
++	ctx.Session.Set(session.SESS_KEY_USERID, ctx.UserId)
+ 
+ 	return true
+ }
+ 
+-var syncGrafanaUserWithLdapUser = func(ctx *Context, query *m.GetSignedInUserQuery) error {
++var syncGrafanaUserWithLdapUser = func(ctx *m.ReqContext, query *m.GetSignedInUserQuery) error {
+ 	if setting.LdapEnabled {
+ 		expireEpoch := time.Now().Add(time.Duration(-setting.AuthProxyLdapSyncTtl) * time.Minute).Unix()
+ 
+ 		var lastLdapSync int64
+-		if lastLdapSyncInSession := ctx.Session.Get(SESS_KEY_LASTLDAPSYNC); lastLdapSyncInSession != nil {
++		if lastLdapSyncInSession := ctx.Session.Get(session.SESS_KEY_LASTLDAPSYNC); lastLdapSyncInSession != nil {
+ 			lastLdapSync = lastLdapSyncInSession.(int64)
+ 		}
+ 
+@@ -113,14 +114,14 @@ var syncGrafanaUserWithLdapUser = func(ctx *Context, query *m.GetSignedInUserQue
+ 				}
+ 			}
+ 
+-			ctx.Session.Set(SESS_KEY_LASTLDAPSYNC, time.Now().Unix())
++			ctx.Session.Set(session.SESS_KEY_LASTLDAPSYNC, time.Now().Unix())
+ 		}
+ 	}
+ 
+ 	return nil
+ }
+ 
+-func checkAuthenticationProxy(ctx *Context, proxyHeaderValue string) error {
++func checkAuthenticationProxy(ctx *m.ReqContext, proxyHeaderValue string) error {
+ 	if len(strings.TrimSpace(setting.AuthProxyWhitelist)) > 0 {
+ 		proxies := strings.Split(setting.AuthProxyWhitelist, ",")
+ 		remoteAddrSplit := strings.Split(ctx.Req.RemoteAddr, ":")
+diff --git a/pkg/middleware/auth_proxy_test.go b/pkg/middleware/auth_proxy_test.go
+index 4da0f52bbcf..b3c011bd870 100644
+--- a/pkg/middleware/auth_proxy_test.go
++++ b/pkg/middleware/auth_proxy_test.go
+@@ -6,8 +6,10 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/login"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	. "github.com/smartystreets/goconvey/convey"
++	"gopkg.in/macaron.v1"
+ )
+ 
+ func TestAuthProxyWithLdapEnabled(t *testing.T) {
+@@ -29,45 +31,45 @@ func TestAuthProxyWithLdapEnabled(t *testing.T) {
+ 
+ 		Convey("When session variable lastLdapSync not set, call syncSignedInUser and set lastLdapSync", func() {
+ 			// arrange
+-			session := mockSession{}
+-			ctx := Context{Session: &session}
+-			So(session.Get(SESS_KEY_LASTLDAPSYNC), ShouldBeNil)
++			sess := mockSession{}
++			ctx := m.ReqContext{Session: &sess}
++			So(sess.Get(session.SESS_KEY_LASTLDAPSYNC), ShouldBeNil)
+ 
+ 			// act
+ 			syncGrafanaUserWithLdapUser(&ctx, &query)
+ 
+ 			// assert
+ 			So(mockLdapAuther.syncSignedInUserCalled, ShouldBeTrue)
+-			So(session.Get(SESS_KEY_LASTLDAPSYNC), ShouldBeGreaterThan, 0)
++			So(sess.Get(session.SESS_KEY_LASTLDAPSYNC), ShouldBeGreaterThan, 0)
+ 		})
+ 
+ 		Convey("When session variable not expired, don't sync and don't change session var", func() {
+ 			// arrange
+-			session := mockSession{}
+-			ctx := Context{Session: &session}
++			sess := mockSession{}
++			ctx := m.ReqContext{Session: &sess}
+ 			now := time.Now().Unix()
+-			session.Set(SESS_KEY_LASTLDAPSYNC, now)
++			sess.Set(session.SESS_KEY_LASTLDAPSYNC, now)
+ 
+ 			// act
+ 			syncGrafanaUserWithLdapUser(&ctx, &query)
+ 
+ 			// assert
+-			So(session.Get(SESS_KEY_LASTLDAPSYNC), ShouldEqual, now)
++			So(sess.Get(session.SESS_KEY_LASTLDAPSYNC), ShouldEqual, now)
+ 			So(mockLdapAuther.syncSignedInUserCalled, ShouldBeFalse)
+ 		})
+ 
+ 		Convey("When lastldapsync is expired, session variable should be updated", func() {
+ 			// arrange
+-			session := mockSession{}
+-			ctx := Context{Session: &session}
++			sess := mockSession{}
++			ctx := m.ReqContext{Session: &sess}
+ 			expiredTime := time.Now().Add(time.Duration(-120) * time.Minute).Unix()
+-			session.Set(SESS_KEY_LASTLDAPSYNC, expiredTime)
++			sess.Set(session.SESS_KEY_LASTLDAPSYNC, expiredTime)
+ 
+ 			// act
+ 			syncGrafanaUserWithLdapUser(&ctx, &query)
+ 
+ 			// assert
+-			So(session.Get(SESS_KEY_LASTLDAPSYNC), ShouldBeGreaterThan, expiredTime)
++			So(sess.Get(session.SESS_KEY_LASTLDAPSYNC), ShouldBeGreaterThan, expiredTime)
+ 			So(mockLdapAuther.syncSignedInUserCalled, ShouldBeTrue)
+ 		})
+ 	})
+@@ -77,7 +79,7 @@ type mockSession struct {
+ 	value interface{}
+ }
+ 
+-func (s *mockSession) Start(c *Context) error {
++func (s *mockSession) Start(c *macaron.Context) error {
+ 	return nil
+ }
+ 
+@@ -102,11 +104,11 @@ func (s *mockSession) Release() error {
+ 	return nil
+ }
+ 
+-func (s *mockSession) Destory(c *Context) error {
++func (s *mockSession) Destory(c *macaron.Context) error {
+ 	return nil
+ }
+ 
+-func (s *mockSession) RegenerateId(c *Context) error {
++func (s *mockSession) RegenerateId(c *macaron.Context) error {
+ 	return nil
+ }
+ 
+diff --git a/pkg/middleware/dashboard_redirect.go b/pkg/middleware/dashboard_redirect.go
+index 4a3812fb8a2..cb76f042a0d 100644
+--- a/pkg/middleware/dashboard_redirect.go
++++ b/pkg/middleware/dashboard_redirect.go
+@@ -20,7 +20,7 @@ func getDashboardUrlBySlug(orgId int64, slug string) (string, error) {
+ }
+ 
+ func RedirectFromLegacyDashboardUrl() macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		slug := c.Params("slug")
+ 
+ 		if slug != "" {
+@@ -34,7 +34,7 @@ func RedirectFromLegacyDashboardUrl() macaron.Handler {
+ }
+ 
+ func RedirectFromLegacyDashboardSoloUrl() macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		slug := c.Params("slug")
+ 
+ 		if slug != "" {
+diff --git a/pkg/middleware/logger.go b/pkg/middleware/logger.go
+index 94f707800be..2c63810b9c8 100644
+--- a/pkg/middleware/logger.go
++++ b/pkg/middleware/logger.go
+@@ -19,6 +19,7 @@ import (
+ 	"net/http"
+ 	"time"
+ 
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/prometheus/client_golang/prometheus"
+ 	"gopkg.in/macaron.v1"
+@@ -47,7 +48,7 @@ func Logger() macaron.Handler {
+ 		}
+ 
+ 		if ctx, ok := c.Data["ctx"]; ok {
+-			ctxTyped := ctx.(*Context)
++			ctxTyped := ctx.(*m.ReqContext)
+ 			if status == 500 {
+ 				ctxTyped.Logger.Error("Request Completed", "method", req.Method, "path", req.URL.Path, "status", status, "remote_addr", c.RemoteAddr(), "time_ms", int64(timeTakenMs), "size", rw.Size(), "referer", req.Referer())
+ 			} else {
+diff --git a/pkg/middleware/middleware.go b/pkg/middleware/middleware.go
+index f0c952811cd..b5b244d5bff 100644
+--- a/pkg/middleware/middleware.go
++++ b/pkg/middleware/middleware.go
+@@ -2,7 +2,6 @@ package middleware
+ 
+ import (
+ 	"strconv"
+-	"strings"
+ 
+ 	"gopkg.in/macaron.v1"
+ 
+@@ -11,29 +10,17 @@ import (
+ 	"github.com/grafana/grafana/pkg/log"
+ 	l "github.com/grafana/grafana/pkg/login"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+-	"github.com/prometheus/client_golang/prometheus"
+ )
+ 
+-type Context struct {
+-	*macaron.Context
+-	*m.SignedInUser
+-
+-	Session SessionStore
+-
+-	IsSignedIn     bool
+-	IsRenderCall   bool
+-	AllowAnonymous bool
+-	Logger         log.Logger
+-}
+-
+ func GetContextHandler() macaron.Handler {
+ 	return func(c *macaron.Context) {
+-		ctx := &Context{
++		ctx := &m.ReqContext{
+ 			Context:        c,
+ 			SignedInUser:   &m.SignedInUser{},
+-			Session:        GetSession(),
++			Session:        session.GetSession(),
+ 			IsSignedIn:     false,
+ 			AllowAnonymous: false,
+ 			Logger:         log.New("context"),
+@@ -74,7 +61,7 @@ func GetContextHandler() macaron.Handler {
+ 	}
+ }
+ 
+-func initContextWithAnonymousUser(ctx *Context) bool {
++func initContextWithAnonymousUser(ctx *m.ReqContext) bool {
+ 	if !setting.AnonymousEnabled {
+ 		return false
+ 	}
+@@ -94,9 +81,9 @@ func initContextWithAnonymousUser(ctx *Context) bool {
+ 	return true
+ }
+ 
+-func initContextWithUserSessionCookie(ctx *Context, orgId int64) bool {
++func initContextWithUserSessionCookie(ctx *m.ReqContext, orgId int64) bool {
+ 	// initialize session
+-	if err := ctx.Session.Start(ctx); err != nil {
++	if err := ctx.Session.Start(ctx.Context); err != nil {
+ 		ctx.Logger.Error("Failed to start session", "error", err)
+ 		return false
+ 	}
+@@ -117,7 +104,7 @@ func initContextWithUserSessionCookie(ctx *Context, orgId int64) bool {
+ 	return true
+ }
+ 
+-func initContextWithApiKey(ctx *Context) bool {
++func initContextWithApiKey(ctx *m.ReqContext) bool {
+ 	var keyString string
+ 	if keyString = getApiKey(ctx); keyString == "" {
+ 		return false
+@@ -153,7 +140,7 @@ func initContextWithApiKey(ctx *Context) bool {
+ 	return true
+ }
+ 
+-func initContextWithBasicAuth(ctx *Context, orgId int64) bool {
++func initContextWithBasicAuth(ctx *m.ReqContext, orgId int64) bool {
+ 
+ 	if !setting.BasicAuthEnabled {
+ 		return false
+@@ -195,70 +182,8 @@ func initContextWithBasicAuth(ctx *Context, orgId int64) bool {
+ 	return true
+ }
+ 
+-// Handle handles and logs error by given status.
+-func (ctx *Context) Handle(status int, title string, err error) {
+-	if err != nil {
+-		ctx.Logger.Error(title, "error", err)
+-		if setting.Env != setting.PROD {
+-			ctx.Data["ErrorMsg"] = err
+-		}
+-	}
+-
+-	ctx.Data["Title"] = title
+-	ctx.Data["AppSubUrl"] = setting.AppSubUrl
+-	ctx.Data["Theme"] = "dark"
+-
+-	ctx.HTML(status, "error")
+-}
+-
+-func (ctx *Context) JsonOK(message string) {
+-	resp := make(map[string]interface{})
+-	resp["message"] = message
+-	ctx.JSON(200, resp)
+-}
+-
+-func (ctx *Context) IsApiRequest() bool {
+-	return strings.HasPrefix(ctx.Req.URL.Path, "/api")
+-}
+-
+-func (ctx *Context) JsonApiErr(status int, message string, err error) {
+-	resp := make(map[string]interface{})
+-
+-	if err != nil {
+-		ctx.Logger.Error(message, "error", err)
+-		if setting.Env != setting.PROD {
+-			resp["error"] = err.Error()
+-		}
+-	}
+-
+-	switch status {
+-	case 404:
+-		resp["message"] = "Not Found"
+-	case 500:
+-		resp["message"] = "Internal Server Error"
+-	}
+-
+-	if message != "" {
+-		resp["message"] = message
+-	}
+-
+-	ctx.JSON(status, resp)
+-}
+-
+-func (ctx *Context) HasUserRole(role m.RoleType) bool {
+-	return ctx.OrgRole.Includes(role)
+-}
+-
+-func (ctx *Context) HasHelpFlag(flag m.HelpFlags1) bool {
+-	return ctx.HelpFlags1.HasFlag(flag)
+-}
+-
+-func (ctx *Context) TimeRequest(timer prometheus.Summary) {
+-	ctx.Data["perfmon.timer"] = timer
+-}
+-
+ func AddDefaultResponseHeaders() macaron.Handler {
+-	return func(ctx *Context) {
++	return func(ctx *m.ReqContext) {
+ 		if ctx.IsApiRequest() && ctx.Req.Method == "GET" {
+ 			ctx.Resp.Header().Add("Cache-Control", "no-cache")
+ 			ctx.Resp.Header().Add("Pragma", "no-cache")
+diff --git a/pkg/middleware/middleware_test.go b/pkg/middleware/middleware_test.go
+index ffd8e8a0af0..83efc65d4d4 100644
+--- a/pkg/middleware/middleware_test.go
++++ b/pkg/middleware/middleware_test.go
+@@ -7,10 +7,11 @@ import (
+ 	"path/filepath"
+ 	"testing"
+ 
+-	"github.com/go-macaron/session"
++	ms "github.com/go-macaron/session"
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	l "github.com/grafana/grafana/pkg/login"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"github.com/grafana/grafana/pkg/util"
+ 	. "github.com/smartystreets/goconvey/convey"
+@@ -130,8 +131,8 @@ func TestMiddlewareContext(t *testing.T) {
+ 
+ 		middlewareScenario("UserId in session", func(sc *scenarioContext) {
+ 
+-			sc.fakeReq("GET", "/").handler(func(c *Context) {
+-				c.Session.Set(SESS_KEY_USERID, int64(12))
++			sc.fakeReq("GET", "/").handler(func(c *m.ReqContext) {
++				c.Session.Set(session.SESS_KEY_USERID, int64(12))
+ 			}).exec()
+ 
+ 			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
+@@ -276,8 +277,8 @@ func TestMiddlewareContext(t *testing.T) {
+ 			})
+ 
+ 			// create session
+-			sc.fakeReq("GET", "/").handler(func(c *Context) {
+-				c.Session.Set(SESS_KEY_USERID, int64(33))
++			sc.fakeReq("GET", "/").handler(func(c *m.ReqContext) {
++				c.Session.Set(session.SESS_KEY_USERID, int64(33))
+ 			}).exec()
+ 
+ 			oldSessionID := sc.context.Session.ID()
+@@ -300,7 +301,7 @@ func TestMiddlewareContext(t *testing.T) {
+ 			setting.LdapEnabled = true
+ 
+ 			called := false
+-			syncGrafanaUserWithLdapUser = func(ctx *Context, query *m.GetSignedInUserQuery) error {
++			syncGrafanaUserWithLdapUser = func(ctx *m.ReqContext, query *m.GetSignedInUserQuery) error {
+ 				called = true
+ 				return nil
+ 			}
+@@ -336,12 +337,12 @@ func middlewareScenario(desc string, fn scenarioFunc) {
+ 
+ 		sc.m.Use(GetContextHandler())
+ 		// mock out gc goroutine
+-		startSessionGC = func() {}
+-		sc.m.Use(Sessioner(&session.Options{}))
++		session.StartSessionGC = func() {}
++		sc.m.Use(Sessioner(&ms.Options{}))
+ 		sc.m.Use(OrgRedirect())
+ 		sc.m.Use(AddDefaultResponseHeaders())
+ 
+-		sc.defaultHandler = func(c *Context) {
++		sc.defaultHandler = func(c *m.ReqContext) {
+ 			sc.context = c
+ 			if sc.handlerFunc != nil {
+ 				sc.handlerFunc(sc.context)
+@@ -356,7 +357,7 @@ func middlewareScenario(desc string, fn scenarioFunc) {
+ 
+ type scenarioContext struct {
+ 	m              *macaron.Macaron
+-	context        *Context
++	context        *m.ReqContext
+ 	resp           *httptest.ResponseRecorder
+ 	apiKey         string
+ 	authHeader     string
+@@ -436,4 +437,4 @@ func (sc *scenarioContext) exec() {
+ }
+ 
+ type scenarioFunc func(c *scenarioContext)
+-type handlerFunc func(c *Context)
++type handlerFunc func(c *m.ReqContext)
+diff --git a/pkg/middleware/org_redirect.go b/pkg/middleware/org_redirect.go
+index 9dd764be1bb..db263c2a17a 100644
+--- a/pkg/middleware/org_redirect.go
++++ b/pkg/middleware/org_redirect.go
+@@ -7,7 +7,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/models"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 
+ 	"gopkg.in/macaron.v1"
+@@ -22,7 +22,7 @@ func OrgRedirect() macaron.Handler {
+ 			return
+ 		}
+ 
+-		ctx, ok := c.Data["ctx"].(*Context)
++		ctx, ok := c.Data["ctx"].(*m.ReqContext)
+ 		if !ok || !ctx.IsSignedIn {
+ 			return
+ 		}
+@@ -31,7 +31,7 @@ func OrgRedirect() macaron.Handler {
+ 			return
+ 		}
+ 
+-		cmd := models.SetUsingOrgCommand{UserId: ctx.UserId, OrgId: orgId}
++		cmd := m.SetUsingOrgCommand{UserId: ctx.UserId, OrgId: orgId}
+ 		if err := bus.Dispatch(&cmd); err != nil {
+ 			if ctx.IsApiRequest() {
+ 				ctx.JsonApiErr(404, "Not found", nil)
+diff --git a/pkg/middleware/org_redirect_test.go b/pkg/middleware/org_redirect_test.go
+index 1f3d01f30f2..fa08154b250 100644
+--- a/pkg/middleware/org_redirect_test.go
++++ b/pkg/middleware/org_redirect_test.go
+@@ -6,7 +6,8 @@ import (
+ 	"fmt"
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+-	"github.com/grafana/grafana/pkg/models"
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	. "github.com/smartystreets/goconvey/convey"
+ )
+ 
+@@ -14,16 +15,16 @@ func TestOrgRedirectMiddleware(t *testing.T) {
+ 
+ 	Convey("Can redirect to correct org", t, func() {
+ 		middlewareScenario("when setting a correct org for the user", func(sc *scenarioContext) {
+-			sc.fakeReq("GET", "/").handler(func(c *Context) {
+-				c.Session.Set(SESS_KEY_USERID, int64(12))
++			sc.fakeReq("GET", "/").handler(func(c *m.ReqContext) {
++				c.Session.Set(session.SESS_KEY_USERID, int64(12))
+ 			}).exec()
+ 
+-			bus.AddHandler("test", func(query *models.SetUsingOrgCommand) error {
++			bus.AddHandler("test", func(query *m.SetUsingOrgCommand) error {
+ 				return nil
+ 			})
+ 
+-			bus.AddHandler("test", func(query *models.GetSignedInUserQuery) error {
+-				query.Result = &models.SignedInUser{OrgId: 1, UserId: 12}
++			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
++				query.Result = &m.SignedInUser{OrgId: 1, UserId: 12}
+ 				return nil
+ 			})
+ 
+@@ -36,16 +37,16 @@ func TestOrgRedirectMiddleware(t *testing.T) {
+ 		})
+ 
+ 		middlewareScenario("when setting an invalid org for user", func(sc *scenarioContext) {
+-			sc.fakeReq("GET", "/").handler(func(c *Context) {
+-				c.Session.Set(SESS_KEY_USERID, int64(12))
++			sc.fakeReq("GET", "/").handler(func(c *m.ReqContext) {
++				c.Session.Set(session.SESS_KEY_USERID, int64(12))
+ 			}).exec()
+ 
+-			bus.AddHandler("test", func(query *models.SetUsingOrgCommand) error {
++			bus.AddHandler("test", func(query *m.SetUsingOrgCommand) error {
+ 				return fmt.Errorf("")
+ 			})
+ 
+-			bus.AddHandler("test", func(query *models.GetSignedInUserQuery) error {
+-				query.Result = &models.SignedInUser{OrgId: 1, UserId: 12}
++			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
++				query.Result = &m.SignedInUser{OrgId: 1, UserId: 12}
+ 				return nil
+ 			})
+ 
+diff --git a/pkg/middleware/perf.go b/pkg/middleware/perf.go
+index e381121a47f..5b6ab6f2d0a 100644
+--- a/pkg/middleware/perf.go
++++ b/pkg/middleware/perf.go
+@@ -4,9 +4,11 @@ import (
+ 	"net/http"
+ 
+ 	"gopkg.in/macaron.v1"
++
++	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
+ func MeasureRequestTime() macaron.Handler {
+-	return func(res http.ResponseWriter, req *http.Request, c *Context) {
++	return func(res http.ResponseWriter, req *http.Request, c *m.ReqContext) {
+ 	}
+ }
+diff --git a/pkg/middleware/quota.go b/pkg/middleware/quota.go
+index 23f98e78a7e..82564d0646d 100644
+--- a/pkg/middleware/quota.go
++++ b/pkg/middleware/quota.go
+@@ -5,12 +5,13 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"gopkg.in/macaron.v1"
+ )
+ 
+ func Quota(target string) macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		limitReached, err := QuotaReached(c, target)
+ 		if err != nil {
+ 			c.JsonApiErr(500, "failed to get quota", err)
+@@ -23,7 +24,7 @@ func Quota(target string) macaron.Handler {
+ 	}
+ }
+ 
+-func QuotaReached(c *Context, target string) (bool, error) {
++func QuotaReached(c *m.ReqContext, target string) (bool, error) {
+ 	if !setting.Quota.Enabled {
+ 		return false, nil
+ 	}
+@@ -46,7 +47,7 @@ func QuotaReached(c *Context, target string) (bool, error) {
+ 				return true, nil
+ 			}
+ 			if target == "session" {
+-				usedSessions := getSessionCount()
++				usedSessions := session.GetSessionCount()
+ 				if int64(usedSessions) > scope.DefaultLimit {
+ 					c.Logger.Debug("Sessions limit reached", "active", usedSessions, "limit", scope.DefaultLimit)
+ 					return true, nil
+diff --git a/pkg/middleware/quota_test.go b/pkg/middleware/quota_test.go
+index b68aa485fa7..92c3d62674d 100644
+--- a/pkg/middleware/quota_test.go
++++ b/pkg/middleware/quota_test.go
+@@ -5,6 +5,7 @@ import (
+ 
+ 	"github.com/grafana/grafana/pkg/bus"
+ 	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	. "github.com/smartystreets/goconvey/convey"
+ )
+@@ -12,7 +13,7 @@ import (
+ func TestMiddlewareQuota(t *testing.T) {
+ 
+ 	Convey("Given the grafana quota middleware", t, func() {
+-		getSessionCount = func() int {
++		session.GetSessionCount = func() int {
+ 			return 4
+ 		}
+ 
+@@ -74,8 +75,8 @@ func TestMiddlewareQuota(t *testing.T) {
+ 
+ 		middlewareScenario("with user logged in", func(sc *scenarioContext) {
+ 			// log us in, so we have a user_id and org_id in the context
+-			sc.fakeReq("GET", "/").handler(func(c *Context) {
+-				c.Session.Set(SESS_KEY_USERID, int64(12))
++			sc.fakeReq("GET", "/").handler(func(c *m.ReqContext) {
++				c.Session.Set(session.SESS_KEY_USERID, int64(12))
+ 			}).exec()
+ 
+ 			bus.AddHandler("test", func(query *m.GetSignedInUserQuery) error {
+diff --git a/pkg/middleware/recovery.go b/pkg/middleware/recovery.go
+index a8bdf809637..ec289387aa4 100644
+--- a/pkg/middleware/recovery.go
++++ b/pkg/middleware/recovery.go
+@@ -24,6 +24,7 @@ import (
+ 	"gopkg.in/macaron.v1"
+ 
+ 	"github.com/grafana/grafana/pkg/log"
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ )
+ 
+@@ -106,7 +107,7 @@ func Recovery() macaron.Handler {
+ 				panicLogger := log.Root
+ 				// try to get request logger
+ 				if ctx, ok := c.Data["ctx"]; ok {
+-					ctxTyped := ctx.(*Context)
++					ctxTyped := ctx.(*m.ReqContext)
+ 					panicLogger = ctxTyped.Logger
+ 				}
+ 
+@@ -123,7 +124,7 @@ func Recovery() macaron.Handler {
+ 					c.Data["ErrorMsg"] = string(stack)
+ 				}
+ 
+-				ctx, ok := c.Data["ctx"].(*Context)
++				ctx, ok := c.Data["ctx"].(*m.ReqContext)
+ 
+ 				if ok && ctx.IsApiRequest() {
+ 					resp := make(map[string]interface{})
+diff --git a/pkg/middleware/recovery_test.go b/pkg/middleware/recovery_test.go
+index 299186945ee..32545b7caca 100644
+--- a/pkg/middleware/recovery_test.go
++++ b/pkg/middleware/recovery_test.go
+@@ -4,8 +4,10 @@ import (
+ 	"path/filepath"
+ 	"testing"
+ 
+-	"github.com/go-macaron/session"
++	ms "github.com/go-macaron/session"
+ 	"github.com/grafana/grafana/pkg/bus"
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ 	. "github.com/smartystreets/goconvey/convey"
+ 	"gopkg.in/macaron.v1"
+ )
+@@ -37,7 +39,7 @@ func TestRecoveryMiddleware(t *testing.T) {
+ 	})
+ }
+ 
+-func PanicHandler(c *Context) {
++func PanicHandler(c *m.ReqContext) {
+ 	panic("Handler has panicked")
+ }
+ 
+@@ -60,12 +62,12 @@ func recoveryScenario(desc string, url string, fn scenarioFunc) {
+ 
+ 		sc.m.Use(GetContextHandler())
+ 		// mock out gc goroutine
+-		startSessionGC = func() {}
+-		sc.m.Use(Sessioner(&session.Options{}))
++		session.StartSessionGC = func() {}
++		sc.m.Use(Sessioner(&ms.Options{}))
+ 		sc.m.Use(OrgRedirect())
+ 		sc.m.Use(AddDefaultResponseHeaders())
+ 
+-		sc.defaultHandler = func(c *Context) {
++		sc.defaultHandler = func(c *m.ReqContext) {
+ 			sc.context = c
+ 			if sc.handlerFunc != nil {
+ 				sc.handlerFunc(sc.context)
+diff --git a/pkg/middleware/render_auth.go b/pkg/middleware/render_auth.go
+index d2f9c1b2b1a..225645e659e 100644
+--- a/pkg/middleware/render_auth.go
++++ b/pkg/middleware/render_auth.go
+@@ -10,7 +10,7 @@ import (
+ var renderKeysLock sync.Mutex
+ var renderKeys map[string]*m.SignedInUser = make(map[string]*m.SignedInUser)
+ 
+-func initContextWithRenderAuth(ctx *Context) bool {
++func initContextWithRenderAuth(ctx *m.ReqContext) bool {
+ 	key := ctx.GetCookie("renderKey")
+ 	if key == "" {
+ 		return false
+diff --git a/pkg/middleware/session.go b/pkg/middleware/session.go
+index 4de111ff3d2..5654a42cb7d 100644
+--- a/pkg/middleware/session.go
++++ b/pkg/middleware/session.go
+@@ -1,170 +1,21 @@
+ package middleware
+ 
+ import (
+-	"math/rand"
+-	"time"
+-
+-	"github.com/go-macaron/session"
+-	_ "github.com/go-macaron/session/memcache"
+-	_ "github.com/go-macaron/session/mysql"
+-	_ "github.com/go-macaron/session/postgres"
+-	_ "github.com/go-macaron/session/redis"
+-	"github.com/grafana/grafana/pkg/log"
++	ms "github.com/go-macaron/session"
+ 	"gopkg.in/macaron.v1"
+-)
+ 
+-const (
+-	SESS_KEY_USERID       = "uid"
+-	SESS_KEY_OAUTH_STATE  = "state"
+-	SESS_KEY_APIKEY       = "apikey_id" // used for render requests with api keys
+-	SESS_KEY_LASTLDAPSYNC = "last_ldap_sync"
++	m "github.com/grafana/grafana/pkg/models"
++	"github.com/grafana/grafana/pkg/services/session"
+ )
+ 
+-var sessionManager *session.Manager
+-var sessionOptions *session.Options
+-var startSessionGC func()
+-var getSessionCount func() int
+-var sessionLogger = log.New("session")
+-
+-func init() {
+-	startSessionGC = func() {
+-		sessionManager.GC()
+-		sessionLogger.Debug("Session GC")
+-		time.AfterFunc(time.Duration(sessionOptions.Gclifetime)*time.Second, startSessionGC)
+-	}
+-	getSessionCount = func() int {
+-		return sessionManager.Count()
+-	}
+-}
+-
+-func prepareOptions(opt *session.Options) *session.Options {
+-	if len(opt.Provider) == 0 {
+-		opt.Provider = "memory"
+-	}
+-	if len(opt.ProviderConfig) == 0 {
+-		opt.ProviderConfig = "data/sessions"
+-	}
+-	if len(opt.CookieName) == 0 {
+-		opt.CookieName = "grafana_sess"
+-	}
+-	if len(opt.CookiePath) == 0 {
+-		opt.CookiePath = "/"
+-	}
+-	if opt.Gclifetime == 0 {
+-		opt.Gclifetime = 3600
+-	}
+-	if opt.Maxlifetime == 0 {
+-		opt.Maxlifetime = opt.Gclifetime
+-	}
+-	if opt.IDLength == 0 {
+-		opt.IDLength = 16
+-	}
+-
+-	return opt
+-}
+-
+-func Sessioner(options *session.Options) macaron.Handler {
+-	var err error
+-	sessionOptions = prepareOptions(options)
+-	sessionManager, err = session.NewManager(options.Provider, *options)
+-	if err != nil {
+-		panic(err)
+-	}
+-
+-	// start GC threads after some random seconds
+-	rndSeconds := 10 + rand.Int63n(180)
+-	time.AfterFunc(time.Duration(rndSeconds)*time.Second, startSessionGC)
++func Sessioner(options *ms.Options) macaron.Handler {
++	session.Init(options)
+ 
+-	return func(ctx *Context) {
++	return func(ctx *m.ReqContext) {
+ 		ctx.Next()
+ 
+-		if err = ctx.Session.Release(); err != nil {
++		if err := ctx.Session.Release(); err != nil {
+ 			panic("session(release): " + err.Error())
+ 		}
+ 	}
+ }
+-
+-func GetSession() SessionStore {
+-	return &SessionWrapper{manager: sessionManager}
+-}
+-
+-type SessionStore interface {
+-	// Set sets value to given key in session.
+-	Set(interface{}, interface{}) error
+-	// Get gets value by given key in session.
+-	Get(interface{}) interface{}
+-	// Delete deletes a key from session.
+-	Delete(interface{}) interface{}
+-	// ID returns current session ID.
+-	ID() string
+-	// Release releases session resource and save data to provider.
+-	Release() error
+-	// Destory deletes a session.
+-	Destory(*Context) error
+-	// init
+-	Start(*Context) error
+-	// RegenerateId regenerates the session id
+-	RegenerateId(*Context) error
+-}
+-
+-type SessionWrapper struct {
+-	session session.RawStore
+-	manager *session.Manager
+-}
+-
+-func (s *SessionWrapper) Start(c *Context) error {
+-	var err error
+-	s.session, err = s.manager.Start(c.Context)
+-	return err
+-}
+-
+-func (s *SessionWrapper) RegenerateId(c *Context) error {
+-	var err error
+-	s.session, err = s.manager.RegenerateId(c.Context)
+-	return err
+-}
+-
+-func (s *SessionWrapper) Set(k interface{}, v interface{}) error {
+-	if s.session != nil {
+-		return s.session.Set(k, v)
+-	}
+-	return nil
+-}
+-
+-func (s *SessionWrapper) Get(k interface{}) interface{} {
+-	if s.session != nil {
+-		return s.session.Get(k)
+-	}
+-	return nil
+-}
+-
+-func (s *SessionWrapper) Delete(k interface{}) interface{} {
+-	if s.session != nil {
+-		return s.session.Delete(k)
+-	}
+-	return nil
+-}
+-
+-func (s *SessionWrapper) ID() string {
+-	if s.session != nil {
+-		return s.session.ID()
+-	}
+-	return ""
+-}
+-
+-func (s *SessionWrapper) Release() error {
+-	if s.session != nil {
+-		return s.session.Release()
+-	}
+-	return nil
+-}
+-
+-func (s *SessionWrapper) Destory(c *Context) error {
+-	if s.session != nil {
+-		if err := s.manager.Destory(c.Context); err != nil {
+-			return err
+-		}
+-		s.session = nil
+-	}
+-	return nil
+-}
+diff --git a/pkg/middleware/validate_host.go b/pkg/middleware/validate_host.go
+index fa84e783767..63c4b3000e9 100644
+--- a/pkg/middleware/validate_host.go
++++ b/pkg/middleware/validate_host.go
+@@ -3,12 +3,13 @@ package middleware
+ import (
+ 	"strings"
+ 
++	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/setting"
+ 	"gopkg.in/macaron.v1"
+ )
+ 
+ func ValidateHostHeader(domain string) macaron.Handler {
+-	return func(c *Context) {
++	return func(c *m.ReqContext) {
+ 		// ignore local render calls
+ 		if c.IsRenderCall {
+ 			return
+diff --git a/pkg/models/context.go b/pkg/models/context.go
+new file mode 100644
+index 00000000000..262f6550954
+--- /dev/null
++++ b/pkg/models/context.go
+@@ -0,0 +1,86 @@
++package models
++
++import (
++	"strings"
++
++	"github.com/prometheus/client_golang/prometheus"
++	"gopkg.in/macaron.v1"
++
++	"github.com/grafana/grafana/pkg/log"
++	"github.com/grafana/grafana/pkg/services/session"
++	"github.com/grafana/grafana/pkg/setting"
++)
++
++type ReqContext struct {
++	*macaron.Context
++	*SignedInUser
++
++	Session session.SessionStore
++
++	IsSignedIn     bool
++	IsRenderCall   bool
++	AllowAnonymous bool
++	Logger         log.Logger
++}
++
++// Handle handles and logs error by given status.
++func (ctx *ReqContext) Handle(status int, title string, err error) {
++	if err != nil {
++		ctx.Logger.Error(title, "error", err)
++		if setting.Env != setting.PROD {
++			ctx.Data["ErrorMsg"] = err
++		}
++	}
++
++	ctx.Data["Title"] = title
++	ctx.Data["AppSubUrl"] = setting.AppSubUrl
++	ctx.Data["Theme"] = "dark"
++
++	ctx.HTML(status, "error")
++}
++
++func (ctx *ReqContext) JsonOK(message string) {
++	resp := make(map[string]interface{})
++	resp["message"] = message
++	ctx.JSON(200, resp)
++}
++
++func (ctx *ReqContext) IsApiRequest() bool {
++	return strings.HasPrefix(ctx.Req.URL.Path, "/api")
++}
++
++func (ctx *ReqContext) JsonApiErr(status int, message string, err error) {
++	resp := make(map[string]interface{})
++
++	if err != nil {
++		ctx.Logger.Error(message, "error", err)
++		if setting.Env != setting.PROD {
++			resp["error"] = err.Error()
++		}
++	}
++
++	switch status {
++	case 404:
++		resp["message"] = "Not Found"
++	case 500:
++		resp["message"] = "Internal Server Error"
++	}
++
++	if message != "" {
++		resp["message"] = message
++	}
++
++	ctx.JSON(status, resp)
++}
++
++func (ctx *ReqContext) HasUserRole(role RoleType) bool {
++	return ctx.OrgRole.Includes(role)
++}
++
++func (ctx *ReqContext) HasHelpFlag(flag HelpFlags1) bool {
++	return ctx.HelpFlags1.HasFlag(flag)
++}
++
++func (ctx *ReqContext) TimeRequest(timer prometheus.Summary) {
++	ctx.Data["perfmon.timer"] = timer
++}
+diff --git a/pkg/services/session/session.go b/pkg/services/session/session.go
+new file mode 100644
+index 00000000000..2ca9296b97f
+--- /dev/null
++++ b/pkg/services/session/session.go
+@@ -0,0 +1,162 @@
++package session
++
++import (
++	"math/rand"
++	"time"
++
++	ms "github.com/go-macaron/session"
++	_ "github.com/go-macaron/session/memcache"
++	_ "github.com/go-macaron/session/mysql"
++	_ "github.com/go-macaron/session/postgres"
++	_ "github.com/go-macaron/session/redis"
++	"github.com/grafana/grafana/pkg/log"
++	"gopkg.in/macaron.v1"
++)
++
++const (
++	SESS_KEY_USERID       = "uid"
++	SESS_KEY_OAUTH_STATE  = "state"
++	SESS_KEY_APIKEY       = "apikey_id" // used for render requests with api keys
++	SESS_KEY_LASTLDAPSYNC = "last_ldap_sync"
++)
++
++var sessionManager *ms.Manager
++var sessionOptions *ms.Options
++var StartSessionGC func()
++var GetSessionCount func() int
++var sessionLogger = log.New("session")
++
++func init() {
++	StartSessionGC = func() {
++		sessionManager.GC()
++		sessionLogger.Debug("Session GC")
++		time.AfterFunc(time.Duration(sessionOptions.Gclifetime)*time.Second, StartSessionGC)
++	}
++	GetSessionCount = func() int {
++		return sessionManager.Count()
++	}
++}
++
++func Init(options *ms.Options) {
++	var err error
++	sessionOptions = prepareOptions(options)
++	sessionManager, err = ms.NewManager(options.Provider, *options)
++	if err != nil {
++		panic(err)
++	}
++
++	// start GC threads after some random seconds
++	rndSeconds := 10 + rand.Int63n(180)
++	time.AfterFunc(time.Duration(rndSeconds)*time.Second, StartSessionGC)
++}
++
++func prepareOptions(opt *ms.Options) *ms.Options {
++	if len(opt.Provider) == 0 {
++		opt.Provider = "memory"
++	}
++	if len(opt.ProviderConfig) == 0 {
++		opt.ProviderConfig = "data/sessions"
++	}
++	if len(opt.CookieName) == 0 {
++		opt.CookieName = "grafana_sess"
++	}
++	if len(opt.CookiePath) == 0 {
++		opt.CookiePath = "/"
++	}
++	if opt.Gclifetime == 0 {
++		opt.Gclifetime = 3600
++	}
++	if opt.Maxlifetime == 0 {
++		opt.Maxlifetime = opt.Gclifetime
++	}
++	if opt.IDLength == 0 {
++		opt.IDLength = 16
++	}
++
++	return opt
++}
++
++func GetSession() SessionStore {
++	return &SessionWrapper{manager: sessionManager}
++}
++
++type SessionStore interface {
++	// Set sets value to given key in session.
++	Set(interface{}, interface{}) error
++	// Get gets value by given key in session.
++	Get(interface{}) interface{}
++	// Delete deletes a key from session.
++	Delete(interface{}) interface{}
++	// ID returns current session ID.
++	ID() string
++	// Release releases session resource and save data to provider.
++	Release() error
++	// Destory deletes a session.
++	Destory(*macaron.Context) error
++	// init
++	Start(*macaron.Context) error
++	// RegenerateId regenerates the session id
++	RegenerateId(*macaron.Context) error
++}
++
++type SessionWrapper struct {
++	session ms.RawStore
++	manager *ms.Manager
++}
++
++func (s *SessionWrapper) Start(c *macaron.Context) error {
++	var err error
++	s.session, err = s.manager.Start(c)
++	return err
++}
++
++func (s *SessionWrapper) RegenerateId(c *macaron.Context) error {
++	var err error
++	s.session, err = s.manager.RegenerateId(c)
++	return err
++}
++
++func (s *SessionWrapper) Set(k interface{}, v interface{}) error {
++	if s.session != nil {
++		return s.session.Set(k, v)
++	}
++	return nil
++}
++
++func (s *SessionWrapper) Get(k interface{}) interface{} {
++	if s.session != nil {
++		return s.session.Get(k)
++	}
++	return nil
++}
++
++func (s *SessionWrapper) Delete(k interface{}) interface{} {
++	if s.session != nil {
++		return s.session.Delete(k)
++	}
++	return nil
++}
++
++func (s *SessionWrapper) ID() string {
++	if s.session != nil {
++		return s.session.ID()
++	}
++	return ""
++}
++
++func (s *SessionWrapper) Release() error {
++	if s.session != nil {
++		return s.session.Release()
++	}
++	return nil
++}
++
++func (s *SessionWrapper) Destory(c *macaron.Context) error {
++	if s.session != nil {
++		if err := s.manager.Destory(c); err != nil {
++			return err
++		}
++		s.session = nil
++	}
++	return nil
++}
+
+commit 87db2d11835049fb73fb7314afee322b18ebbffa (from c0ecdee3757ece268802062d18f050d492f4f333)
+Merge: 7784e8a829c c0ecdee3757
+Author: Carl Bergquist <carl@grafana.com>
+Date:   Thu Mar 8 10:21:34 2018 +0100
+
+    Merge pull request #11130 from DanCech/context-refactor
+    
+    move Context and session out of middleware
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index afe04ba575f..d54903c54fa 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,11 @@
+ 
+ * **Postgres/MySQL**: Ability to insert 0s or nulls for missing intervals [#9487](https://github.com/grafana/grafana/issues/9487), thanks [@svenklemm](https://github.com/svenklemm)
+ * **Graph**: Thresholds for Right Y axis [#7107](https://github.com/grafana/grafana/issues/7107), thx [@ilgizar](https://github.com/ilgizar)
++* **Alerting**: Pausing/un alerts now updates new_state_date [#10942](https://github.com/grafana/grafana/pull/10942)
++* **Templating**: Add comma templating format [#10632](https://github.com/grafana/grafana/issues/10632), thx [@mtanda](https://github.com/mtanda)
++
++### Minor
++* **OpsGenie**: Add triggered alerts as description [#11046](https://github.com/grafana/grafana/pull/11046), thx [@llamashoes](https://github.com/llamashoes)
+ 
+ # 5.0.1 (unreleased)
+ 
+@@ -11,6 +16,8 @@
+ * **Sidemenu**: Profile menu "invisible" when gravatar is disabled [#11097](https://github.com/grafana/grafana/issues/11097)
+ * **Dashboard**: Fixes a bug with resizeable handles for panels [#11103](https://github.com/grafana/grafana/issues/11103)
+ * **Alerting**: Telegram inline image mode fails when caption too long [#10975](https://github.com/grafana/grafana/issues/10975)
++* **Alerting**: Fixes silent failing validation [#11145](https://github.com/grafana/grafana/pull/11145)
++* **OAuth**: Only use jwt token if it contains an email address [#11127](https://github.com/grafana/grafana/pull/11127)
+ 
+ # 5.0.0-stable (2018-03-01)
+ 
+diff --git a/README.md b/README.md
+index 81fb1f8d42b..9db746cc5ea 100644
+--- a/README.md
++++ b/README.md
+@@ -33,7 +33,7 @@ the latest master builds [here](https://grafana.com/grafana/download)
+ ### Building the backend
+ ```bash
+ go get github.com/grafana/grafana
+-cd ~/go/src/github.com/grafana/grafana
++cd $GOPATH/src/github.com/grafana/grafana
+ go run build.go setup
+ go run build.go build
+ ```
+diff --git a/ROADMAP.md b/ROADMAP.md
+index c8dc3186c73..67d7093263d 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -8,7 +8,6 @@ But it will give you an idea of our current vision and plan.
+ - v5.1
+   - Crossplatform builds & build speed improvements
+   - Enterprise LDAP
+-  - New template interpolation syntax
+   - Provisioning workflow
+   - First login registration view
+   - IFQL Initial support
+diff --git a/circle.yml b/circle.yml
+index bf013e3f5b1..b429911ceb8 100644
+--- a/circle.yml
++++ b/circle.yml
+@@ -9,7 +9,7 @@ machine:
+     GOPATH: "/home/ubuntu/.go_workspace"
+     ORG_PATH: "github.com/grafana"
+     REPO_PATH: "${ORG_PATH}/grafana"
+-    GODIST: "go1.9.3.linux-amd64.tar.gz"
++    GODIST: "go1.10.linux-amd64.tar.gz"
+   post:
+     - mkdir -p ~/download
+     - mkdir -p ~/docker
+diff --git a/docs/sources/alerting/rules.md b/docs/sources/alerting/rules.md
+index bd5b95da856..9bbbd70641d 100644
+--- a/docs/sources/alerting/rules.md
++++ b/docs/sources/alerting/rules.md
+@@ -59,7 +59,7 @@ avg() OF query(A, 5m, now) IS BELOW 14
+ ```
+ 
+ - `avg()` Controls how the values for **each** series should be reduced to a value that can be compared against the threshold. Click on the function to change it to another aggregation function.
+-- `query(A, 5m, now)`  The letter defines what query to execute from the **Metrics** tab. The second two parameters define the time range, `5m, now` means 5 minutes from now to now. You can also do `10m, now-2m` to define a time range that will be 10 minutes from now to 2 minutes from now. This is useful if you want to ignore the last 2 minutes of data.
++- `query(A, 5m, now)`  The letter defines what query to execute from the **Metrics** tab. The second two parameters define the time range, `5m, now` means 5 minutes ago to now. You can also do `10m, now-2m` to define a time range that will be 10 minutes ago to 2 minutes ago. This is useful if you want to ignore the last 2 minutes of data.
+ - `IS BELOW 14`  Defines the type of threshold and the threshold value.  You can click on `IS BELOW` to change the type of threshold.
+ 
+ The query used in an alert rule cannot contain any template variables. Currently we only support `AND` and `OR` operators between conditions and they are executed serially.
+diff --git a/package.json b/package.json
+index df4359ef5c1..9493965f2fd 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,7 @@
+     "company": "Grafana Labs"
+   },
+   "name": "grafana",
+-  "version": "5.0.1-pre1",
++  "version": "5.1.0-pre1",
+   "repository": {
+     "type": "git",
+     "url": "http://github.com/grafana/grafana.git"
+diff --git a/pkg/services/alerting/extractor.go b/pkg/services/alerting/extractor.go
+index a609824cbc8..5206c81642e 100644
+--- a/pkg/services/alerting/extractor.go
++++ b/pkg/services/alerting/extractor.go
+@@ -143,10 +143,15 @@ func (e *DashAlertExtractor) GetAlertFromPanels(jsonWithPanels *simplejson.Json)
+ 
+ 		// validate
+ 		_, err = NewRuleFromDBAlert(alert)
+-		if err == nil && alert.ValidToSave() {
++		if err != nil {
++			return nil, err
++		}
++
++		if alert.ValidToSave() {
+ 			alerts = append(alerts, alert)
+ 		} else {
+-			return nil, err
++			e.log.Debug("Invalid Alert Data. Dashboard, Org or Panel ID is not correct", "alertName", alert.Name, "panelId", alert.PanelId)
++			return nil, m.ErrDashboardContainsInvalidAlertData
+ 		}
+ 	}
+ 
+diff --git a/pkg/services/alerting/extractor_test.go b/pkg/services/alerting/extractor_test.go
+index 71f3026025d..f8b678e66bd 100644
+--- a/pkg/services/alerting/extractor_test.go
++++ b/pkg/services/alerting/extractor_test.go
+@@ -150,6 +150,22 @@ func TestAlertRuleExtraction(t *testing.T) {
+ 			})
+ 		})
+ 
++		Convey("Panel with id set to zero should return error", func() {
++			panelWithIdZero, err := ioutil.ReadFile("./test-data/panel-with-id-0.json")
++			So(err, ShouldBeNil)
++
++			dashJson, err := simplejson.NewJson([]byte(panelWithIdZero))
++			So(err, ShouldBeNil)
++			dash := m.NewDashboardFromJson(dashJson)
++			extractor := NewDashAlertExtractor(dash, 1)
++
++			_, err = extractor.GetAlerts()
++
++			Convey("panel with id 0 should return error", func() {
++				So(err, ShouldNotBeNil)
++			})
++		})
++
+ 		Convey("Parse alerts from dashboard without rows", func() {
+ 			json, err := ioutil.ReadFile("./test-data/v5-dashboard.json")
+ 			So(err, ShouldBeNil)
+diff --git a/pkg/services/alerting/notifiers/opsgenie.go b/pkg/services/alerting/notifiers/opsgenie.go
+index 82be9d1df4e..863b4f1c286 100644
+--- a/pkg/services/alerting/notifiers/opsgenie.go
++++ b/pkg/services/alerting/notifiers/opsgenie.go
+@@ -99,11 +99,16 @@ func (this *OpsGenieNotifier) createAlert(evalContext *alerting.EvalContext) err
+ 		return err
+ 	}
+ 
++	customData := "Triggered metrics:\n\n"
++	for _, evt := range evalContext.EvalMatches {
++		customData = customData + fmt.Sprintf("%s: %v\n", evt.Metric, evt.Value)
++	}
++
+ 	bodyJSON := simplejson.New()
+ 	bodyJSON.Set("message", evalContext.Rule.Name)
+ 	bodyJSON.Set("source", "Grafana")
+ 	bodyJSON.Set("alias", "alertId-"+strconv.FormatInt(evalContext.Rule.Id, 10))
+-	bodyJSON.Set("description", fmt.Sprintf("%s - %s\n%s", evalContext.Rule.Name, ruleUrl, evalContext.Rule.Message))
++	bodyJSON.Set("description", fmt.Sprintf("%s - %s\n%s\n%s", evalContext.Rule.Name, ruleUrl, evalContext.Rule.Message, customData))
+ 
+ 	details := simplejson.New()
+ 	details.Set("url", ruleUrl)
+diff --git a/pkg/services/alerting/test-data/panel-with-id-0.json b/pkg/services/alerting/test-data/panel-with-id-0.json
+new file mode 100644
+index 00000000000..d1f314a4f55
+--- /dev/null
++++ b/pkg/services/alerting/test-data/panel-with-id-0.json
+@@ -0,0 +1,63 @@
++{
++  "id": 57,
++  "title": "Graphite 4",
++  "originalTitle": "Graphite 4",
++  "tags": ["graphite"],
++  "rows": [
++  {
++    "panels": [
++    {
++      "title": "Active desktop users",
++      "id": 0,
++      "editable": true,
++      "type": "graph",
++      "targets": [
++      {
++        "refId": "A",
++        "target": "aliasByNode(statsd.fakesite.counters.session_start.desktop.count, 4)"
++      }
++      ],
++      "datasource": null,
++      "alert": {
++        "name": "name1",
++        "message": "desc1",
++        "handler": 1,
++        "frequency": "60s",
++        "conditions": [
++        {
++          "type": "query",
++          "query": {"params": ["A", "5m", "now"]},
++          "reducer": {"type": "avg", "params": []},
++          "evaluator": {"type": ">", "params": [100]}
++        }
++        ]
++      }
++    },
++    {
++      "title": "Active mobile users",
++      "id": 4,
++      "targets": [
++        {"refId": "A", "target": ""},
++        {"refId": "B", "target": "aliasByNode(statsd.fakesite.counters.session_start.mobile.count, 4)"}
++      ],
++      "datasource": "graphite2",
++      "alert": {
++        "name": "name2",
++        "message": "desc2",
++        "handler": 0,
++        "frequency": "60s",
++        "severity": "warning",
++        "conditions": [
++        {
++          "type": "query",
++          "query":  {"params": ["B", "5m", "now"]},
++          "reducer": {"type": "avg", "params": []},
++          "evaluator": {"type": ">", "params": [100]}
++        }
++        ]
++      }
++    }
++    ]
++  }
++]
++      }
+diff --git a/pkg/services/sqlstore/alert.go b/pkg/services/sqlstore/alert.go
+index 8c751f0cada..6342496ed26 100644
+--- a/pkg/services/sqlstore/alert.go
++++ b/pkg/services/sqlstore/alert.go
+@@ -10,6 +10,9 @@ import (
+ 	m "github.com/grafana/grafana/pkg/models"
+ )
+ 
++// timeNow makes it possible to test usage of time
++var timeNow = time.Now
++
+ func init() {
+ 	bus.AddHandler("sql", SaveAlerts)
+ 	bus.AddHandler("sql", HandleAlertsQuery)
+@@ -147,7 +150,7 @@ func SaveAlerts(cmd *m.SaveAlertsCommand) error {
+ 			return err
+ 		}
+ 
+-		if err := upsertAlerts(existingAlerts, cmd, sess); err != nil {
++		if err := updateAlerts(existingAlerts, cmd, sess); err != nil {
+ 			return err
+ 		}
+ 
+@@ -159,7 +162,7 @@ func SaveAlerts(cmd *m.SaveAlertsCommand) error {
+ 	})
+ }
+ 
+-func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBSession) error {
++func updateAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBSession) error {
+ 	for _, alert := range cmd.Alerts {
+ 		update := false
+ 		var alertToUpdate *m.Alert
+@@ -175,7 +178,7 @@ func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBS
+ 
+ 		if update {
+ 			if alertToUpdate.ContainsUpdates(alert) {
+-				alert.Updated = time.Now()
++				alert.Updated = timeNow()
+ 				alert.State = alertToUpdate.State
+ 				sess.MustCols("message")
+ 				_, err := sess.Id(alert.Id).Update(alert)
+@@ -186,10 +189,10 @@ func upsertAlerts(existingAlerts []*m.Alert, cmd *m.SaveAlertsCommand, sess *DBS
+ 				sqlog.Debug("Alert updated", "name", alert.Name, "id", alert.Id)
+ 			}
+ 		} else {
+-			alert.Updated = time.Now()
+-			alert.Created = time.Now()
++			alert.Updated = timeNow()
++			alert.Created = timeNow()
+ 			alert.State = m.AlertStatePending
+-			alert.NewStateDate = time.Now()
++			alert.NewStateDate = timeNow()
+ 
+ 			_, err := sess.Insert(alert)
+ 			if err != nil {
+@@ -253,7 +256,7 @@ func SetAlertState(cmd *m.SetAlertStateCommand) error {
+ 
+ 		alert.State = cmd.State
+ 		alert.StateChanges += 1
+-		alert.NewStateDate = time.Now()
++		alert.NewStateDate = timeNow()
+ 		alert.EvalData = cmd.EvalData
+ 
+ 		if cmd.Error == "" {
+@@ -276,11 +279,13 @@ func PauseAlert(cmd *m.PauseAlertCommand) error {
+ 		var buffer bytes.Buffer
+ 		params := make([]interface{}, 0)
+ 
+-		buffer.WriteString(`UPDATE alert SET state = ?`)
++		buffer.WriteString(`UPDATE alert SET state = ?, new_state_date = ?`)
+ 		if cmd.Paused {
+ 			params = append(params, string(m.AlertStatePaused))
++			params = append(params, timeNow())
+ 		} else {
+ 			params = append(params, string(m.AlertStatePending))
++			params = append(params, timeNow())
+ 		}
+ 
+ 		buffer.WriteString(` WHERE id IN (?` + strings.Repeat(",?", len(cmd.AlertIds)-1) + `)`)
+@@ -306,7 +311,7 @@ func PauseAllAlerts(cmd *m.PauseAllAlertCommand) error {
+ 			newState = string(m.AlertStatePending)
+ 		}
+ 
+-		res, err := sess.Exec(`UPDATE alert SET state = ?`, newState)
++		res, err := sess.Exec(`UPDATE alert SET state = ?, new_state_date = ?`, newState, timeNow())
+ 		if err != nil {
+ 			return err
+ 		}
+diff --git a/pkg/services/sqlstore/alert_test.go b/pkg/services/sqlstore/alert_test.go
+index de86ae87a4f..296d16c2f45 100644
+--- a/pkg/services/sqlstore/alert_test.go
++++ b/pkg/services/sqlstore/alert_test.go
+@@ -6,9 +6,26 @@ import (
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	. "github.com/smartystreets/goconvey/convey"
++	"time"
+ )
+ 
++func mockTimeNow() {
++	var timeSeed int64
++	timeNow = func() time.Time {
++		fakeNow := time.Unix(timeSeed, 0)
++		timeSeed += 1
++		return fakeNow
++	}
++}
++
++func resetTimeNow() {
++	timeNow = time.Now
++}
++
+ func TestAlertingDataAccess(t *testing.T) {
++	mockTimeNow()
++	defer resetTimeNow()
++
+ 	Convey("Testing Alerting data access", t, func() {
+ 		InitTestDB(t)
+ 
+@@ -50,13 +67,11 @@ func TestAlertingDataAccess(t *testing.T) {
+ 				So(err, ShouldBeNil)
+ 			})
+ 
+-			Convey("can pause alert", func() {
+-				cmd := &m.PauseAllAlertCommand{
+-					Paused: true,
+-				}
++			alert, _ := getAlertById(1)
++			stateDateBeforePause := alert.NewStateDate
+ 
+-				err = PauseAllAlerts(cmd)
+-				So(err, ShouldBeNil)
++			Convey("can pause all alerts", func() {
++				pauseAllAlerts(true)
+ 
+ 				Convey("cannot updated paused alert", func() {
+ 					cmd := &m.SetAlertStateCommand{
+@@ -67,6 +82,19 @@ func TestAlertingDataAccess(t *testing.T) {
+ 					err = SetAlertState(cmd)
+ 					So(err, ShouldNotBeNil)
+ 				})
++
++				Convey("pausing alerts should update their NewStateDate", func() {
++					alert, _ = getAlertById(1)
++					stateDateAfterPause := alert.NewStateDate
++					So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterPause)
++				})
++
++				Convey("unpausing alerts should update their NewStateDate again", func() {
++					pauseAllAlerts(false)
++					alert, _ = getAlertById(1)
++					stateDateAfterUnpause := alert.NewStateDate
++					So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterUnpause)
++				})
+ 			})
+ 		})
+ 
+@@ -214,3 +242,90 @@ func TestAlertingDataAccess(t *testing.T) {
+ 		})
+ 	})
+ }
++
++func TestPausingAlerts(t *testing.T) {
++	mockTimeNow()
++	defer resetTimeNow()
++
++	Convey("Given an alert", t, func() {
++		InitTestDB(t)
++
++		testDash := insertTestDashboard("dashboard with alerts", 1, 0, false, "alert")
++		alert, _ := insertTestAlert("Alerting title", "Alerting message", testDash.OrgId, testDash.Id, simplejson.New())
++
++		stateDateBeforePause := alert.NewStateDate
++		stateDateAfterPause := stateDateBeforePause
++		Convey("when paused", func() {
++			pauseAlert(testDash.OrgId, 1, true)
++
++			Convey("the NewStateDate should be updated", func() {
++				alert, _ := getAlertById(1)
++
++				stateDateAfterPause = alert.NewStateDate
++				So(stateDateBeforePause, ShouldHappenBefore, stateDateAfterPause)
++			})
++		})
++
++		Convey("when unpaused", func() {
++			pauseAlert(testDash.OrgId, 1, false)
++
++			Convey("the NewStateDate should be updated again", func() {
++				alert, _ := getAlertById(1)
++
++				stateDateAfterUnpause := alert.NewStateDate
++				So(stateDateAfterPause, ShouldHappenBefore, stateDateAfterUnpause)
++			})
++		})
++	})
++}
++func pauseAlert(orgId int64, alertId int64, pauseState bool) (int64, error) {
++	cmd := &m.PauseAlertCommand{
++		OrgId:    orgId,
++		AlertIds: []int64{alertId},
++		Paused:   pauseState,
++	}
++	err := PauseAlert(cmd)
++	So(err, ShouldBeNil)
++	return cmd.ResultCount, err
++}
++func insertTestAlert(title string, message string, orgId int64, dashId int64, settings *simplejson.Json) (*m.Alert, error) {
++	items := []*m.Alert{
++		{
++			PanelId:     1,
++			DashboardId: dashId,
++			OrgId:       orgId,
++			Name:        title,
++			Message:     message,
++			Settings:    settings,
++			Frequency:   1,
++		},
++	}
++
++	cmd := m.SaveAlertsCommand{
++		Alerts:      items,
++		DashboardId: dashId,
++		OrgId:       orgId,
++		UserId:      1,
++	}
++
++	err := SaveAlerts(&cmd)
++	return cmd.Alerts[0], err
++}
++
++func getAlertById(id int64) (*m.Alert, error) {
++	q := &m.GetAlertByIdQuery{
++		Id: id,
++	}
++	err := GetAlertById(q)
++	So(err, ShouldBeNil)
++	return q.Result, err
++}
++
++func pauseAllAlerts(pauseState bool) error {
++	cmd := &m.PauseAllAlertCommand{
++		Paused: pauseState,
++	}
++	err := PauseAllAlerts(cmd)
++	So(err, ShouldBeNil)
++	return err
++}
+diff --git a/pkg/services/sqlstore/dashboard_folder_test.go b/pkg/services/sqlstore/dashboard_folder_test.go
+index 40d6cf5bcb2..ea8f1216706 100644
+--- a/pkg/services/sqlstore/dashboard_folder_test.go
++++ b/pkg/services/sqlstore/dashboard_folder_test.go
+@@ -3,7 +3,6 @@ package sqlstore
+ import (
+ 	"testing"
+ 
+-	"github.com/go-xorm/xorm"
+ 	. "github.com/smartystreets/goconvey/convey"
+ 
+ 	m "github.com/grafana/grafana/pkg/models"
+@@ -11,10 +10,8 @@ import (
+ )
+ 
+ func TestDashboardFolderDataAccess(t *testing.T) {
+-	var x *xorm.Engine
+-
+ 	Convey("Testing DB", t, func() {
+-		x = InitTestDB(t)
++		InitTestDB(t)
+ 
+ 		Convey("Given one dashboard folder with two dashboards and one dashboard in the root folder", func() {
+ 			folder := insertTestDashboard("1 test dash folder", 1, 0, true, "prod", "webapp")
+diff --git a/pkg/services/sqlstore/dashboard_test.go b/pkg/services/sqlstore/dashboard_test.go
+index e0a73b9a49a..9124a686236 100644
+--- a/pkg/services/sqlstore/dashboard_test.go
++++ b/pkg/services/sqlstore/dashboard_test.go
+@@ -5,7 +5,6 @@ import (
+ 	"testing"
+ 	"time"
+ 
+-	"github.com/go-xorm/xorm"
+ 	"github.com/grafana/grafana/pkg/components/simplejson"
+ 	m "github.com/grafana/grafana/pkg/models"
+ 	"github.com/grafana/grafana/pkg/services/search"
+@@ -15,10 +14,8 @@ import (
+ )
+ 
+ func TestDashboardDataAccess(t *testing.T) {
+-	var x *xorm.Engine
+-
+ 	Convey("Testing DB", t, func() {
+-		x = InitTestDB(t)
++		InitTestDB(t)
+ 
+ 		Convey("Given saved dashboard", func() {
+ 			savedFolder := insertTestDashboard("1 test dash folder", 1, 0, true, "prod", "webapp")
+diff --git a/pkg/social/generic_oauth.go b/pkg/social/generic_oauth.go
+index 2411e0006a2..b92d64ad9fc 100644
+--- a/pkg/social/generic_oauth.go
++++ b/pkg/social/generic_oauth.go
+@@ -180,6 +180,7 @@ type UserInfoJson struct {
+ 
+ func (s *SocialGenericOAuth) UserInfo(client *http.Client, token *oauth2.Token) (*BasicUserInfo, error) {
+ 	var data UserInfoJson
++	var err error
+ 
+ 	if s.extractToken(&data, token) != true {
+ 		response, err := HttpGet(client, s.apiUrl)
+@@ -193,20 +194,17 @@ func (s *SocialGenericOAuth) UserInfo(client *http.Client, token *oauth2.Token)
+ 		}
+ 	}
+ 
+-	name, err := s.extractName(data)
+-	if err != nil {
+-		return nil, err
+-	}
++	name := s.extractName(&data)
+ 
+-	email, err := s.extractEmail(data, client)
+-	if err != nil {
+-		return nil, err
++	email := s.extractEmail(&data)
++	if email == "" {
++		email, err = s.FetchPrivateEmail(client)
++		if err != nil {
++			return nil, err
++		}
+ 	}
+ 
+-	login, err := s.extractLogin(data, email)
+-	if err != nil {
+-		return nil, err
+-	}
++	login := s.extractLogin(&data, email)
+ 
+ 	userInfo := &BasicUserInfo{
+ 		Name:  name,
+@@ -251,49 +249,55 @@ func (s *SocialGenericOAuth) extractToken(data *UserInfoJson, token *oauth2.Toke
+ 		return false
+ 	}
+ 
++	email := s.extractEmail(data)
++	if email == "" {
++		s.log.Debug("No email found in id_token", "json", string(payload), "data", data)
++		return false
++	}
++
+ 	s.log.Debug("Received id_token", "json", string(payload), "data", data)
+ 	return true
+ }
+ 
+-func (s *SocialGenericOAuth) extractEmail(data UserInfoJson, client *http.Client) (string, error) {
++func (s *SocialGenericOAuth) extractEmail(data *UserInfoJson) string {
+ 	if data.Email != "" {
+-		return data.Email, nil
++		return data.Email
+ 	}
+ 
+ 	if data.Attributes["email:primary"] != nil {
+-		return data.Attributes["email:primary"][0], nil
++		return data.Attributes["email:primary"][0]
+ 	}
+ 
+ 	if data.Upn != "" {
+ 		emailAddr, emailErr := mail.ParseAddress(data.Upn)
+ 		if emailErr == nil {
+-			return emailAddr.Address, nil
++			return emailAddr.Address
+ 		}
+ 	}
+ 
+-	return s.FetchPrivateEmail(client)
++	return ""
+ }
+ 
+-func (s *SocialGenericOAuth) extractLogin(data UserInfoJson, email string) (string, error) {
++func (s *SocialGenericOAuth) extractLogin(data *UserInfoJson, email string) string {
+ 	if data.Login != "" {
+-		return data.Login, nil
++		return data.Login
+ 	}
+ 
+ 	if data.Username != "" {
+-		return data.Username, nil
++		return data.Username
+ 	}
+ 
+-	return email, nil
++	return email
+ }
+ 
+-func (s *SocialGenericOAuth) extractName(data UserInfoJson) (string, error) {
++func (s *SocialGenericOAuth) extractName(data *UserInfoJson) string {
+ 	if data.Name != "" {
+-		return data.Name, nil
++		return data.Name
+ 	}
+ 
+ 	if data.DisplayName != "" {
+-		return data.DisplayName, nil
++		return data.DisplayName
+ 	}
+ 
+-	return "", nil
++	return ""
+ }
+diff --git a/pkg/tsdb/opentsdb/opentsdb.go b/pkg/tsdb/opentsdb/opentsdb.go
+index 29daa0c3bb4..692b891eddd 100644
+--- a/pkg/tsdb/opentsdb/opentsdb.go
++++ b/pkg/tsdb/opentsdb/opentsdb.go
+@@ -22,23 +22,10 @@ import (
+ )
+ 
+ type OpenTsdbExecutor struct {
+-	//*models.DataSource
+-	//httpClient *http.Client
+ }
+ 
+ func NewOpenTsdbExecutor(datasource *models.DataSource) (tsdb.TsdbQueryEndpoint, error) {
+-	/*
+-		httpClient, err := datasource.GetHttpClient()
+-
+-		if err != nil {
+-			return nil, err
+-		}
+-	*/
+-
+-	return &OpenTsdbExecutor{
+-	//DataSource: datasource,
+-	//httpClient: httpClient,
+-	}, nil
++	return &OpenTsdbExecutor{}, nil
+ }
+ 
+ var (
+diff --git a/public/app/core/components/sidemenu/sidemenu.html b/public/app/core/components/sidemenu/sidemenu.html
+index e97d34739ba..1b301363e62 100644
+--- a/public/app/core/components/sidemenu/sidemenu.html
++++ b/public/app/core/components/sidemenu/sidemenu.html
+@@ -1,73 +1,78 @@
+ <a class="sidemenu__logo" ng-click="ctrl.toggleSideMenu()">
+-	<img src="public/img/grafana_icon.svg"></img>
++  <img src="public/img/grafana_icon.svg"></img>
+ </a>
+ 
+ <a class="sidemenu__logo_small_breakpoint" ng-click="ctrl.toggleSideMenuSmallBreakpoint()">
+   <i class="fa fa-bars"></i>
+-  <span class="sidemenu__close"><i class="fa fa-times"></i>&nbsp;Close</span>
++  <span class="sidemenu__close">
++    <i class="fa fa-times"></i>&nbsp;Close</span>
+ </a>
+ 
+ <div class="sidemenu__top">
+-	<div ng-repeat="item in ::ctrl.mainLinks" class="sidemenu-item dropdown">
+-		<a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
+-			<span class="icon-circle sidemenu-icon">
+-				<i class="{{::item.icon}}" ng-show="::item.icon"></i>
+-				<img ng-src="{{::item.img}}" ng-show="::item.img">
+-			</span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu" ng-if="::item.children">
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">{{::item.text}}</span>
+-			</li>
+-			<li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}">
+-				<a href="{{::child.url}}">
+-					<i class="{{::child.icon}}" ng-show="::child.icon"></i>
+-					{{::child.text}}
+-				</a>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-repeat="item in ::ctrl.mainLinks" class="sidemenu-item dropdown">
++    <a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
++      <span class="icon-circle sidemenu-icon">
++        <i class="{{::item.icon}}" ng-show="::item.icon"></i>
++        <img ng-src="{{::item.img}}" ng-show="::item.img">
++      </span>
++    </a>
++    <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu" ng-if="::item.children">
++      <li class="side-menu-header">
++        <span class="sidemenu-item-text">{{::item.text}}</span>
++      </li>
++      <li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}">
++        <a href="{{::child.url}}">
++          <i class="{{::child.icon}}" ng-show="::child.icon"></i>
++          {{::child.text}}
++        </a>
++      </li>
++    </ul>
++  </div>
+ </div>
+ 
+ <div class="sidemenu__bottom">
+-	<div ng-show="::!ctrl.isSignedIn" class="sidemenu-item">
+-		<a href="{{ctrl.loginUrl}}" class="sidemenu-link" target="_self">
+-			<span class="icon-circle sidemenu-icon"><i class="fa fa-fw fa-sign-in"></i></span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">Sign In</span>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-show="::!ctrl.isSignedIn" class="sidemenu-item">
++    <a href="{{ctrl.loginUrl}}" class="sidemenu-link" target="_self">
++      <span class="icon-circle sidemenu-icon">
++        <i class="fa fa-fw fa-sign-in"></i>
++      </span>
++    </a>
++    <a href="{{ctrl.loginUrl}}">
++      <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
++        <li class="side-menu-header">
++          <span class="sidemenu-item-text">Sign In</span>
++        </li>
++      </ul>
++    </a>
++  </div>
+ 
+-	<div ng-repeat="item in ::ctrl.bottomNav" class="sidemenu-item dropdown dropup">
+-		<a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
+-			<span class="icon-circle sidemenu-icon">
+-				<i class="{{::item.icon}}" ng-show="::item.icon"></i>
+-				<img ng-src="{{::item.img}}" ng-show="::item.img">
+-			</span>
+-		</a>
+-		<ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
+-			<li ng-if="item.showOrgSwitcher" class="sidemenu-org-switcher">
+-				<a ng-click="ctrl.switchOrg()">
+-					<div>
+-						<div class="sidemenu-org-switcher__org-name">{{ctrl.contextSrv.user.orgName}}</div>
+-						<div class="sidemenu-org-switcher__org-current">Current Org:</div>
+-					</div>
+-					<div class="sidemenu-org-switcher__switch"><i class="fa fa-fw fa-random"></i>Switch</div>
+-				</a>
+-			</li>
+-			<li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}" ng-hide="::child.hideFromMenu">
+-				<a href="{{::child.url}}" target="{{::child.target}}" ng-click="ctrl.itemClicked(child, $event)">
+-					<i class="{{::child.icon}}" ng-show="::child.icon"></i>
+-					{{::child.text}}
+-				</a>
+-			</li>
+-			<li class="side-menu-header">
+-				<span class="sidemenu-item-text">{{::item.text}}</span>
+-			</li>
+-		</ul>
+-	</div>
++  <div ng-repeat="item in ::ctrl.bottomNav" class="sidemenu-item dropdown dropup">
++    <a href="{{::item.url}}" class="sidemenu-link" target="{{::item.target}}">
++      <span class="icon-circle sidemenu-icon">
++        <i class="{{::item.icon}}" ng-show="::item.icon"></i>
++        <img ng-src="{{::item.img}}" ng-show="::item.img">
++      </span>
++    </a>
++    <ul class="dropdown-menu dropdown-menu--sidemenu" role="menu">
++      <li ng-if="item.showOrgSwitcher" class="sidemenu-org-switcher">
++        <a ng-click="ctrl.switchOrg()">
++          <div>
++            <div class="sidemenu-org-switcher__org-name">{{ctrl.contextSrv.user.orgName}}</div>
++            <div class="sidemenu-org-switcher__org-current">Current Org:</div>
++          </div>
++          <div class="sidemenu-org-switcher__switch">
++            <i class="fa fa-fw fa-random"></i>Switch</div>
++        </a>
++      </li>
++      <li ng-repeat="child in ::item.children" ng-class="{divider: child.divider}" ng-hide="::child.hideFromMenu">
++        <a href="{{::child.url}}" target="{{::child.target}}" ng-click="ctrl.itemClicked(child, $event)">
++          <i class="{{::child.icon}}" ng-show="::child.icon"></i>
++          {{::child.text}}
++        </a>
++      </li>
++      <li class="side-menu-header">
++        <span class="sidemenu-item-text">{{::item.text}}</span>
++      </li>
++    </ul>
++  </div>
+ </div>
+-
+diff --git a/public/app/features/dashboard/dashgrid/DashboardRow.tsx b/public/app/features/dashboard/dashgrid/DashboardRow.tsx
+index 7a4d6cf8070..c2a84cb7da9 100644
+--- a/public/app/features/dashboard/dashgrid/DashboardRow.tsx
++++ b/public/app/features/dashboard/dashgrid/DashboardRow.tsx
+@@ -4,6 +4,7 @@ import { PanelModel } from '../panel_model';
+ import { PanelContainer } from './PanelContainer';
+ import templateSrv from 'app/features/templating/template_srv';
+ import appEvents from 'app/core/app_events';
++import config from 'app/core/config';
+ 
+ export interface DashboardRowProps {
+   panel: PanelModel;
+@@ -94,14 +95,16 @@ export class DashboardRow extends React.Component<DashboardRowProps, any> {
+           {title}
+           <span className="dashboard-row__panel_count">({hiddenPanels} hidden panels)</span>
+         </a>
+-        <div className="dashboard-row__actions">
+-          <a className="pointer" onClick={this.openSettings}>
+-            <i className="fa fa-cog" />
+-          </a>
+-          <a className="pointer" onClick={this.delete}>
+-            <i className="fa fa-trash" />
+-          </a>
+-        </div>
++        {config.bootData.user.orgRole !== 'Viewer' && (
++          <div className="dashboard-row__actions">
++            <a className="pointer" onClick={this.openSettings}>
++              <i className="fa fa-cog" />
++            </a>
++            <a className="pointer" onClick={this.delete}>
++              <i className="fa fa-trash" />
++            </a>
++          </div>
++        )}
+         <div className="dashboard-row__drag grid-drag-handle" />
+       </div>
+     );
+diff --git a/public/app/features/dashboard/specs/DashboardRow.jest.tsx b/public/app/features/dashboard/specs/DashboardRow.jest.tsx
+index 2d44f2e0e74..c0ac172aa26 100644
+--- a/public/app/features/dashboard/specs/DashboardRow.jest.tsx
++++ b/public/app/features/dashboard/specs/DashboardRow.jest.tsx
+@@ -2,19 +2,26 @@ import React from 'react';
+ import { shallow } from 'enzyme';
+ import { DashboardRow } from '../dashgrid/DashboardRow';
+ import { PanelModel } from '../panel_model';
++import config from '../../../core/config';
+ 
+ describe('DashboardRow', () => {
+   let wrapper, panel, getPanelContainer, dashboardMock;
+ 
+   beforeEach(() => {
+-    dashboardMock = {toggleRow: jest.fn()};
++    dashboardMock = { toggleRow: jest.fn() };
++
++    config.bootData = {
++      user: {
++        orgRole: 'Admin',
++      },
++    };
+ 
+     getPanelContainer = jest.fn().mockReturnValue({
+       getDashboard: jest.fn().mockReturnValue(dashboardMock),
+-      getPanelLoader: jest.fn()
++      getPanelLoader: jest.fn(),
+     });
+ 
+-    panel = new PanelModel({collapsed: false});
++    panel = new PanelModel({ collapsed: false });
+     wrapper = shallow(<DashboardRow panel={panel} getPanelContainer={getPanelContainer} />);
+   });
+ 
+@@ -30,4 +37,14 @@ describe('DashboardRow', () => {
+     expect(dashboardMock.toggleRow.mock.calls).toHaveLength(1);
+   });
+ 
++  it('should have two actions as admin', () => {
++    expect(wrapper.find('.dashboard-row__actions .pointer')).toHaveLength(2);
++  });
++
++  it('should have zero actions as viewer', () => {
++    config.bootData.user.orgRole = 'Viewer';
++    panel = new PanelModel({ collapsed: false });
++    wrapper = shallow(<DashboardRow panel={panel} getPanelContainer={getPanelContainer} />);
++    expect(wrapper.find('.dashboard-row__actions .pointer')).toHaveLength(0);
++  });
+ });
+diff --git a/public/app/features/templating/specs/template_srv.jest.ts b/public/app/features/templating/specs/template_srv.jest.ts
+index 37e2f5e4fe5..f28fbf9ac64 100644
+--- a/public/app/features/templating/specs/template_srv.jest.ts
++++ b/public/app/features/templating/specs/template_srv.jest.ts
+@@ -107,7 +107,6 @@ describe('templateSrv', function() {
+       ]);
+     });
+ 
+-
+     it('should replace $test with globbed value', function() {
+       var target = _templateSrv.replace('this.$test.filters', {}, 'glob');
+       expect(target).toBe('this.{value1,value2}.filters');
+@@ -261,6 +260,11 @@ describe('templateSrv', function() {
+       expect(result).toBe('test');
+     });
+ 
++    it('multi value and csv format should render csv string', function() {
++      var result = _templateSrv.formatValue(['test', 'test2'], 'csv');
++      expect(result).toBe('test,test2');
++    });
++
+     it('slash should be properly escaped in regex format', function() {
+       var result = _templateSrv.formatValue('Gi3/14', 'regex');
+       expect(result).toBe('Gi3\\/14');
+diff --git a/public/app/features/templating/template_srv.ts b/public/app/features/templating/template_srv.ts
+index 40f119ea10b..5b31072d140 100644
+--- a/public/app/features/templating/template_srv.ts
++++ b/public/app/features/templating/template_srv.ts
+@@ -115,6 +115,12 @@ export class TemplateSrv {
+         }
+         return this.distributeVariable(value, variable.name);
+       }
++      case 'csv': {
++        if (_.isArray(value)) {
++          return value.join(',');
++        }
++        return value;
++      }
+       default: {
+         if (_.isArray(value)) {
+           return '{' + value.join(',') + '}';
+diff --git a/public/sass/_variables.dark.scss b/public/sass/_variables.dark.scss
+index ef9f1a06996..6e86aa1872e 100644
+--- a/public/sass/_variables.dark.scss
++++ b/public/sass/_variables.dark.scss
+@@ -259,6 +259,7 @@ $navbar-button-border: #2f2f32;
+ // Sidemenu
+ // -------------------------
+ $side-menu-bg: $black;
++$side-menu-bg-mobile: $side-menu-bg;
+ $side-menu-item-hover-bg: $dark-2;
+ $side-menu-shadow: 0 0 20px black;
+ $side-menu-link-color: $link-color;
+diff --git a/public/sass/_variables.light.scss b/public/sass/_variables.light.scss
+index eb598f27d4c..a59350d2195 100644
+--- a/public/sass/_variables.light.scss
++++ b/public/sass/_variables.light.scss
+@@ -200,6 +200,7 @@ $input-invalid-border-color: lighten($red, 5%);
+ // Sidemenu
+ // -------------------------
+ $side-menu-bg: $dark-2;
++$side-menu-bg-mobile: rgba(0, 0, 0, 0); //$gray-6;
+ $side-menu-item-hover-bg: $gray-1;
+ $side-menu-shadow: 5px 0px 10px -5px $gray-1;
+ $side-menu-link-color: $gray-6;
+diff --git a/public/sass/components/_sidemenu.scss b/public/sass/components/_sidemenu.scss
+index 5f21bbc8cd0..8a5c3779714 100644
+--- a/public/sass/components/_sidemenu.scss
++++ b/public/sass/components/_sidemenu.scss
+@@ -71,7 +71,7 @@
+         // important to overlap it otherwise it can be hidden
+         // again by the mouse getting outside the hover space
+         left: $side-menu-width - 2px;
+-        @include animation("dropdown-anim 150ms ease-in-out 100ms forwards");
++        @include animation('dropdown-anim 150ms ease-in-out 100ms forwards');
+         z-index: $zindex-sidemenu;
+       }
+     }
+@@ -193,9 +193,13 @@ li.sidemenu-org-switcher {
+ 
+ @include media-breakpoint-down(xs) {
+   .sidemenu-open--xs {
++    li {
++      font-size: $font-size-lg;
++    }
++
+     .sidemenu {
+       width: 100%;
+-      background: $side-menu-bg;
++      background: $side-menu-bg-mobile;
+       position: initial;
+       height: auto;
+       box-shadow: $side-menu-shadow;
+@@ -214,6 +218,9 @@ li.sidemenu-org-switcher {
+     .sidemenu__bottom {
+       display: block;
+     }
++    .sidemenu-item {
++      border-right: 2px solid transparent;
++    }
+   }
+ 
+   .sidemenu {
+diff --git a/scripts/build/Dockerfile b/scripts/build/Dockerfile
+index 8fde9eb1dcd..808e7f141e9 100644
+--- a/scripts/build/Dockerfile
++++ b/scripts/build/Dockerfile
+@@ -21,7 +21,7 @@ RUN gpg --keyserver hkp://keys.gnupg.net --recv-keys 409B6B1796C275462A170311380
+ RUN curl --silent --location https://rpm.nodesource.com/setup_6.x | bash - && \
+     yum install -y nodejs --nogpgcheck
+ 
+-ENV GOLANG_VERSION 1.9.3
++ENV GOLANG_VERSION 1.10
+ 
+ RUN wget https://dl.yarnpkg.com/rpm/yarn.repo -O /etc/yum.repos.d/yarn.repo && \
+     yum install -y yarn --nogpgcheck && \

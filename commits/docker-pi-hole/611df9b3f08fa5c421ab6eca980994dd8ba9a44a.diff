@@ -1,0 +1,1188 @@
+commit 611df9b3f08fa5c421ab6eca980994dd8ba9a44a
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Mon Jul 11 23:50:05 2022 +0100
+
+    Huge tidy up/prune/refactor of the code
+    
+    - Moves most code in start.sh into functions in bash_functions.sh
+    - Removes code from 20-start.sh and moves it inside start.sh
+    - Removes unused variables and code, making it easier to find our way around
+    - Removes dependency on webpage.sh, which had to be modified in order to source it properly (thus breaking pihole checkout), use utils.sh instead
+    - Replaces all uses of ServerIP/v6 with new FTLCONF_REPLY_ADDR4/6 variables
+    - No need to symlink echo to whiptail any more (probably hasn't been needed for a while)
+    - removes huge list of exported env vars at the top of start.sh - no longer appear to be needed
+    - rename some functions in bash_functions to more logical names, group their usages in start.sh
+    - adjust/fix tests to match changes
+    - remove some dead tests
+    
+    Signed-off-by: Adam Warner <me@adamwarner.co.uk>
+
+diff --git a/Dockerfile b/Dockerfile
+index 067f969..f80a97f 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -36,7 +36,7 @@ ENV S6_LOGGING 0
+ ENV S6_KEEP_ENV 1
+ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS 2
+ 
+-ENV ServerIP 0.0.0.0
++ENV FTLCONF_REPLY_ADDR4 0.0.0.0
+ ENV FTL_CMD no-daemon
+ ENV DNSMASQ_USER pihole
+ 
+diff --git a/README.md b/README.md
+index 9051557..af0ea13 100644
+--- a/README.md
++++ b/README.md
+@@ -9,17 +9,17 @@
+ 
+ - **Using Watchtower? See the [Note on Watchtower](#note-on-watchtower) at the bottom of this readme**
+ 
+-- Due to [a known issue with Docker and libseccomp <2.5](https://github.com/moby/moby/issues/40734), you may run into issues running `2022.04` and later on host systems with an older version of `libseccomp2` ([Such as Debian/Raspbian buster or Ubuntu 20.04](https://pkgs.org/download/libseccomp2), and maybe [CentOS 7](https://pkgs.org/download/libseccomp)). 
++- Due to [a known issue with Docker and libseccomp <2.5](https://github.com/moby/moby/issues/40734), you may run into issues running `2022.04` and later on host systems with an older version of `libseccomp2` ([Such as Debian/Raspbian buster or Ubuntu 20.04](https://pkgs.org/download/libseccomp2), and maybe [CentOS 7](https://pkgs.org/download/libseccomp)).
++
++  The first recommendation is to upgrade your host OS, which will include a more up to date (and fixed) version of `libseccomp`.
+ 
+-  The first recommendation is to upgrade your host OS, which will include a more up to date (and fixed) version of `libseccomp`. 
+-  
+   _If you absolutely cannot do this, some users [have reported](https://github.com/pi-hole/docker-pi-hole/issues/1042#issuecomment-1086728157) success in updating `libseccomp2` via backports on debian, or similar via updates on Ubuntu. You can try this workaround at your own risk_  (Note, you may also find that you need the latest `docker.io` (more details [here](https://blog.samcater.com/fix-workaround-rpi4-docker-libseccomp2-docker-20/))
+ 
+ - Some users [have reported issues](https://github.com/pi-hole/docker-pi-hole/issues/963#issuecomment-1095602502) with using the `--privileged` flag on `2022.04` and above. TL;DR, don't use that that mode, and be [explicit with the permitted caps](https://github.com/pi-hole/docker-pi-hole#note-on-capabilities) (if needed) instead
+ 
+ - As of `2022.04.01`, setting `CAP_NET_ADMIN` is only required if you are using Pi-hole as your DHCP server. The container will only try to set caps that are explicitly granted (or natively available)
+ 
+-- In `2022.01` and later, the default `DNSMASQ_USER` has been changed to `pihole`, however this may cause issues on some systems such as Synology, see Issue [#963](https://github.com/pi-hole/docker-pi-hole/issues/963) for more information.  
++- In `2022.01` and later, the default `DNSMASQ_USER` has been changed to `pihole`, however this may cause issues on some systems such as Synology, see Issue [#963](https://github.com/pi-hole/docker-pi-hole/issues/963) for more information.
+  If the container won't start due to issues setting capabilities, set `DNSMASQ_USER` to `root` in your environment.
+ 
+ ## Quick Start
+@@ -122,7 +122,7 @@ There are other environment variables if you want to customize various things in
+ | `PIHOLE_DOMAIN` | `lan` | `<domain>` | Domain name sent by the DHCP server.
+ | `DHCP_IPv6` | `false` | `<"true"\|"false">` | Enable DHCP server IPv6 support (SLAAC + RA).
+ | `DHCP_rapid_commit` | `false` | `<"true"\|"false">` | Enable DHCPv4 rapid commit (fast address assignment).
+-| `VIRTUAL_HOST` | `$ServerIP` | `<Custom Hostname>` | What your web server 'virtual host' is, accessing admin through this Hostname/IP allows you to make changes to the whitelist / blacklists in addition to the default 'http://pi.hole/admin/' address
++| `VIRTUAL_HOST` | `$FTLCONF_REPLY_ADDR4` | `<Custom Hostname>` | What your web server 'virtual host' is, accessing admin through this Hostname/IP allows you to make changes to the whitelist / blacklists in addition to the default 'http://pi.hole/admin/' address
+ | `IPv6` | `true` | `<"true"\|"false">` | For unraid compatibility, strips out all the IPv6 configuration from DNS/Web services when false.
+ | `TEMPERATUREUNIT` | `c` | `<c\|k\|f>` | Set preferred temperature unit to `c`: Celsius, `k`: Kelvin, or `f` Fahrenheit units.
+ | `WEBUIBOXEDLAYOUT` | `boxed` | `<boxed\|traditional>` | Use boxed layout (helpful when working on large screens)
+@@ -224,7 +224,7 @@ Users of older Ubuntu releases (circa 17.04) will need to disable dnsmasq.
+ 
+ The primary docker tags are explained in the following table.  [Click here to see the full list of tags](https://store.docker.com/community/images/pihole/pihole/tags). See [GitHub Release notes](https://github.com/pi-hole/docker-pi-hole/releases) to see the specific version of Pi-hole Core, Web, and FTL included in the release.
+ 
+-| tag                 | description                                                                                                                                
++| tag                 | description
+ |---------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+ | `latest`            | Always latest release                                                                                                                      |
+ | `2022.04`           | Date-based release that can receive bugfix updates                                                                                         |
+diff --git a/bash_functions.sh b/bash_functions.sh
+index 96131f5..0b9ccfc 100644
+--- a/bash_functions.sh
++++ b/bash_functions.sh
+@@ -1,6 +1,21 @@
+ #!/bin/bash
+-# Some of the bash_functions use variables these core pi-hole/web scripts
+-. /opt/pihole/webpage.sh
++# Some of the bash_functions use utilities from Pi-hole's utils.sh
++# shellcheck disable=SC2154
++# shellcheck source=/dev/null
++. /opt/pihole/utils.sh
++
++export setupVars="/etc/pihole/setupVars.conf"
++export FTLconf="/etc/pihole/pihole-FTL.conf"
++export dnsmasqconfig="/etc/dnsmasq.d/01-pihole.conf"
++export adlistFile="/etc/pihole/adlists.list"
++
++change_setting() {
++    addOrEditKeyValPair "${setupVars}" "${1}" "${2}"
++}
++
++changeFTLsetting() {
++    addOrEditKeyValPair "${FTLconf}" "${1}" "${2}"
++}
+ 
+ fix_capabilities() {
+     # Testing on Docker 20.10.14 with no caps set shows the following caps available to the container:
+@@ -15,7 +30,7 @@ fix_capabilities() {
+ 
+     if [[ ${CAP_STR} ]]; then
+         # We have the (some of) the above caps available to us - apply them to pihole-FTL
+-        setcap ${CAP_STR:1}+ep $(which pihole-FTL) || ret=$?
++        setcap ${CAP_STR:1}+ep "$(which pihole-FTL)" || ret=$?
+ 
+         if [[ $DHCP_READY == false ]] && [[ $DHCP_ACTIVE == true ]]; then
+             # DHCP is requested but NET_ADMIN is not available.
+@@ -37,9 +52,9 @@ fix_capabilities() {
+     fi
+ }
+ 
+-prepare_configs() {
+-    # Done in /start.sh, don't do twice
+-    SKIP_INSTALL=true . "${PIHOLE_INSTALL}"
++# shellcheck disable=SC2034
++ensure_basic_configuration() {
++
+     # Set Debian webserver variables for installConfigs
+     LIGHTTPD_USER="www-data"
+     LIGHTTPD_GROUP="www-data"
+@@ -50,10 +65,13 @@ prepare_configs() {
+     if [ ! -f "${setupVars}" ]; then
+         install -m 644 /dev/null "${setupVars}"
+         echo "Creating empty ${setupVars} file."
++        # The following setting needs to exist else the web interface version wont show in pihole -v
++        change_setting "INSTALL_WEB_INTERFACE" "true"
+     fi
+ 
+     set +e
+     mkdir -p /var/run/pihole /var/log/pihole
++    touch /var/log/pihole/FTL.log /var/log/pihole/pihole.log
+ 
+     chown pihole:root /etc/lighttpd
+ 
+@@ -76,72 +94,38 @@ prepare_configs() {
+         rm /etc/pihole/macvendor.db
+     fi
+     ln -s /macvendor.db /etc/pihole/macvendor.db
++
++    # When fresh empty directory volumes are used then we need to create this file
++    if [ ! -f /etc/dnsmasq.d/01-pihole.conf ] ; then
++        cp /etc/.pihole/advanced/01-pihole.conf /etc/dnsmasq.d/
++    fi;
+ }
+ 
+ validate_env() {
+-    # Optional ServerIP is a valid IP
++    # Optional FTLCONF_REPLY_ADDR4 is a valid IP
+     # nc won't throw any text based errors when it times out connecting to a valid IP, otherwise it complains about the DNS name being garbage
+     # if nc doesn't behave as we expect on a valid IP the routing table should be able to look it up and return a 0 retcode
+-    if [[ "$(nc -4 -w1 -z "$ServerIP" 53 2>&1)" != "" ]] && ! ip route get "$ServerIP" > /dev/null ; then
+-        echo "ERROR: ServerIP Environment variable ($ServerIP) doesn't appear to be a valid IPv4 address"
++    if [[ "$(nc -4 -w1 -z "$FTLCONF_REPLY_ADDR4" 53 2>&1)" != "" ]] && ! ip route get "$FTLCONF_REPLY_ADDR4" > /dev/null ; then
++        echo "ERROR: FTLCONF_REPLY_ADDR4 Environment variable ($FTLCONF_REPLY_ADDR4) doesn't appear to be a valid IPv4 address"
+         exit 1
+     fi
+ 
+     # Optional IPv6 is a valid address
+-    if [[ -n "$ServerIPv6" ]] ; then
+-        if [[ "$ServerIPv6" == 'kernel' ]] ; then
++    if [[ -n "$FTLCONF_REPLY_ADDR6" ]] ; then
++        if [[ "$FTLCONF_REPLY_ADDR6" == 'kernel' ]] ; then
+             echo "ERROR: You passed in IPv6 with a value of 'kernel', this maybe because you do not have IPv6 enabled on your network"
+-            unset ServerIPv6
++            unset FTLCONF_REPLY_ADDR6
+             exit 1
+         fi
+-        if [[ "$(nc -6 -w1 -z "$ServerIPv6" 53 2>&1)" != "" ]] && ! ip route get "$ServerIPv6" > /dev/null ; then
+-            echo "ERROR: ServerIPv6 Environment variable ($ServerIPv6) doesn't appear to be a valid IPv6 address"
+-            echo "  TIP: If your server is not IPv6 enabled just remove '-e ServerIPv6' from your docker container"
++        if [[ "$(nc -6 -w1 -z "$FTLCONF_REPLY_ADDR6" 53 2>&1)" != "" ]] && ! ip route get "$FTLCONF_REPLY_ADDR6" > /dev/null ; then
++            echo "ERROR: FTLCONF_REPLY_ADDR6 Environment variable ($FTLCONF_REPLY_ADDR6) doesn't appear to be a valid IPv6 address"
++            echo "  TIP: If your server is not IPv6 enabled just remove '-e FTLCONF_REPLY_ADDR6' from your docker container"
+             exit 1
+         fi
+     fi;
+ }
+ 
+-setup_dnsmasq_interface() {
+-    local interface="${1:-eth0}"
+-    local interfaceType='default'
+-    if [ "$interface" != 'eth0' ] ; then
+-      interfaceType='custom'
+-    fi;
+-    echo "DNSMasq binding to $interfaceType interface: $interface"
+-    [ -n "$interface" ] && change_setting "PIHOLE_INTERFACE" "${interface}"
+-}
+-
+-setup_dnsmasq_listening_behaviour() {
+-    local dnsmasq_listening_behaviour="${1}"
+-
+-    if [ -n "$dnsmasq_listening_behaviour" ]; then
+-      change_setting "DNSMASQ_LISTENING" "${dnsmasq_listening_behaviour}"
+-    fi;
+-}
+-
+-setup_dnsmasq_config_if_missing() {
+-    # When fresh empty directory volumes are used we miss this file
+-    if [ ! -f /etc/dnsmasq.d/01-pihole.conf ] ; then
+-        cp /etc/.pihole/advanced/01-pihole.conf /etc/dnsmasq.d/
+-    fi;
+-}
+-
+-setup_dnsmasq() {
+-    local interface="$1"
+-    local dnsmasq_listening_behaviour="$2"
+-    # Coordinates
+-    setup_dnsmasq_config_if_missing
+-    setup_dnsmasq_interface "$interface"
+-    setup_dnsmasq_listening_behaviour "$dnsmasq_listening_behaviour"
+-    setup_dnsmasq_user "${DNSMASQ_USER}"
+-    setup_cache_size "${CUSTOM_CACHE_SIZE}"
+-    ProcessDNSSettings
+-}
+-
+-setup_dnsmasq_user() {
+-    local DNSMASQ_USER="${1}"
+-
++setup_FTL_User(){
+     # Run DNSMASQ as root user to avoid SHM permission issues
+     if grep -r -q '^\s*user=' /etc/dnsmasq.* ; then
+         # Change user that had been set previously to root
+@@ -153,72 +137,173 @@ setup_dnsmasq_user() {
+     fi
+ }
+ 
+-setup_dnsmasq_hostnames() {
+-    # largely borrowed from automated install/basic-install.sh
+-    local IPV4_ADDRESS="${1}"
+-    local IPV6_ADDRESS="${2}"
+-    local hostname="${3}"
+-    local dnsmasq_pihole_01_location="/etc/dnsmasq.d/01-pihole.conf"
++setup_FTL_Interface(){
++    local interface="${INTERFACE:-eth0}"
+ 
+-    if [ -z "$hostname" ]; then
+-        if [[ -f /etc/hostname ]]; then
+-            hostname=$(</etc/hostname)
+-        elif [ -x "$(command -v hostname)" ]; then
+-            hostname=$(hostname -f)
+-        fi
++    # Set the interface for FTL to listen on
++    local interfaceType='default'
++    if [ "$interface" != 'eth0' ] ; then
++      interfaceType='custom'
+     fi;
+-
+-    if [[ "${IPV4_ADDRESS}" != "" ]]; then
+-        tmp=${IPV4_ADDRESS%/*}
+-        sed -i "s/@IPV4@/$tmp/" ${dnsmasq_pihole_01_location}
+-    else
+-        sed -i '/^address=\/pi.hole\/@IPV4@/d' ${dnsmasq_pihole_01_location}
+-        sed -i '/^address=\/@HOSTNAME@\/@IPV4@/d' ${dnsmasq_pihole_01_location}
+-    fi
+-
+-    if [[ "${IPV6_ADDRESS}" != "" ]]; then
+-        sed -i "s/@IPv6@/$IPV6_ADDRESS/" ${dnsmasq_pihole_01_location}
+-    else
+-        sed -i '/^address=\/pi.hole\/@IPv6@/d' ${dnsmasq_pihole_01_location}
+-        sed -i '/^address=\/@HOSTNAME@\/@IPv6@/d' ${dnsmasq_pihole_01_location}
+-    fi
+-
+-    if [[ "${hostname}" != "" ]]; then
+-        sed -i "s/@HOSTNAME@/$hostname/" ${dnsmasq_pihole_01_location}
+-    else
+-        sed -i '/^address=\/@HOSTNAME@*/d' ${dnsmasq_pihole_01_location}
+-    fi
++    echo "FTL binding to $interfaceType interface: $interface"
++    change_setting "PIHOLE_INTERFACE" "${interface}"
+ }
+ 
+-setup_cache_size() {
++setup_FTL_CacheSize() {
+     local warning="WARNING: CUSTOM_CACHE_SIZE not used"
+     local dnsmasq_pihole_01_location="/etc/dnsmasq.d/01-pihole.conf"
+     # Quietly exit early for empty or default
+-    if [[ -z "${1}" || "${1}" == '10000' ]] ; then return ; fi
++    if [[ -z "${CUSTOM_CACHE_SIZE}" || "${CUSTOM_CACHE_SIZE}" == '10000' ]] ; then return ; fi
+ 
+     if [[ "${DNSSEC}" == "true" ]] ; then
+         echo "$warning - Cannot change cache size if DNSSEC is enabled"
+         return
+     fi
+ 
+-    if ! echo $1 | grep -q '^[0-9]*$' ; then
+-        echo "$warning - $1 is not an integer"
++    if ! echo "$CUSTOM_CACHE_SIZE" | grep -q '^[0-9]*$' ; then
++        echo "$warning - $CUSTOM_CACHE_SIZE is not an integer"
+         return
+     fi
+ 
+-    local -i custom_cache_size="$1"
+-    if (( $custom_cache_size < 0 )); then
++    local -i custom_cache_size="$CUSTOM_CACHE_SIZE"
++    if (( custom_cache_size < 0 )); then
+         echo "$warning - $custom_cache_size is not a positive integer or zero"
+         return
+     fi
+     echo "Custom CUSTOM_CACHE_SIZE set to $custom_cache_size"
+ 
++    change_setting "CACHE_SIZE" "$custom_cache_size"
+     sed -i "s/^cache-size=\s*[0-9]*/cache-size=$custom_cache_size/" ${dnsmasq_pihole_01_location}
+ }
+ 
++apply_FTL_Configs_From_Env(){
++    # Get all exported environment variables starting with FTLCONF_ as a prefix and call the changeFTLsetting
++    # function with the environment variable's suffix as the key. This allows applying any pihole-FTL.conf
++    # setting defined here: https://docs.pi-hole.net/ftldns/configfile/
++    declare -px | grep FTLCONF_ | sed -E 's/declare -x FTLCONF_([^=]+)=\"(.+)\"/\1 \2/' | while read -r name value
++    do
++        echo "Applying pihole-FTL.conf setting $name=$value"
++        changeFTLsetting "$name" "$value"
++    done
++}
++
++setup_FTL_dhcp() {
++  if [ -z "${DHCP_START}" ] || [ -z "${DHCP_END}" ] || [ -z "${DHCP_ROUTER}" ]; then
++    echo "ERROR: Won't enable DHCP server because mandatory Environment variables are missing: DHCP_START, DHCP_END and/or DHCP_ROUTER"
++    change_setting "DHCP_ACTIVE" "false"
++  else
++    change_setting "DHCP_ACTIVE" "${DHCP_ACTIVE}"
++    change_setting "DHCP_START" "${DHCP_START}"
++    change_setting "DHCP_END" "${DHCP_END}"
++    change_setting "DHCP_ROUTER" "${DHCP_ROUTER}"
++    change_setting "DHCP_LEASETIME" "${DHCP_LEASETIME}"
++    change_setting "PIHOLE_DOMAIN" "${PIHOLE_DOMAIN}"
++    change_setting "DHCP_IPv6" "${DHCP_IPv6}"
++    change_setting "DHCP_rapid_commit" "${DHCP_rapid_commit}"
++  fi
++}
++
++setup_FTL_query_logging(){
++    if [ "${QUERY_LOGGING_OVERRIDE}" == "false" ]; then
++        echo "::: Disabling Query Logging"
++        change_setting "QUERY_LOGGING" "$QUERY_LOGGING_OVERRIDE"
++        removeKey "${dnsmasqconfig}" log-queries
++    else
++        # If it is anything other than false, set it to true
++        change_setting "QUERY_LOGGING" "true"
++        # Set pihole logging on for good measure
++        echo "::: Enabling Query Logging"
++        addKey "${dnsmasqconfig}" log-queries
++    fi
++
++}
++
++setup_FTL_server(){
++    [ -n "${REV_SERVER}" ] && change_setting "REV_SERVER" "$REV_SERVER"
++    [ -n "${REV_SERVER_DOMAIN}" ] && change_setting "REV_SERVER_DOMAIN" "$REV_SERVER_DOMAIN"
++    [ -n "${REV_SERVER_TARGET}" ] && change_setting "REV_SERVER_TARGET" "$REV_SERVER_TARGET"
++    [ -n "${REV_SERVER_CIDR}" ] && change_setting "REV_SERVER_CIDR" "$REV_SERVER_CIDR"
++
++    if [ -z "$REV_SERVER" ];then
++        # If the REV_SERVER* variables are set, then there is no need to add these.
++        # If it is not set, then adding these variables is fine, and they will be converted by the Pi-hole install script
++        [ -n "${CONDITIONAL_FORWARDING}" ] && change_setting "CONDITIONAL_FORWARDING" "$CONDITIONAL_FORWARDING"
++        [ -n "${CONDITIONAL_FORWARDING_IP}" ] && change_setting "CONDITIONAL_FORWARDING_IP" "$CONDITIONAL_FORWARDING_IP"
++        [ -n "${CONDITIONAL_FORWARDING_DOMAIN}" ] && change_setting "CONDITIONAL_FORWARDING_DOMAIN" "$CONDITIONAL_FORWARDING_DOMAIN"
++        [ -n "${CONDITIONAL_FORWARDING_REVERSE}" ] && change_setting "CONDITIONAL_FORWARDING_REVERSE" "$CONDITIONAL_FORWARDING_REVERSE"
++    fi
++}
++
++setup_FTL_upstream_DNS(){
++    if [ -z "${PIHOLE_DNS_}" ]; then
++        # For backward compatibility, if DNS1 and/or DNS2 are set, but PIHOLE_DNS_ is not, convert them to
++        # a semi-colon delimited string and store in PIHOLE_DNS_
++        # They are not used anywhere if PIHOLE_DNS_ is set already
++        [ -n "${DNS1}" ] && echo "Converting DNS1 to PIHOLE_DNS_" && PIHOLE_DNS_="$DNS1"
++        [[ -n "${DNS2}" && "${DNS2}" != "no" ]] && echo "Converting DNS2 to PIHOLE_DNS_" && PIHOLE_DNS_="$PIHOLE_DNS_;$DNS2"
++    fi
++
++    # Parse the PIHOLE_DNS variable, if it exists, and apply upstream servers to Pi-hole config
++    if [ -n "${PIHOLE_DNS_}" ]; then
++        echo "Setting DNS servers based on PIHOLE_DNS_ variable"
++        # Remove any PIHOLE_DNS_ entries from setupVars.conf, if they exist
++        sed -i '/PIHOLE_DNS_/d' /etc/pihole/setupVars.conf
++        # Split into an array (delimited by ;)
++        # Loop through and add them one by one to setupVars.conf
++        IFS=";" read -r -a PIHOLE_DNS_ARR <<< "${PIHOLE_DNS_}"
++        # PIHOLE_DNS_ARR=(${PIHOLE_DNS_//;/ })
++        count=1
++        valid_entries=0
++        for i in "${PIHOLE_DNS_ARR[@]}"; do
++            if valid_ip "$i" || valid_ip6 "$i" ; then
++            change_setting "PIHOLE_DNS_$count" "$i"
++            ((count=count+1))
++            ((valid_entries=valid_entries+1))
++            continue
++            fi
++            # shellcheck disable=SC2086
++            if [ -n "$(dig +short ${i//#*/})" ]; then
++            # If the "address" is a domain (for example a docker link) then try to resolve it and add
++            # the result as a DNS server in setupVars.conf.
++            resolved_ip="$(dig +short ${i//#*/} | head -n 1)"
++            if [ -n "${i//*#/}" ] && [ "${i//*#/}" != "${i//#*/}" ]; then
++                resolved_ip="${resolved_ip}#${i//*#/}"
++            fi
++            echo "Resolved ${i} from PIHOLE_DNS_ as: ${resolved_ip}"
++            if valid_ip "$resolved_ip" || valid_ip6 "$resolved_ip" ; then
++                change_setting "PIHOLE_DNS_$count" "$resolved_ip"
++                ((count=count+1))
++                ((valid_entries=valid_entries+1))
++                continue
++            fi
++            fi
++            # If the above tests fail then this is an invalid DNS server
++            echo "Invalid entry detected in PIHOLE_DNS_: ${i}"
++        done
++
++        if [ $valid_entries -eq 0 ]; then
++        echo "No Valid entries detected in PIHOLE_DNS_. Aborting"
++        exit 1
++        fi
++    else
++        # Environment variable has not been set, but there may be existing values in an existing setupVars.conf
++        # if this is the case, we do not want to overwrite these with the defaults of 8.8.8.8 and 8.8.4.4
++        # Pi-hole can run with only one upstream configured, so we will just check for one.
++        setupVarsDNS="$(grep 'PIHOLE_DNS_' /etc/pihole/setupVars.conf || true)"
++
++        if [ -z "${setupVarsDNS}" ]; then
++            echo "Configuring default DNS servers: 8.8.8.8, 8.8.4.4"
++            change_setting "PIHOLE_DNS_1" "8.8.8.8"
++            change_setting "PIHOLE_DNS_2" "8.8.4.4"
++        else
++            echo "Existing DNS servers detected in setupVars.conf. Leaving them alone"
++        fi
++    fi
++}
++
+ setup_lighttpd_bind() {
+-    local serverip="$1"
+-    # if using '--net=host' only bind lighttpd on $ServerIP and localhost
++    local serverip="${FTLCONF_REPLY_ADDR4}"
++    # if using '--net=host' only bind lighttpd on $FTLCONF_REPLY_ADDR6 and localhost
+     if grep -q "docker" /proc/net/dev && [[ $serverip != 0.0.0.0 ]]; then #docker (docker0 by default) should only be present on the host system
+         if ! grep -q "server.bind" /etc/lighttpd/lighttpd.conf ; then # if the declaration is already there, don't add it again
+             sed -i -E "s/server\.port\s+\=\s+([0-9]+)/server.bind\t\t = \"${serverip}\"\nserver.port\t\t = \1\n"\$SERVER"\[\"socket\"\] == \"127\.0\.0\.1:\1\" \{\}/" /etc/lighttpd/lighttpd.conf
+@@ -226,12 +311,12 @@ setup_lighttpd_bind() {
+     fi
+ }
+ 
+-setup_php_env() {
++setup_web_php_env() {
+     if [ -z "$VIRTUAL_HOST" ] ; then
+-      VIRTUAL_HOST="$ServerIP"
++      VIRTUAL_HOST="$FTLCONF_REPLY_ADDR4"
+     fi;
+ 
+-    for config_var in "VIRTUAL_HOST" "CORS_HOSTS" "ServerIP" "PHP_ERROR_LOG" "PIHOLE_DOCKER_TAG" "TZ"; do
++    for config_var in "VIRTUAL_HOST" "CORS_HOSTS" "PHP_ERROR_LOG" "PIHOLE_DOCKER_TAG" "TZ"; do
+       local beginning_of_line="\t\t\t\"${config_var}\" => "
+       if grep -qP "$beginning_of_line" "$PHP_ENV_CONFIG" ; then
+         # replace line if already present
+@@ -243,30 +328,47 @@ setup_php_env() {
+     done
+ 
+     echo "Added ENV to php:"
+-    grep -E '(VIRTUAL_HOST|CORS_HOSTS|ServerIP|PHP_ERROR_LOG|PIHOLE_DOCKER_TAG|TZ)' "$PHP_ENV_CONFIG"
++    grep -E '(VIRTUAL_HOST|CORS_HOSTS|PHP_ERROR_LOG|PIHOLE_DOCKER_TAG|TZ)' "$PHP_ENV_CONFIG"
+ }
+ 
+ setup_web_port() {
+     local warning="WARNING: Custom WEB_PORT not used"
+     # Quietly exit early for empty or default
+-    if [[ -z "${1}" || "${1}" == '80' ]] ; then return ; fi
++    if [[ -z "${WEB_PORT}" || "${WEB_PORT}" == '80' ]] ; then return ; fi
+ 
+-    if ! echo $1 | grep -q '^[0-9][0-9]*$' ; then
+-        echo "$warning - $1 is not an integer"
++    if ! echo "$WEB_PORT" | grep -q '^[0-9][0-9]*$' ; then
++        echo "$warning - $WEB_PORT is not an integer"
+         return
+     fi
+ 
+-    local -i web_port="$1"
+-    if (( $web_port < 1 || $web_port > 65535 )); then
++    local -i web_port="$WEB_PORT"
++    if (( web_port < 1 || web_port > 65535 )); then
+         echo "$warning - $web_port is not within valid port range of 1-65535"
+         return
+     fi
+     echo "Custom WEB_PORT set to $web_port"
+-    echo "INFO: Without proper router DNAT forwarding to $ServerIP:$web_port, you may not get any blocked websites on ads"
++    echo "INFO: Without proper router DNAT forwarding to $FTLCONF_REPLY_ADDR4:$web_port, you may not get any blocked websites on ads"
+ 
+     # Update lighttpd's port
+-    sed -i '/server.port\s*=\s*80\s*$/ s/80/'$WEB_PORT'/g' /etc/lighttpd/lighttpd.conf
++    sed -i '/server.port\s*=\s*80\s*$/ s/80/'"${WEB_PORT}"'/g' /etc/lighttpd/lighttpd.conf
++
++}
+ 
++setup_web_theme(){
++    # Parse the WEBTHEME variable, if it exists, and set the selected theme if it is one of the supported values.
++    # If an invalid theme name was supplied, setup WEBTHEME to use the default-light theme.
++    if [ -n "${WEBTHEME}" ]; then
++        case "${WEBTHEME}" in
++        "default-dark" | "default-darker" | "default-light" | "default-auto" | "lcars")
++            echo "Setting Web Theme based on WEBTHEME variable, using value ${WEBTHEME}"
++            change_setting "WEBTHEME" "${WEBTHEME}"
++            ;;
++        *)
++            echo "Invalid theme name supplied: ${WEBTHEME}, falling back to default-light."
++            change_setting "WEBTHEME" "default-light"
++            ;;
++        esac
++    fi
+ }
+ 
+ load_web_password_secret() {
+@@ -277,8 +379,6 @@ load_web_password_secret() {
+    fi;
+ }
+ 
+-
+-
+ setup_web_password() {
+     if [ -z "${WEBPASSWORD+x}" ] ; then
+         # ENV WEBPASSWORD is not set
+@@ -330,7 +430,6 @@ test_configs() {
+ }
+ 
+ setup_blocklists() {
+-    local blocklists="$1"
+     # Exit/return early without setting up adlists with defaults for any of the following conditions:
+     # 1. skip_setup_blocklists env is set
+     exit_string="(exiting ${FUNCNAME[0]} early)"
+@@ -368,19 +467,19 @@ setup_var_exists() {
+     fi
+ }
+ 
+-setup_temp_unit() {
+-  local UNIT="$1"
++setup_web_temp_unit() {
++  local UNIT="${TEMPERATUREUNIT}"
+   # check if var is empty
+   if [[ "$UNIT" != "" ]] ; then
+       # check if we have valid units
+       if [[ "$UNIT" == "c" || "$UNIT" == "k" || $UNIT == "f" ]] ; then
+-          pihole -a -${UNIT}
++          pihole -a -"${UNIT}"
+       fi
+   fi
+ }
+ 
+-setup_ui_layout() {
+-  local LO=$1
++setup_web_layout() {
++  local LO="${WEBUIBOXEDLAYOUT}"
+   # check if var is empty
+   if [[ "$LO" != "" ]] ; then
+       # check if we have valid types boxed | traditional
+@@ -391,25 +490,38 @@ setup_ui_layout() {
+ }
+ 
+ setup_admin_email() {
+-  local EMAIL=$1
++  local EMAIL="${ADMIN_EMAIL}"
+   # check if var is empty
+   if [[ "$EMAIL" != "" ]] ; then
+       pihole -a -e "$EMAIL"
+   fi
+ }
+ 
+-setup_dhcp() {
+-  if [ -z "${DHCP_START}" ] || [ -z "${DHCP_END}" ] || [ -z "${DHCP_ROUTER}" ]; then
+-    echo "ERROR: Won't enable DHCP server because mandatory Environment variables are missing: DHCP_START, DHCP_END and/or DHCP_ROUTER"
+-    change_setting "DHCP_ACTIVE" "false"
+-  else
+-    change_setting "DHCP_ACTIVE" "${DHCP_ACTIVE}"
+-    change_setting "DHCP_START" "${DHCP_START}"
+-    change_setting "DHCP_END" "${DHCP_END}"
+-    change_setting "DHCP_ROUTER" "${DHCP_ROUTER}"
+-    change_setting "DHCP_LEASETIME" "${DHCP_LEASETIME}"
+-    change_setting "PIHOLE_DOMAIN" "${PIHOLE_DOMAIN}"
+-    change_setting "DHCP_IPv6" "${DHCP_IPv6}"
+-    change_setting "DHCP_rapid_commit" "${DHCP_rapid_commit}"
+-  fi
++setup_or_skip_gravity(){
++    # Gotta go fast, no time for gravity
++    if [ -n "$PYTEST" ]; then
++        sed -i 's/^gravity_spinup$/#gravity_spinup # DISABLED FOR PYTEST/g' "$(which gravity.sh)"
++    fi
++
++    gravityDBfile="/etc/pihole/gravity.db"
++    config_file="/etc/pihole/pihole-FTL.conf"
++    # make a point to mention which config file we're checking, as breadcrumb to revisit if/when pihole-FTL.conf is succeeded by TOML
++    echo "  Checking if custom gravity.db is set in ${config_file}"
++    if [[ -f "${config_file}" ]]; then
++        gravityDBfile="$(grep --color=never -Po "^GRAVITYDB=\K.*" "${config_file}" 2> /dev/null || echo "/etc/pihole/gravity.db")"
++    fi
++
++
++    if [ -z "$SKIPGRAVITYONBOOT" ] || [ ! -e "${gravityDBfile}" ]; then
++        if [ -n "$SKIPGRAVITYONBOOT" ];then
++            echo "  SKIPGRAVITYONBOOT is set, however ${gravityDBfile} does not exist (Likely due to a fresh volume). This is a required file for Pi-hole to operate."
++            echo "  Ignoring SKIPGRAVITYONBOOT on this occaision."
++        fi
++        # shellcheck disable=SC2016
++        echo '@reboot root PATH="$PATH:/usr/sbin:/usr/local/bin/" pihole updateGravity >/var/log/pihole/pihole_updateGravity.log || cat /var/log/pihole/pihole_updateGravity.log' > /etc/cron.d/gravity-on-boot
++    else
++        echo "  Skipping Gravity Database Update."
++        [ ! -e /etc/cron.d/gravity-on-boot ] || rm /etc/cron.d/gravity-on-boot &>/dev/null
++    fi
+ }
++
+diff --git a/docker_run.sh b/docker_run.sh
+index 045cec8..687691d 100755
+--- a/docker_run.sh
++++ b/docker_run.sh
+@@ -5,7 +5,7 @@
+ PIHOLE_BASE="${PIHOLE_BASE:-$(pwd)}"
+ [[ -d "$PIHOLE_BASE" ]] || mkdir -p "$PIHOLE_BASE" || { echo "Couldn't create storage directory: $PIHOLE_BASE"; exit 1; }
+ 
+-# Note: ServerIP should be replaced with your external ip.
++# Note: FTLCONF_REPLY_ADDR4 should be replaced with your external ip.
+ docker run -d \
+     --name pihole \
+     -p 53:53/tcp -p 53:53/udp \
+@@ -18,7 +18,7 @@ docker run -d \
+     --hostname pi.hole \
+     -e VIRTUAL_HOST="pi.hole" \
+     -e PROXY_LOCATION="pi.hole" \
+-    -e ServerIP="127.0.0.1" \
++    -e FTLCONF_REPLY_ADDR4="127.0.0.1" \
+     pihole/pihole:latest
+ 
+ printf 'Starting up pihole container '
+diff --git a/install.sh b/install.sh
+index 6e2ee05..30c65f3 100644
+--- a/install.sh
++++ b/install.sh
+@@ -1,4 +1,5 @@
+ #!/bin/bash -ex
++# shellcheck disable=SC2034
+ 
+ mkdir -p /etc/pihole/
+ mkdir -p /var/run/pihole
+@@ -33,7 +34,6 @@ if [[ "${PIHOLE_DOCKER_TAG}" = 'nightly' ||  "${PIHOLE_DOCKER_TAG}" = 'dev' ]];
+   rm -rf /var/lib/apt/lists/*
+ fi
+ 
+-ln -s `which echo` /usr/local/bin/whiptail
+ curl -L -s "$(s6_download_url)" | tar xvzf - -C /
+ mv /init /s6-init
+ 
+@@ -62,7 +62,6 @@ if [[ "${PIHOLE_DOCKER_TAG}" = 'nightly'  ]]; then
+   yes | pihole checkout dev
+ fi
+ 
+-sed -i 's/readonly //g' /opt/pihole/webpage.sh
+ sed -i '/^WEBPASSWORD/d' /etc/pihole/setupVars.conf
+ 
+ # sed a new function into the `pihole` script just above the `helpFunc()` function for later use.
+diff --git a/s6/debian-root/etc/cont-init.d/20-start.sh b/s6/debian-root/etc/cont-init.d/20-start.sh
+index 78efae6..06c137d 100644
+--- a/s6/debian-root/etc/cont-init.d/20-start.sh
++++ b/s6/debian-root/etc/cont-init.d/20-start.sh
+@@ -7,33 +7,4 @@ if [ "${PH_VERBOSE:-0}" -gt 0 ] ; then
+     bashCmd='bash -e -x'
+ fi
+ 
+-$bashCmd /start.sh
+-# Gotta go fast, no time for gravity
+-if [ -n "$PYTEST" ]; then
+-    sed -i 's/^gravity_spinup$/#gravity_spinup # DISABLED FOR PYTEST/g' "$(which gravity.sh)"
+-fi
+-
+-gravityDBfile="/etc/pihole/gravity.db"
+-config_file="/etc/pihole/pihole-FTL.conf"
+-# make a point to mention which config file we're checking, as breadcrumb to revisit if/when pihole-FTL.conf is succeeded by TOML
+-echo "  Checking if custom gravity.db is set in ${config_file}"
+-if [[ -f "${config_file}" ]]; then
+-    gravityDBfile="$(grep --color=never -Po "^GRAVITYDB=\K.*" "${config_file}" 2> /dev/null || echo "/etc/pihole/gravity.db")"
+-fi
+-
+-
+-if [ -z "$SKIPGRAVITYONBOOT" ] || [ ! -e "${gravityDBfile}" ]; then
+-    if [ -n "$SKIPGRAVITYONBOOT" ];then
+-        echo "  SKIPGRAVITYONBOOT is set, however ${gravityDBfile} does not exist (Likely due to a fresh volume). This is a required file for Pi-hole to operate."
+-        echo "  Ignoring SKIPGRAVITYONBOOT on this occaision."
+-    fi
+-
+-    echo '@reboot root PATH="$PATH:/usr/sbin:/usr/local/bin/" pihole updateGravity >/var/log/pihole/pihole_updateGravity.log || cat /var/log/pihole/pihole_updateGravity.log' > /etc/cron.d/gravity-on-boot
+-else
+-    echo "  Skipping Gravity Database Update."
+-    [ ! -e /etc/cron.d/gravity-on-boot ] || rm /etc/cron.d/gravity-on-boot &>/dev/null
+-fi
+-
+-pihole -v
+-
+-echo "  Container tag is: ${PIHOLE_DOCKER_TAG}"
+\ No newline at end of file
++$bashCmd /start.sh
+\ No newline at end of file
+diff --git a/start.sh b/start.sh
+index c5ae36d..a84df39 100755
+--- a/start.sh
++++ b/start.sh
+@@ -1,60 +1,19 @@
+ #!/bin/bash -e
+-# Dockerfile variables
+-export TAG
+-export ServerIP
+-export ServerIPv6
+-export PYTEST
+-export PHP_ENV_CONFIG
+-export PHP_ERROR_LOG
+-export HOSTNAME
+-export WEBLOGDIR
+-export DNS1
+-export DNS2
+-export DNSSEC
+-export DNS_BOGUS_PRIV
+-export DNS_FQDN_REQUIRED
+-export INTERFACE
+-export DNSMASQ_LISTENING_BEHAVIOUR="$DNSMASQ_LISTENING"
+-export IPv6
+-export WEB_PORT
+-export REV_SERVER
+-export REV_SERVER_DOMAIN
+-export REV_SERVER_TARGET
+-export REV_SERVER_CIDR
+-export CONDITIONAL_FORWARDING
+-export CONDITIONAL_FORWARDING_IP
+-export CONDITIONAL_FORWARDING_DOMAIN
+-export CONDITIONAL_FORWARDING_REVERSE
+-export TEMPERATUREUNIT
+-export ADMIN_EMAIL
+-export WEBUIBOXEDLAYOUT
+-export QUERY_LOGGING
+-export PIHOLE_DNS_
+-export DHCP_ACTIVE
+-export DHCP_START
+-export DHCP_END
+-export DHCP_ROUTER
+-export DHCP_LEASETIME
+-export PIHOLE_DOMAIN
+-export DHCP_IPv6
+-export DHCP_rapid_commit
+-export WEBTHEME
+-export WEBPASSWORD
+-export CUSTOM_CACHE_SIZE
+-
+-export adlistFile='/etc/pihole/adlists.list'
+-
+-# If user has set QUERY_LOGGING Env Var, copy it out to _OVERRIDE, else it will get reset when we source the next two files
+-# Come back to it at the end of the file
+-[ -n "${QUERY_LOGGING}" ] && QUERY_LOGGING_OVERRIDE="${QUERY_LOGGING}"
++
++# If user has set QUERY_LOGGING Env Var, copy it out to _OVERRIDE,
++# else it will get overridden when we source bash_functions.sh
++# (which then sources basic-install.sh)
++[ -n "${QUERY_LOGGING}" ] && export QUERY_LOGGING_OVERRIDE="${QUERY_LOGGING}"
++
++# Legacy Env Vars preserved for backwards compatability - convert them to FTLCONF_ equivalents
++[ -n "${ServerIP}" ] && echo "ServerIP is deprecated. Converting to FTLCONF_REPLY_ADDR4" && export "FTLCONF_REPLY_ADDR4"="$ServerIP"
++[ -n "${ServerIPv6}" ] && echo "ServerIPv6 is deprecated. Converting to FTLCONF_REPLY_ADDR6" && export "FTLCONF_REPLY_ADDR6"="$ServerIPv6"
+ 
+ # The below functions are all contained in bash_functions.sh
++# shellcheck source=/dev/null
+ . /bash_functions.sh
+ 
+-# Ensure we have all functions available to update our configurations
+-. /opt/pihole/webpage.sh
+-
+-# SKIP_INSTALL prevents the install from actually running
++# shellcheck source=/dev/null
+ SKIP_INSTALL=true . "${PIHOLE_INSTALL}"
+ 
+ echo " ::: Starting docker specific checks & setup for docker pihole/pihole"
+@@ -66,154 +25,55 @@ echo " ::: Starting docker specific checks & setup for docker pihole/pihole"
+ #    regular_setup_functions
+ #fi
+ 
++# Initial checks
++# ===========================
+ fix_capabilities
+-load_web_password_secret
+ validate_env || exit 1
+-prepare_configs
+-
+-[ -n "${PIHOLE_INTERFACE}" ] && change_setting "PIHOLE_INTERFACE" "$PIHOLE_INTERFACE"
+-[ -n "${IPV4_ADDRESS}" ] && change_setting "IPV4_ADDRESS" "$IPV4_ADDRESS"
+-[ -n "${INSTALL_WEB_SERVER}" ] && change_setting "INSTALL_WEB_SERVER" "$INSTALL_WEB_SERVER"
+-[ -n "${INSTALL_WEB_INTERFACE}" ] && change_setting "INSTALL_WEB_INTERFACE" "$INSTALL_WEB_INTERFACE"
+-[ -n "${LIGHTTPD_ENABLED}" ] && change_setting "LIGHTTPD_ENABLED" "$LIGHTTPD_ENABLED"
+-[ -n "${DNS_BOGUS_PRIV}" ] && change_setting "DNS_BOGUS_PRIV" "$DNS_BOGUS_PRIV"
+-[ -n "${ServerIP}" ] && changeFTLsetting "REPLY_ADDR4" "$ServerIP"
+-[ -n "${ServerIPv6}" ] && changeFTLsetting "REPLY_ADDR6" "$ServerIPv6"
++ensure_basic_configuration
++
++# FTL setup
++# ===========================
++setup_FTL_upstream_DNS
++[[ -n "${DHCP_ACTIVE}" && ${DHCP_ACTIVE} == "true" ]] && echo "Setting DHCP server" && setup_FTL_dhcp
++apply_FTL_Configs_From_Env
++setup_FTL_User
++setup_FTL_Interface
++setup_FTL_CacheSize
++setup_FTL_query_logging
++setup_FTL_server || true
+ [ -n "${DNS_FQDN_REQUIRED}" ] && change_setting "DNS_FQDN_REQUIRED" "$DNS_FQDN_REQUIRED"
+ [ -n "${DNSSEC}" ] && change_setting "DNSSEC" "$DNSSEC"
+-[ -n "${REV_SERVER}" ] && change_setting "REV_SERVER" "$REV_SERVER"
+-[ -n "${REV_SERVER_DOMAIN}" ] && change_setting "REV_SERVER_DOMAIN" "$REV_SERVER_DOMAIN"
+-[ -n "${REV_SERVER_TARGET}" ] && change_setting "REV_SERVER_TARGET" "$REV_SERVER_TARGET"
+-[ -n "${REV_SERVER_CIDR}" ] && change_setting "REV_SERVER_CIDR" "$REV_SERVER_CIDR"
+-
+-# Get all exported environment variables starting with FTLCONF_ as a prefix and call the changeFTLsetting
+-# function with the environment variable's suffix as the key. This allows applying any pihole-FTL.conf
+-# setting defined here: https://docs.pi-hole.net/ftldns/configfile/
+-declare -px | grep FTLCONF_ | sed -E 's/declare -x FTLCONF_([^=]+)=\"(.+)\"/\1 \2/' | while read -r name value
+-  do
+-    echo "Applying pihole-FTL.conf setting $name=$value"
+-    changeFTLsetting "$name" "$value"
+-  done
+-
+-if [ -z "$REV_SERVER" ];then
+-    # If the REV_SERVER* variables are set, then there is no need to add these.
+-    # If it is not set, then adding these variables is fine, and they will be converted by the Pi-hole install script
+-    [ -n "${CONDITIONAL_FORWARDING}" ] && change_setting "CONDITIONAL_FORWARDING" "$CONDITIONAL_FORWARDING"
+-    [ -n "${CONDITIONAL_FORWARDING_IP}" ] && change_setting "CONDITIONAL_FORWARDING_IP" "$CONDITIONAL_FORWARDING_IP"
+-    [ -n "${CONDITIONAL_FORWARDING_DOMAIN}" ] && change_setting "CONDITIONAL_FORWARDING_DOMAIN" "$CONDITIONAL_FORWARDING_DOMAIN"
+-    [ -n "${CONDITIONAL_FORWARDING_REVERSE}" ] && change_setting "CONDITIONAL_FORWARDING_REVERSE" "$CONDITIONAL_FORWARDING_REVERSE"
+-fi
+-
+-if [ -z "${PIHOLE_DNS_}" ]; then
+-    # For backward compatibility, if DNS1 and/or DNS2 are set, but PIHOLE_DNS_ is not, convert them to
+-    # a semi-colon delimited string and store in PIHOLE_DNS_
+-    # They are not used anywhere if PIHOLE_DNS_ is set already
+-    [ -n "${DNS1}" ] && echo "Converting DNS1 to PIHOLE_DNS_" && PIHOLE_DNS_="$DNS1"
+-    [[ -n "${DNS2}" && "${DNS2}" != "no" ]] && echo "Converting DNS2 to PIHOLE_DNS_" && PIHOLE_DNS_="$PIHOLE_DNS_;$DNS2"
+-fi
+-
+-# Parse the PIHOLE_DNS variable, if it exists, and apply upstream servers to Pi-hole config
+-if [ -n "${PIHOLE_DNS_}" ]; then
+-    echo "Setting DNS servers based on PIHOLE_DNS_ variable"
+-    # Remove any PIHOLE_DNS_ entries from setupVars.conf, if they exist
+-    sed -i '/PIHOLE_DNS_/d' /etc/pihole/setupVars.conf
+-    # Split into an array (delimited by ;)
+-    # Loop through and add them one by one to setupVars.conf
+-    PIHOLE_DNS_ARR=(${PIHOLE_DNS_//;/ })
+-    count=1
+-    valid_entries=0
+-    for i in "${PIHOLE_DNS_ARR[@]}"; do
+-        if valid_ip "$i" || valid_ip6 "$i" ; then
+-          change_setting "PIHOLE_DNS_$count" "$i"
+-          ((count=count+1))
+-          ((valid_entries=valid_entries+1))
+-          continue
+-        fi
+-        if [ -n "$(dig +short ${i//#*/})" ]; then
+-          # If the "address" is a domain (for example a docker link) then try to resolve it and add 
+-          # the result as a DNS server in setupVars.conf.
+-          resolved_ip="$(dig +short ${i//#*/} | head -n 1)"
+-          if [ -n "${i//*#/}" ] && [ "${i//*#/}" != "${i//#*/}" ]; then
+-            resolved_ip="${resolved_ip}#${i//*#/}"
+-          fi
+-          echo "Resolved ${i} from PIHOLE_DNS_ as: ${resolved_ip}"
+-          if valid_ip "$resolved_ip" || valid_ip6 "$resolved_ip" ; then
+-            change_setting "PIHOLE_DNS_$count" "$resolved_ip"
+-            ((count=count+1))
+-            ((valid_entries=valid_entries+1))
+-            continue
+-          fi
+-        fi
+-        # If the above tests fail then this is an invalid DNS server
+-        echo "Invalid entry detected in PIHOLE_DNS_: ${i}"
+-    done
+-
+-    if [ $valid_entries -eq 0 ]; then
+-      echo "No Valid entries detected in PIHOLE_DNS_. Aborting"
+-      exit 1
+-    fi
+-else
+-    # Environment variable has not been set, but there may be existing values in an existing setupVars.conf
+-    # if this is the case, we do not want to overwrite these with the defaults of 8.8.8.8 and 8.8.4.4
+-    # Pi-hole can run with only one upstream configured, so we will just check for one.
+-    setupVarsDNS="$(grep 'PIHOLE_DNS_' /etc/pihole/setupVars.conf || true)"
+-
+-    if [ -z "${setupVarsDNS}" ]; then
+-      echo "Configuring default DNS servers: 8.8.8.8, 8.8.4.4"
+-      change_setting "PIHOLE_DNS_1" "8.8.8.8"
+-      change_setting "PIHOLE_DNS_2" "8.8.4.4"
+-    else
+-      echo "Existing DNS servers detected in setupVars.conf. Leaving them alone"
+-    fi
+-fi
+-
+-# Parse the WEBTHEME variable, if it exists, and set the selected theme if it is one of the supported values.
+-# If an invalid theme name was supplied, setup WEBTHEME to use the default-light theme.
+-if [ -n "${WEBTHEME}" ]; then
+-    case "${WEBTHEME}" in
+-      "default-dark" | "default-darker" | "default-light" | "default-auto" | "lcars")
+-        echo "Setting Web Theme based on WEBTHEME variable, using value ${WEBTHEME}"
+-        change_setting "WEBTHEME" "${WEBTHEME}"
+-        ;;
+-      *)
+-        echo "Invalid theme name supplied: ${WEBTHEME}, falling back to default-light."
+-        change_setting "WEBTHEME" "default-light"
+-        ;;
+-    esac
+-fi
+-
+-[[ -n "${DHCP_ACTIVE}" && ${DHCP_ACTIVE} == "true" ]] && echo "Setting DHCP server" && setup_dhcp
+-
+-setup_web_port "$WEB_PORT"
++[ -n "${DNS_BOGUS_PRIV}" ] && change_setting "DNS_BOGUS_PRIV" "$DNS_BOGUS_PRIV"
++# We call the following function directly as it also allows us to run ProcessDNSSettings
++# (to commit settings to 01-pihole.conf) without sourcing webpage.sh
++pihole -a -i "$DNSMASQ_LISTENING"
++
++# Web interface setup
++# ===========================
++setup_web_port
++load_web_password_secret
+ setup_web_password
+-setup_temp_unit "$TEMPERATUREUNIT"
+-setup_ui_layout "$WEBUIBOXEDLAYOUT"
+-setup_admin_email "$ADMIN_EMAIL"
+-setup_dnsmasq "$INTERFACE" "$DNSMASQ_LISTENING_BEHAVIOUR"
+-setup_php_env
+-setup_dnsmasq_hostnames "$ServerIP" "$ServerIPv6" "$HOSTNAME"
++setup_web_theme
++setup_web_temp_unit
++setup_web_layout
++setup_web_php_env
++
++# lighttpd setup
++# ===========================
+ setup_ipv4_ipv6
+-setup_lighttpd_bind "$ServerIP"
++setup_lighttpd_bind
++
++# Misc Setup
++# ===========================
++setup_admin_email
+ setup_blocklists
++
+ test_configs
+ 
+ [ -f /.piholeFirstBoot ] && rm /.piholeFirstBoot
+ 
+-# Set QUERY_LOGGING value in setupVars to be that which the user has passed in as an ENV var (if they have)
+-[ -n "${QUERY_LOGGING_OVERRIDE}" ] && change_setting "QUERY_LOGGING" "$QUERY_LOGGING_OVERRIDE"
+-
+-# Source setupVars.conf to get the true value of QUERY_LOGGING
+-. ${setupVars}
++echo " ::: Docker start setup complete"
+ 
+-if [ ${QUERY_LOGGING} == "false" ]; then
+-  echo "::: Disabling Query Logging"
+-  pihole logging off
+-else
+-  # If it is anything other than false, set it to true
+-  change_setting "QUERY_LOGGING" "true"
+-  # Set pihole logging on for good measure
+-  echo "::: Enabling Query Logging"
+-  pihole logging on
+-fi
++pihole -v
+ 
+-echo " ::: Docker start setup complete"
++echo "  Container tag is: ${PIHOLE_DOCKER_TAG}"
+\ No newline at end of file
+diff --git a/test/conftest.py b/test/conftest.py
+index 0c190f8..5e92ee6 100644
+--- a/test/conftest.py
++++ b/test/conftest.py
+@@ -34,7 +34,7 @@ def args_volumes():
+ 
+ @pytest.fixture()
+ def args_env():
+-    return '-e ServerIP="127.0.0.1"'
++    return '-e FTLCONF_REPLY_ADDR4="127.0.0.1"'
+ 
+ @pytest.fixture()
+ def args(args_volumes, args_env):
+@@ -138,7 +138,7 @@ def persist_args_volumes():
+ 
+ @pytest.fixture(scope='module')
+ def persist_args_env():
+-    return '-e ServerIP="127.0.0.1"'
++    return '-e FTLCONF_REPLY_ADDR4="127.0.0.1"'
+ 
+ @pytest.fixture(scope='module')
+ def persist_args(persist_args_volumes, persist_args_env):
+diff --git a/test/test_bash_functions.py b/test/test_bash_functions.py
+index ebdfce1..3d53621 100644
+--- a/test/test_bash_functions.py
++++ b/test/test_bash_functions.py
+@@ -5,8 +5,9 @@ import re
+ 
+ SETUPVARS_LOC='/etc/pihole/setupVars.conf'
+ DNSMASQ_CONFIG_LOC = '/etc/dnsmasq.d/01-pihole.conf'
+-EVAL_SETUP_DNSMASQ='. /bash_functions.sh ; eval `grep "^setup_dnsmasq " /start.sh`'
+-EVAL_SETUP_WEB_PASSWORD='. /bash_functions.sh ; eval `grep setup_web_password /start.sh`'
++EVAL_SETUP_FTL_CACHESIZE='. ./bash_functions.sh ; eval `grep setup_FTL_CacheSize /start.sh`'
++EVAL_SETUP_FTL_INTERFACE='. ./bash_functions.sh ; eval `grep setup_FTL_Interface /start.sh`'
++EVAL_SETUP_WEB_PASSWORD='. ./bash_functions.sh ; eval `grep setup_web_password /start.sh`'
+ 
+ def _cat(file):
+     return 'cat {}'.format(file)
+@@ -63,7 +64,7 @@ def test_overrides_default_custom_cache_size(docker, slow, test_args, cache_size
+     ''' Changes the cache_size setting to increase or decrease the cache size for dnsmasq'''
+     CONFIG_LINE = r'cache-size\s*=\s*{}'.format(cache_size)
+ 
+-    function = docker.run('echo ${CUSTOM_CACHE_SIZE};. ./bash_functions.sh; echo ${CUSTOM_CACHE_SIZE}; eval `grep setup_dnsmasq /start.sh`')
++    function = docker.run('echo ${CUSTOM_CACHE_SIZE};. ./bash_functions.sh; echo ${CUSTOM_CACHE_SIZE}; eval `grep setup_FTL_CacheSize /start.sh`')
+     assert "Custom CUSTOM_CACHE_SIZE set to {}".format(cache_size) in function.stdout
+     slow(lambda: re.search(CONFIG_LINE, docker.run(_cat(DNSMASQ_CONFIG_LOC)).stdout) != None)
+ 
+@@ -75,7 +76,7 @@ def test_overrides_default_custom_cache_size(docker, slow, test_args, cache_size
+ def test_bad_input_to_custom_cache_size(docker, slow, test_args):
+     CONFIG_LINE = r'cache-size\s*=\s*10000'
+ 
+-    docker.run('. ./bash_functions.sh; eval `grep setup_dnsmasq /start.sh`')
++    docker.run(EVAL_SETUP_FTL_CACHESIZE)
+     slow(lambda: re.search(CONFIG_LINE, docker.run(_cat(DNSMASQ_CONFIG_LOC)).stdout) != None)
+ 
+ @pytest.mark.parametrize('test_args', [
+@@ -84,84 +85,23 @@ def test_bad_input_to_custom_cache_size(docker, slow, test_args):
+ def test_dnssec_enabled_with_custom_cache_size(docker, slow, test_args):
+     CONFIG_LINE = r'cache-size\s*=\s*10000'
+ 
+-    docker.run('. ./bash_functions.sh; eval `grep setup_dnsmasq /start.sh`')
++    docker.run(EVAL_SETUP_FTL_CACHESIZE)
+     slow(lambda: re.search(CONFIG_LINE, docker.run(_cat(DNSMASQ_CONFIG_LOC)).stdout) != None)
+ 
+ 
+-# DNS Environment Variable behavior in combinations of modified pihole LTE settings
+-@pytest.mark.skip('broke, needs investigation in v5.0 beta')
+-@pytest.mark.parametrize('args_env, expected_stdout, dns1, dns2', [
+-    ('',                                     'default DNS', '8.8.8.8', '8.8.4.4' ),
+-    ('-e DNS1="1.2.3.4"',                   'custom DNS',  '1.2.3.4', '8.8.4.4' ),
+-    ('-e DNS2="1.2.3.4"',                   'custom DNS',  '8.8.8.8', '1.2.3.4' ),
+-    ('-e DNS1="1.2.3.4" -e DNS2="2.2.3.4"', 'custom DNS',  '1.2.3.4', '2.2.3.4' ),
+-    ('-e DNS1="1.2.3.4" -e DNS2="no"',      'custom DNS',  '1.2.3.4', None ),
+-    ('-e DNS2="no"',                        'custom DNS',  '8.8.8.8', None ),
+-])
+-def test_override_default_servers_with_dns_envvars(docker, slow, args_env, expected_stdout, dns1, dns2):
+-    ''' on first boot when DNS vars are NOT set explain default google DNS settings are used
+-                   or when DNS vars are set override the pihole DNS settings '''
+-    assert docker.run('test -f /.piholeFirstBoot').rc == 0
+-    function = docker.run(EVAL_SETUP_DNSMASQ)
+-    assert expected_stdout in function.stdout
+-    expected_servers = 'server={}\n'.format(dns1) if dns2 == None else 'server={}\nserver={}\n'.format(dns1, dns2)
+-    slow(lambda: expected_servers == docker.run('grep "^server=[^/]" /etc/dnsmasq.d/01-pihole.conf').stdout)
+-
+-
+-#@pytest.mark.skipif(os.environ.get('CI') == 'true',
+-#                    reason="Can't get setupVar setup to work on travis")
+-@pytest.mark.skip('broke, needs investigation in v5.0 beta')
+-@pytest.mark.parametrize('args_env, dns1, dns2, expected_stdout', [
+-
+-    ('', '9.9.9.1', '9.9.9.2',
+-     'Existing DNS servers used'),
+-    ('-e DNS1="1.2.3.4"', '9.9.9.1', '9.9.9.2',
+-     'Docker DNS variables not used\nExisting DNS servers used (9.9.9.1 & 9.9.9.2)'),
+-    ('-e DNS2="1.2.3.4"', '8.8.8.8', None,
+-     'Docker DNS variables not used\nExisting DNS servers used (8.8.8.8 & unset)'),
+-    ('-e DNS1="1.2.3.4" -e DNS2="2.2.3.4"', '1.2.3.4', '2.2.3.4',
+-     'Docker DNS variables not used\nExisting DNS servers used (1.2.3.4 & 2.2.3.4'),
+-])
+-def test_dns_envs_are_secondary_to_setupvars(docker, slow, args_env, expected_stdout, dns1, dns2):
+-    ''' on second boot when DNS vars are set just use pihole DNS settings
+-                    or when DNS vars and FORCE_DNS var are set override the pihole DNS settings '''
+-    # Given we are not booting for the first time
+-    assert docker.run('rm /.piholeFirstBoot').rc == 0
+-
+-    # and a user already has custom pihole dns variables in setup vars    
+-    docker.run('sed -i "/^PIHOLE_DNS/ d" {}'.format(SETUPVARS_LOC))
+-    docker.run('echo "PIHOLE_DNS_1={}" | tee -a {}'.format(dns1, SETUPVARS_LOC))
+-    if dns2:
+-        docker.run('echo "PIHOLE_DNS_2={}" | tee -a {}'.format(dns2, SETUPVARS_LOC))
+-    docker.run('sync {}'.format(SETUPVARS_LOC))
+-    slow(lambda: 'PIHOLE_DNS' in docker.run(_cat(SETUPVARS_LOC)).stdout)
+-
+-    # When we run setup dnsmasq during startup of the container
+-    function = docker.run(EVAL_SETUP_DNSMASQ)
+-    assert expected_stdout in function.stdout
+-
+-    # Then the servers are still what the user had customized if forced dnsmasq is not set
+-    expected_servers = ['server={}'.format(dns1)]
+-    if dns2:
+-        expected_servers.append('server={}'.format(dns2))
+-    slow(lambda: docker.run('grep "^server=[^/]" /etc/dnsmasq.d/01-pihole.conf').stdout.strip().split('\n') == \
+-         expected_servers)
+-
+-
+-@pytest.mark.parametrize('args_env, expected_stdout, expected_config_line', [    
++@pytest.mark.parametrize('args_env, expected_stdout, expected_config_line', [
+     ('', 'binding to default interface: eth0', 'PIHOLE_INTERFACE=eth0'),
+     ('-e INTERFACE="br0"', 'binding to custom interface: br0', 'PIHOLE_INTERFACE=br0'),
+ ])
+ def test_dns_interface_override_defaults(docker, slow, args_env, expected_stdout, expected_config_line):
+     ''' When INTERFACE environment var is passed in, overwrite dnsmasq interface '''
+-    function = docker.run(EVAL_SETUP_DNSMASQ)
++    function = docker.run(EVAL_SETUP_FTL_INTERFACE)
+     assert expected_stdout in function.stdout
+     slow(lambda: expected_config_line + '\n' == docker.run('grep "^PIHOLE_INTERFACE" {}'.format(SETUPVARS_LOC)).stdout)
+ 
+ 
+ expected_debian_lines = [
+     '"VIRTUAL_HOST" => "127.0.0.1"',
+-    '"ServerIP" => "127.0.0.1"',
+     '"PHP_ERROR_LOG" => "/var/log/lighttpd/error-pihole.log"'
+ ]
+ 
+@@ -191,8 +131,8 @@ def test_webpassword_random_generation(docker):
+ 
+ @pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
+ @pytest.mark.parametrize('args_env,secure,setupvars_hash', [
+-    ('-e ServerIP=1.2.3.4 -e WEBPASSWORD=login', True, 'WEBPASSWORD=6060d59351e8c2f48140f01b2c3f3b61652f396c53a5300ae239ebfbe7d5ff08'),
+-    ('-e ServerIP=1.2.3.4 -e WEBPASSWORD=""', False, ''),
++    ('-e WEBPASSWORD=login', True, 'WEBPASSWORD=6060d59351e8c2f48140f01b2c3f3b61652f396c53a5300ae239ebfbe7d5ff08'),
++    ('-e WEBPASSWORD=""', False, ''),
+ ])
+ def test_webpassword_env_assigns_password_to_file_or_removes_if_empty(docker, args_env, secure, setupvars_hash):
+     ''' When a user sets webPassword env the admin password gets set or removed if empty '''
+@@ -209,10 +149,10 @@ def test_webpassword_env_assigns_password_to_file_or_removes_if_empty(docker, ar
+ @pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
+ @pytest.mark.parametrize('test_args', ['-e WEBPASSWORD=login', '-e WEBPASSWORD=""'])
+ def test_env_always_updates_password(docker, args_env, test_args):
+-    '''When a user sets the WEBPASSWORD environment variable, ensure it always sets the password'''    
++    '''When a user sets the WEBPASSWORD environment variable, ensure it always sets the password'''
+     function = docker.run(EVAL_SETUP_WEB_PASSWORD)
+ 
+-    assert '::: Assigning password defined by Environment Variable' in function.stdout    
++    assert '::: Assigning password defined by Environment Variable' in function.stdout
+ 
+ 
+ @pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
+diff --git a/test/test_start.py b/test/test_start.py
+index 2f5c7a4..2439362 100644
+--- a/test/test_start.py
++++ b/test/test_start.py
+@@ -5,29 +5,21 @@ import time
+ ''' Note, testinfra builtins don't seem fully compatible with
+         docker containers (esp. musl based OSs) stripped down nature '''
+ 
+-# If the test runs /start.sh, do not let s6 run it too!  Kill entrypoint to avoid race condition/duplicated execution
+-@pytest.mark.parametrize('persist_entrypoint,persist_cmd,persist_args_env', [('--entrypoint=tail','-f /dev/null','')])
+-def test_serverip_missing_is_not_required_anymore(running_pihole):
+-    ''' When args to docker are empty start.sh exits saying ServerIP is required '''
+-    start = docker.run('/start.sh')
+-    error_msg = "ERROR: To function correctly you must pass an environment variables of 'ServerIP' into the docker container"
+-    assert start.rc == 1
+-    assert error_msg in start.stdout
+ 
+ # If the test runs /start.sh, do not let s6 run it too!  Kill entrypoint to avoid race condition/duplicated execution
+ @pytest.mark.parametrize('entrypoint,cmd', [('--entrypoint=tail','-f /dev/null')])
+-@pytest.mark.parametrize('args,error_msg,expect_rc', [ 
+-    ('-e ServerIP="1.2.3.z"', "ServerIP Environment variable (1.2.3.z) doesn't appear to be a valid IPv4 address",1), 
+-    ('-e ServerIP="1.2.3.4" -e ServerIPv6="1234:1234:1234:ZZZZ"', "Environment variable (1234:1234:1234:ZZZZ) doesn't appear to be a valid IPv6 address",1),
+-    ('-e ServerIP="1.2.3.4" -e ServerIPv6="kernel"', "ERROR: You passed in IPv6 with a value of 'kernel'",1),
++@pytest.mark.parametrize('args,error_msg,expect_rc', [
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.z"', "FTLCONF_REPLY_ADDR4 Environment variable (1.2.3.z) doesn't appear to be a valid IPv4 address",1),
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="1234:1234:1234:ZZZZ"', "Environment variable (1234:1234:1234:ZZZZ) doesn't appear to be a valid IPv6 address",1),
++    ('-e FTLCONF_REPLY_ADDR4="1.2.3.4" -e FTLCONF_REPLY_ADDR6="kernel"', "ERROR: You passed in IPv6 with a value of 'kernel'",1),
+ ])
+-def test_serverip_invalid_ips_triggers_exit_error(docker, error_msg, expect_rc):
+-    ''' When args to docker are empty start.sh exits saying ServerIP is required '''
++def test_ftlconf_reply_addr_invalid_ips_triggers_exit_error(docker, error_msg, expect_rc):
+     start = docker.run('/start.sh')
+     assert start.rc == expect_rc
+     assert 'ERROR' in start.stdout
+     assert error_msg in start.stdout
+ 
++
+ @pytest.mark.parametrize('hostname,expected_ip', [
+     ('pi.hole',                        '127.0.0.1'),
+     ('google-public-dns-a.google.com', '8.8.8.8'),
+@@ -62,7 +54,7 @@ def test_admin_requests_load_as_expected(running_pihole, version, addr, url):
+     validate_curl(http_rc, expected_http_code, page_contents)
+     assert http_rc.rc == 0
+     assert int(http_rc.stdout) == expected_http_code
+-    for html_text in ['dns_queries_today', 'Content-Security-Policy', 
++    for html_text in ['dns_queries_today', 'Content-Security-Policy',
+                       'scripts/pi-hole/js/footer.js']:
+         # version removed, not showing up in footer of test env (fix me)
+         assert html_text in page_contents

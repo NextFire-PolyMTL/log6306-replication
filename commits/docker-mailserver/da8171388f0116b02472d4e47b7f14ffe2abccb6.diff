@@ -1,0 +1,1754 @@
+commit da8171388f0116b02472d4e47b7f14ffe2abccb6
+Author: Georg Lauterbach <44545919+aendeavor@users.noreply.github.com>
+Date:   Wed Oct 21 18:16:32 2020 +0200
+
+    Complete Refactor for `target/bin` (#1654)
+    
+    * documentation and script updates trying to fix #1647
+    * preparations for refactoring target/bin/
+    * complete refactor for target/bin/
+    * changing script output slightly
+    * outsourcing functions in `bin-helper.sh`
+    * re-wrote linting to allow for proper shellcheck -x execution
+    * show explanation for shellcheck ignore
+    * adding some more information
+
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 2566943b..497b6f04 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -189,7 +189,7 @@ function _setup_postfix_aliases
+       DOMAIN=$(echo "${FROM}" | cut -d @ -f2)
+ 
+       # if they are equal it means the line looks like: "user1     other@domain.tld"
+-      [ "${UNAME}" != "${DOMAIN}" ] && echo "${DOMAIN}" >> /tmp/vhost.tmp
++      [[ "${UNAME}" != "${DOMAIN}" ]] && echo "${DOMAIN}" >> /tmp/vhost.tmp
+     done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true)
+   else
+     _notify 'inf' "Warning 'config/postfix-virtual.cf' is not provided. No mail alias/forward created."
+diff --git a/Dockerfile b/Dockerfile
+index 4aa97926..926c5a7b 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -228,7 +228,7 @@ RUN curl -s https://letsencrypt.org/certs/lets-encrypt-x3-cross-signed.pem > /et
+ 
+ COPY ./target/bin /usr/local/bin
+ # Start-mailserver script
+-COPY ./target/helper_functions.sh ./target/check-for-changes.sh ./target/start-mailserver.sh ./target/fail2ban-wrapper.sh ./target/postfix-wrapper.sh ./target/postsrsd-wrapper.sh ./target/docker-configomat/configomat.sh /usr/local/bin/
++COPY ./target/bin-helper.sh ./target/helper-functions.sh ./target/check-for-changes.sh ./target/start-mailserver.sh ./target/fail2ban-wrapper.sh ./target/postfix-wrapper.sh ./target/postsrsd-wrapper.sh ./target/docker-configomat/configomat.sh /usr/local/bin/
+ RUN chmod +x /usr/local/bin/*
+ 
+ # Configure supervisor
+diff --git a/Makefile b/Makefile
+index 6833a4bb..0defc0fb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -19,8 +19,8 @@ build:
+ backup:
+ # if backup directories exist, clean hasn't been called, therefore
+ # we shouldn't overwrite it. It still contains the original content.
+-	@ if [ ! -d config.bak ]; then cp -rp config config.bak; fi
+-	@ if [ ! -d testconfig.bak ]; then cp -rp test/config testconfig.bak; fi
++	@ if [[ ! -d config.bak ]]; then cp -rp config config.bak; fi
++	@ if [[ ! -d testconfig.bak ]]; then cp -rp test/config testconfig.bak; fi
+ 
+ generate-accounts:
+ 	@ docker run --rm -e MAIL_USER=user1@localhost.localdomain -e MAIL_PASS=mypassword -t $(NAME) /bin/sh -c 'echo "$$MAIL_USER|$$(doveadm pw -s SHA512-CRYPT -u $$MAIL_USER -p $$MAIL_PASS)"' > test/config/postfix-accounts.cf
+diff --git a/hooks/build b/hooks/build
+index e45a55c5..93afe4d4 100755
+--- a/hooks/build
++++ b/hooks/build
+@@ -3,6 +3,6 @@ VCS_REF=$(git rev-parse --short HEAD)
+ VCS_VERSION=$(git describe --tags --contains --always)
+ 
+ docker build \
+-	--build-arg VCS_REF="$VCS_REF" \
+-	--build-arg VCS_VERSION="$VCS_VERSION" \
+-	-f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" .
++  --build-arg VCS_REF="$VCS_REF" \
++  --build-arg VCS_VERSION="$VCS_VERSION" \
++  -f "$DOCKERFILE_PATH" -t "$IMAGE_NAME" .
+diff --git a/setup.sh b/setup.sh
+index 9d8fbd1d..cf322e50 100755
+--- a/setup.sh
++++ b/setup.sh
+@@ -7,6 +7,7 @@ SCRIPT='SETUP'
+ 
+ set -euEo pipefail
+ trap '__log_err ${FUNCNAME[0]:-"?"} ${_:-"?"} ${LINENO:-"?"} ${?:-"?"}' ERR
++trap '_unset_vars || :' EXIT
+ 
+ function __log_err
+ {
+@@ -20,14 +21,13 @@ function __log_err
+     "  – function  = ${FUNC_NAME}" \
+     "  – line      = ${LINE}" \
+     "  – exit code = ${EXIT_CODE}"
+-
+-  _unset_vars
+ }
+ 
+ function _unset_vars
+ {
+   unset CDIR CRI INFO IMAGE_NAME CONTAINER_NAME DEFAULT_CONFIG_PATH
+   unset USE_CONTAINER WISHED_CONFIG_PATH CONFIG_PATH VOLUME USE_TTY
++  unset SCRIPT
+ }
+ 
+ function _get_current_directory
+@@ -340,16 +340,13 @@ function _main
+             _docker_container /bin/bash -c "${@}"
+           fi
+           ;;
+-        *        ) _usage ; _unset_vars ; exit 1 ;;
++        *        ) _usage ; exit 1 ;;
+       esac
+       ;;
+ 
+-    help) _usage ;;
+-
+-    *            ) _usage ; _unset_vars ; exit 1 ;;
++    help ) _usage ;;
++    *    ) _usage ; exit 1 ;;
+   esac
+-
+-  _unset_vars
+ }
+ 
+ _main "${@}"
+diff --git a/target/bin-helper.sh b/target/bin-helper.sh
+new file mode 100755
+index 00000000..169dc510
+--- /dev/null
++++ b/target/bin-helper.sh
+@@ -0,0 +1,16 @@
++#! /bin/bash
++
++# version   0.1.0
++# executed  from scripts in target/bin/
++# task      provides frequently used functions
++
++function errex
++{
++  echo "${@}" 1>&2
++  exit 1
++}
++
++function escape
++{
++  echo "${1//./\\.}"
++}
+diff --git a/target/bin/addalias b/target/bin/addalias
+index bec227b5..f8cbcd56 100755
+--- a/target/bin/addalias
++++ b/target/bin/addalias
+@@ -1,31 +1,25 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+-
+-EMAIL="$1"
+-RECIPIENT="$2"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: addalias <alias@domain> <recipient@other>"
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++EMAIL="${1}"
++RECIPIENT="${2}"
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++function usage  { echo "Usage: addalias <alias@domain> <recipient@other>" ; }
+ 
+-[ -z "$EMAIL" ] && { usage; errex "Error: No alias specified"; }
+-[ -z "$RECIPIENT" ] && { usage; errex "Error: No recipient specified"; }
++[[ -z ${EMAIL} ]] && { usage ; errex "Error: No alias specified" ; }
++[[ -z ${RECIPIENT} ]] && { usage ; errex "Error: No recipient specified" ; }
+ 
+-grep -qi "^$(escape $EMAIL)[a-zA-Z@.\ ]*$(escape $RECIPIENT)" $DATABASE 2>/dev/null &&
+-	errex "Alias \"$EMAIL $RECIPIENT\" already exists"
++grep \
++  -qi "^$(escape "${EMAIL}")[a-zA-Z@.\ ]*$(escape "${RECIPIENT}")" \
++  "${DATABASE}" 2>/dev/null && errex "Alias \"${EMAIL} ${RECIPIENT}\" already exists"
+ 
+-if grep -qi "^$(escape $EMAIL)" $DATABASE 2>/dev/null; then
+-        sed -i "/$EMAIL/s/$/,$RECIPIENT/" $DATABASE
+-    else
+-        echo "$EMAIL $RECIPIENT" >> $DATABASE
++if grep -qi "^$(escape "${EMAIL}")" "${DATABASE}" 2>/dev/null
++then
++  sed -i "/${EMAIL}/s/$/,${RECIPIENT}/" "${DATABASE}"
++else
++  echo "${EMAIL} ${RECIPIENT}" >> "${DATABASE}"
+ fi
+diff --git a/target/bin/addmailuser b/target/bin/addmailuser
+index bf9fe61e..8eeb1263 100755
+--- a/target/bin/addmailuser
++++ b/target/bin/addmailuser
+@@ -1,41 +1,36 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
++# shellcheck disable=SC2094
+ 
+-USER="$1"
+-shift
+-PASSWD="$@"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: addmailuser <user@domain> [<password>]"
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++USER="${1}"
++shift
++PASSWD="${*}"
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++function usage  { echo "Usage: addmailuser <user@domain> [<password>]" ; }
+ 
+-[ -z "$USER" ] && { usage; errex "no username specified"; }
+-expr index "$USER" "@" >/dev/null || { usage; errex "username must include the domain"; }
++[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
++[[ "${USER}" =~ .*\@.* ]] || { usage ; errex "username must include the domain" ; }
+ 
+ # Protect config file with lock to avoid race conditions
+-touch $DATABASE
++touch "${DATABASE}"
+ (
+   flock -e 200
+ 
+-  grep -qi "^$(escape "$USER")|" $DATABASE 2>/dev/null &&
+-    errex "User \"$USER\" already exists"
++  grep -qi "^$(escape "${USER}")|" "${DATABASE}" 2>/dev/null &&
++    errex "User \"${USER}\" already exists"
+ 
+-  if [ -z "$PASSWD" ]; then
+-    read -s -p "Enter Password: " PASSWD
++  if [[ -z ${PASSWD} ]]
++  then
++    read -r -s -p "Enter Password: " PASSWD
+     echo
+-    [ -z "$PASSWD" ] && errex "Password must not be empty"
++    [[ -z ${PASSWD} ]] && errex "Password must not be empty"
+   fi
+ 
+-  HASH="$(doveadm pw -s SHA512-CRYPT -u "$USER" -p "$PASSWD")"
+-  echo "$USER|$HASH" >> $DATABASE
+-) 200<$DATABASE
++  HASH="$(doveadm pw -s SHA512-CRYPT -u "${USER}" -p "${PASSWD}")"
++  echo "${USER}|${HASH}" >> "${DATABASE}"
++) 200< "${DATABASE}"
+diff --git a/target/bin/addrelayhost b/target/bin/addrelayhost
+index ea5e5ce0..1b8ca15d 100755
+--- a/target/bin/addrelayhost
++++ b/target/bin/addrelayhost
+@@ -1,33 +1,26 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
+-
+-DOMAIN="$1"
+-HOST="$2"
+-PORT="$3"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: addrelayhost <domain> <host> [<port>]"
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++DOMAIN="${1}"
++HOST="${2}"
++PORT="${3}"
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++function usage  { echo "Usage: addrelayhost <domain> <host> [<port>]" ; }
+ 
+-[ -z "$DOMAIN" ] && { usage; errex "no domain specified"; }
+-[ -z "$HOST" ] && { usage; errex "no relay host specified"; }
++[[ -z ${DOMAIN} ]] && { usage ; errex "no domain specified" ; }
++[[ -z ${HOST} ]] && { usage ; errex "no relay host specified" ; }
+ 
+-if [ -z "$PORT" ]; then
+-	PORT=25
+-fi
++[[ -z ${PORT} ]] && PORT=25
+ 
+-if grep -qi "^@$DOMAIN" $DATABASE 2>/dev/null; then
+-	sed -i "s ^@"$DOMAIN".* "@$DOMAIN"\t\t["$HOST"]:"$PORT" " $DATABASE
++if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
++then
++  # TODO check if fixed
++  # sed -i "s ^@${DOMAIN}.* @${DOMAIN}\t\t[${HOST}]:${PORT}" "${DATABASE}"
++  sed -i "s ^@""${DOMAIN}"".* ""@""${DOMAIN}""\t\t[""${HOST}""]:""${PORT}"" " "${DATABASE}"
+ else
+-	echo -e "@$DOMAIN\t\t[$HOST]:$PORT" >> $DATABASE
++  echo -e "@${DOMAIN}\t\t[${HOST}]:${PORT}" >> "${DATABASE}"
+ fi
+diff --git a/target/bin/addsaslpassword b/target/bin/addsaslpassword
+index ac372267..780e74a5 100755
+--- a/target/bin/addsaslpassword
++++ b/target/bin/addsaslpassword
+@@ -1,35 +1,29 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-sasl-password.cf}
+-
+-DOMAIN="$1"
+-USER="$2"
+-PASSWD="$3"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: addsaslpassword <domain> <username> <password>"
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-sasl-password.cf}
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++DOMAIN="${1}"
++USER="${2}"
++PASSWD="${3}"
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++function usage  { echo "Usage: addsaslpassword <domain> <username> <password>" ; }
+ 
+-[ -z "$DOMAIN" ] && { usage; errex "no domain specified"; }
+-[ -z "$USER" ] && { usage; errex "no username specified"; }
++[[ -z ${DOMAIN} ]] && { usage ; errex "no domain specified" ; }
++[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
+ 
+-if [ -z "$PASSWD" ]; then
+-	read -s -p "Enter Password: " PASSWD
+-	echo
+-	[ -z "$PASSWD" ] && errex "Password must not be empty"
++if [[ -z ${PASSWD} ]]
++then
++  read -r -s -p "Enter Password: " PASSWD
++  echo
++  [[ -z ${PASSWD} ]] && errex "Password must not be empty"
+ fi
+ 
+-if grep -qi "^@$DOMAIN" $DATABASE 2>/dev/null; then
+-	sed -i "s ^@"$DOMAIN".* "@$DOMAIN"\t\t"$USER":"$PASSWD" " $DATABASE
++if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
++then
++  sed -i "s ^@""${DOMAIN}"".* ""@""${DOMAIN}""\t\t""${USER}"":""${PASSWD}"" " "${DATABASE}"
+ else
+-	echo -e "@$DOMAIN\t\t$USER:$PASSWD" >> $DATABASE
++  echo -e "@${DOMAIN}\t\t${USER}:${PASSWD}" >> "${DATABASE}"
+ fi
+diff --git a/target/bin/debug-fetchmail b/target/bin/debug-fetchmail
+index d2c21ce6..d5ff3ffb 100755
+--- a/target/bin/debug-fetchmail
++++ b/target/bin/debug-fetchmail
+@@ -1,11 +1,11 @@
+-#! /bin/sh
++#! /bin/bash
+ 
+ /usr/local/bin/setup-fetchmail
+ 
+ su -s /bin/sh -c "/usr/bin/fetchmail \
+-	--verbose \
+-	--daemon 0 \
+-	--check \
+-	--nosyslog \
+-	--nodetach \
+-	-f /etc/fetchmailrc" fetchmail <&- 2>&1
++  --verbose \
++  --daemon 0 \
++  --check \
++  --nosyslog \
++  --nodetach \
++  -f /etc/fetchmailrc" fetchmail <&- 2>&1
+diff --git a/target/bin/delalias b/target/bin/delalias
+index 07faed9a..9077c251 100755
+--- a/target/bin/delalias
++++ b/target/bin/delalias
+@@ -1,29 +1,19 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+-
+-EMAIL="$1"
+-RECIPIENT="$2"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: delalias <alias@domain> <recipient@other>"
+-}
+-
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++EMAIL="${1}"
++RECIPIENT="${2}"
+ 
+-[ -z "$EMAIL" ] && { usage; errex "Error: No alias specified"; }
+-[ -z "$RECIPIENT" ] && { usage; errex "Error: No recipient specified"; }
++function usage  { echo "Usage: delalias <alias@domain> <recipient@other>" ; }
+ 
+-[ -s "$DATABASE" ] || exit 0
++[[ -z ${EMAIL} ]] && { usage ; errex "Error: No alias specified" ; }
++[[ -z ${RECIPIENT} ]] && { usage ; errex "Error: No recipient specified" ; }
++[[ -s ${DATABASE} ]] || exit 0
+ 
+-#CNT=$(grep "^$EMAIL" $DATABASE | wc -w | awk '{print $1}')
+-sed -i -e "/^$EMAIL *$RECIPIENT$/d" \
+-       -e "/^$EMAIL/s/,$RECIPIENT//g" \
+-       -e "/^$EMAIL/s/$RECIPIENT,//g" $DATABASE
++sed -i -e "/^${EMAIL} *${RECIPIENT}$/d" \
++  -e "/^${EMAIL}/s/,${RECIPIENT}//g" \
++  -e "/^${EMAIL}/s/${RECIPIENT},//g" "${DATABASE}"
+diff --git a/target/bin/delmailuser b/target/bin/delmailuser
+index 65198e69..e2a1dd37 100755
+--- a/target/bin/delmailuser
++++ b/target/bin/delmailuser
+@@ -1,69 +1,93 @@
+ #! /bin/bash
+ 
++# ? This is done to ignore the message "Make sure not to read and write
++# ? the same file in the same pipeline", which is a result of ${DATABASE}
++# ? being used below. (This disables the message file-wide.)
++# shellcheck disable=SC2094
++
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
++
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ ALIAS_DATABASE="/tmp/docker-mailserver/postfix-virtual.cf"
+ QUOTA_DATABASE="/tmp/docker-mailserver/dovecot-quotas.cf"
+ 
+-usage() {
+-	echo "Usage: delmailuser <-y> <user@domain> <user2@anotherdomain> ..."
+-	echo "	-y: don't prompt for confirmations"
++function usage
++{
++  echo "Usage: delmailuser <-y> <user@domain> <user2@anotherdomain> ..."
++  echo "	-y: don't prompt for confirmations"
+ }
+ 
+-errex() {
+-	echo -e "$@" 1>&2
+-	exit 1
+-}
+-
+-escape() {
+-	echo "${1//./\\.}"
+-}
+-
+-while getopts ":y" OPT; do
+-  case $OPT in
++while getopts ":y" OPT
++do
++  case ${OPT} in
+     y)
+       MAILDEL="y"
+       ;;
+-   \?)
+-		 usage; errex "Invalid option: -$OPTARG"
+-     ;;
++    \?)
++      usage
++      errex "Invalid option: -${OPTARG}"
++      ;;
++    *)
++      usage
++      errex "Invalid option: -${OPTARG}"
++      ;;
+   esac
+ done
+ 
+ shift $((OPTIND-1))
+ 
+-[ -z "$@" ] && { usage; errex "No user specifed"; }
+-[ -s "$DATABASE" ] || exit 0
++[[ -z ${*} ]] && { usage ; errex "No user specifed" ; }
++[[ -s ${DATABASE} ]] || exit 0
+ 
+ # Protect config file with lock to avoid race conditions
+ (
+   flock -e 200
+ 
+-  for USER in "$@"; do
++  for USER in "${@}"
++  do
+     # very simple plausibility check
+-    [[ "$USER" != *"@"*"."* ]] && errex "No valid address: $USER"
+-    MAILARR=(${USER//@/ })
+-    # XXX $USER must not contain /s and other syntactic characters
+-    USER=$(escape "$USER")
+-    sed -i "/^"$USER"|/d" $DATABASE
+-    [ $? != 0 ] && errex "$USER couldn't be deleted in $DATABASE. $?"
+-    # Delete all aliases where the user is the only recipient( " $USER$" )
+-    # Delete user only for all aliases that deliver to multiple recipients ( ",$USER" "$USER," )
+-    sed -i -e "/ "$USER"$/d" \
+-        -e "s/,"$USER"//g" \
+-        -e "s/"$USER",//g" $ALIAS_DATABASE
+-    [ $? = 0 ] && echo "$USER and potential aliases deleted." || errex "Aliases for $USER couldn't be deleted in $ALIAS_DATABASE. $?"
++    [[ ${USER} != *"@"*"."* ]] && errex "No valid address: ${USER}"
++
++    declare -a MAILARR
++    MAILARR[0]="${USER%@*}"
++    MAILARR[1]="${USER#*@}"
++
++    # XXX ${USER} must not contain /s and other syntactic characters
++    USER=$(escape "${USER}")
++
++    if ! sed -i "/^""${USER}""|/d" "${DATABASE}"
++    then
++      errex "${USER} couldn't be deleted in ${DATABASE}. ${?}"
++    fi
++
++    # Delete all aliases where the user is the only recipient( " ${USER$}" )
++    # Delete user only for all aliases that deliver to multiple recipients ( ",${USER}" "${USER,}" )
++    if sed -i -e "/ ""${USER}""$/d" \
++        -e "s/,""${USER}""//g" \
++        -e "s/""${USER}"",//g" "${ALIAS_DATABASE}"
++    then
++      echo "${USER} and potential aliases deleted." || errex "Aliases for ${USER} couldn't be deleted in ${ALIAS_DATABASE}. ${?}"
++    fi
++
+     # remove quota directives
+-    if [ -f "$QUOTA_DATABASE" ]; then
+-      sed -i -e "/^$USER:.*$/d" $QUOTA_DATABASE || errex "Quota for $USER couldn't be deleted in $QUOTA_DATABASE. $?"
++    if [[ -f ${QUOTA_DATABASE} ]]
++    then
++      sed -i -e "/^${USER}:.*$/d" "${QUOTA_DATABASE}" || errex "Quota for ${USER} couldn't be deleted in ${QUOTA_DATABASE}. ${?}"
+     fi
+ 
+-    if [ "$MAILDEL" != "y" ]; then
+-      read -p "Do you want to delete the mailbox as well(all mails will be removed)?(y/n) " MAILDEL
++    if [[ ${MAILDEL} != "y" ]]
++    then
++      read -r -p "Do you want to delete the mailbox as well(all mails will be removed)?(y/n) " MAILDEL
+       echo
+     fi
+-    [ "$MAILDEL" != "y" ] && errex "Leaving the mailbox untouched. If you want to delete it at a later point use \"sudo docker exec mail rm -R /var/mail/${MAILARR[1]}/${MAILARR[0]}\""
+-    rm -r -f /var/mail/${MAILARR[1]}/${MAILARR[0]}
+-    [ $? = 0 ] && echo "Mailbox deleted." || errex "Mailbox couldn't be deleted: $?"
++
++    [[ ${MAILDEL} != "y" ]] && errex "Leaving the mailbox untouched. If you want to delete it at a later point use \"sudo docker exec mail rm -R /var/mail/${MAILARR[1]}/${MAILARR[0]}\""
++
++    if rm -r -f "/var/mail/${MAILARR[1]}/${MAILARR[0]}"
++    then
++      echo "Mailbox deleted." || errex "Mailbox couldn't be deleted: ${?}"
++    fi
+   done
+ 
+-) 200<$DATABASE
++) 200< "${DATABASE}"
+diff --git a/target/bin/delquota b/target/bin/delquota
+index 737e641a..9212559e 100755
+--- a/target/bin/delquota
++++ b/target/bin/delquota
+@@ -1,28 +1,24 @@
+ #! /bin/bash
+ 
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
++
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/dovecot-quotas.cf}
+ USER_DATABASE=${USER_DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+-USER="$1"
+-
+-usage() {
+-	echo "Usage: delquota <username@domain>"
+-}
++USER="${1}"
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++function usage  {	echo "Usage: delquota <username@domain>" ; }
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++[[ -z ${USER} ]]  && { usage ; errex "No username specified" ; }
++[[ "${USER}" =~ .*\@.* ]] || { usage ; errex "username must include the domain"; }
+ 
+-[ -z "$USER" ]  && { usage; errex "No username specified"; }
+-expr index "$USER" "@" >/dev/null || { usage; errex "username must include the domain"; }
+-if ! grep -qE "^$USER\|" "$USER_DATABASE"; then
+-  usage; errex "user $USER does not exist"
++if ! grep -qE "^${USER}\|" "${USER_DATABASE}"
++then
++  usage
++  errex "user ${USER} does not exist"
+ fi
+-[ -s "$DATABASE" ] || exit 0
+ 
+-sed -i -e "/^$USER:.*$/d" $DATABASE
++[[ -s ${DATABASE} ]] || exit 0
++
++sed -i -e "/^${USER}:.*$/d" "${DATABASE}"
+diff --git a/target/bin/excluderelaydomain b/target/bin/excluderelaydomain
+index 07f6dce9..b9a27a83 100755
+--- a/target/bin/excluderelaydomain
++++ b/target/bin/excluderelaydomain
+@@ -1,22 +1,19 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-DOMAIN="$1"
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
+ 
+-usage() {
+-	echo "Usage: excluderelayhost <domain>"
+-}
++DOMAIN="${1}"
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++function usage { echo "Usage: excluderelayhost <domain>" ; }
+ 
+-[ -z "$DOMAIN" ] && { usage; errex "no domain specified"; }
++[[ -z ${DOMAIN} ]] && { usage ; errex "no domain specified" ; }
+ 
+-if grep -qi "^@$DOMAIN" $DATABASE 2>/dev/null; then
+-	sed -i "s/^@"$DOMAIN".*/@"$DOMAIN"/" $DATABASE
++if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
++then
++  sed -i "s/^@${DOMAIN}.*/@${DOMAIN}/" "${DATABASE}"
+ else
+-	echo -e "@$DOMAIN" >> $DATABASE
++  echo -e "@${DOMAIN}" >> "${DATABASE}"
+ fi
+diff --git a/target/bin/fail2ban b/target/bin/fail2ban
+old mode 100644
+new mode 100755
+index ceb91da8..a2854633
+--- a/target/bin/fail2ban
++++ b/target/bin/fail2ban
+@@ -1,46 +1,68 @@
+ #! /bin/bash
+ 
+-usage() {
+-  echo "Usage: $0 [<unban> <ip-address>]"
+-}
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-raise() {
+-  echo "$@" 1>&2
+-  exit 1
+-}
++function usage { echo "Usage: ${0} [<unban> <ip-address>]" ; }
+ 
+-JAILS=$(fail2ban-client status | grep "Jail list" | cut -f2- | sed 's/,//g')
+-if [ -z "$1" ]; then
++declare -a JAILS
++for LIST in $(fail2ban-client status | grep "Jail list" | cut -f2- | sed 's/,/ /g')
++do
++  JAILS+=("${LIST}")
++done
++
++if [[ -z ${1} ]]
++then
+   IP_COUNT=0
+-  for JAIL in $JAILS; do
+-    BANNED_IP=$(iptables -L f2b-$JAIL -n | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -v '0.0.0.0')
+-    if [ -n "$BANNED_IP" ]; then
+-      BANNED_IP=$(echo $BANNED_IP | sed -e 's/\n/,/g')
+-      echo "Banned in $JAIL: $BANNED_IP"
+-      IP_COUNT=$((IP_COUNT+1))
++
++  for JAIL in "${JAILS[@]}"
++  do
++    declare -a BANNED_IPS
++
++    while read -r LINE
++    do
++      BANNED_IPS+=("$(echo "${LINE}" | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -v '0.0.0.0')")
++    done < <(iptables -L f2b-"${JAIL}" -n)
++
++    if [[ ${#BANNED_IPS[@]} -ne 0 ]]
++    then
++      for BANNED_IP in "${BANNED_IPS[@]}"
++      do
++        echo "Banned in ${JAIL}: ${BANNED_IP}"
++        IP_COUNT=$(( IP_COUNT + 1 ))
++      done
+     fi
+   done
+-  if [ "$IP_COUNT" -eq 0 ]; then
++
++  if [[ ${IP_COUNT} -eq 0 ]]
++  then
+     echo "No IPs have been banned"
+   fi
+ else
+-  case $1 in
++  case ${1} in
+     unban)
+       shift
+-      if [ -n "$1" ]; then
+-        for JAIL in $JAILS; do
+-          RESULT=`fail2ban-client set $JAIL unbanip $@`
+-          if [[ "$RESULT" != *"is not banned"* ]] && [[ "$RESULT" != *"NOK"* ]]; then
+-            echo -n "unbanned IP from $JAIL: "
+-            echo "$RESULT"
++      if [[ -n ${1} ]]
++      then
++        for JAIL in "${JAILS[@]}"
++        do
++          RESULT="$(fail2ban-client set "${JAIL}" unbanip "${@}")"
++
++          if [[ ${RESULT} != *"is not banned"* ]] && [[ ${RESULT} != *"NOK"* ]]
++          then
++            echo -n "unbanned IP from ${JAIL}: "
++            echo "${RESULT}"
+           fi
+         done
+       else
+-        raise "You need to specify an IP address. Run \"./setup.sh debug fail2ban\" to get a list of banned IP addresses."
++        errex "You need to specify an IP address. Run \"./setup.sh debug fail2ban\" to get a list of banned IP addresses."
+       fi
+       ;;
++
+     *)
+-      usage; raise "unknown command: $1"
++      usage
++      errex "unknown command: ${1}"
+       ;;
++
+     esac
+ fi
+diff --git a/target/bin/generate-dkim-config b/target/bin/generate-dkim-config
+index d27d7a55..6f37e22e 100755
+--- a/target/bin/generate-dkim-config
++++ b/target/bin/generate-dkim-config
+@@ -1,76 +1,89 @@
+-#!/bin/sh
++#! /bin/bash
+ 
+ touch /tmp/vhost.tmp
+ 
+ # if no keysize is provided, 2048 is default.
+-keysize=${1:-2048}
++KEYSIZE=${1:-2048}
+ 
+-# Getting domains from mail accounts
+-if [ -f /tmp/docker-mailserver/postfix-accounts.cf ]; then
+-  (grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-accounts.cf || true) | while IFS=$'|' read login pass
++# Getting domains FROM mail accounts
++if [[ -f /tmp/docker-mailserver/postfix-accounts.cf ]]
++then
++  # shellcheck disable=SC2034
++  while IFS=$'|' read -r LOGIN PASS
+   do
+-    domain=$(echo ${login} | cut -d @ -f2)
+-    echo ${domain} >> /tmp/vhost.tmp
+-  done
++    DOMAIN=$(echo "${LOGIN}" | cut -d @ -f2)
++    echo "${DOMAIN}" >>/tmp/vhost.tmp
++  done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-accounts.cf || true)
+ fi
+ 
+-# Getting domains from mail aliases
+-if [ -f /tmp/docker-mailserver/postfix-virtual.cf ]; then
+-  (grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true) | while read from to
++# Getting domains FROM mail aliases
++if [[ -f /tmp/docker-mailserver/postfix-virtual.cf ]]
++then
++  # shellcheck disable=SC2034
++  while read -r FROM TO
+   do
+-    # Setting variables for better readability
+-    uname=$(echo ${from} | cut -d @ -f1)
+-    domain=$(echo ${from} | cut -d @ -f2)
+-    # if they are equal it means the line looks like: "user1     other@domain.tld"
+-    test "$uname" != "$domain" && echo ${domain} >> /tmp/vhost.tmp
+-  done
++    UNAME=$(echo "${FROM}" | cut -d @ -f1)
++    DOMAIN=$(echo "${FROM}" | cut -d @ -f2)
++
++    test "${UNAME}" != "${DOMAIN}" && echo "${DOMAIN}" >>/tmp/vhost.tmp
++  done < <(grep -v "^\s*$\|^\s*\#" /tmp/docker-mailserver/postfix-virtual.cf || true)
+ fi
+ 
+-# Keeping unique entries
+-if [ -f /tmp/vhost.tmp ]; then
+-  cat /tmp/vhost.tmp | sort | uniq > /tmp/vhost && rm /tmp/vhost.tmp
++# keeping unique entries
++if [[ -f /tmp/vhost.tmp ]]
++then
++  sort < /tmp/vhost.tmp | uniq >/tmp/vhost && rm /tmp/vhost.tmp
+ fi
+ 
+-# Exit if no entries found
+-if [ ! -f /tmp/vhost ]; then
+-	echo "No entries found, no keys to make"
+-	exit 0
++# exit if no entries found
++if [[ ! -f /tmp/vhost ]]
++then
++  echo "No entries found, no keys to make"
++  exit 0
+ fi
+ 
+-grep -vE '^(\s*$|#)' /tmp/vhost | while read domainname; do
+-  mkdir -p /tmp/docker-mailserver/opendkim/keys/$domainname
++while read -r DOMAINNAME
++do
++  mkdir -p "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}"
++
++  if [[ ! -f "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}/mail.private" ]]
++  then
++    echo "Creating DKIM private key /tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}/mail.private"
+ 
+-  if [ ! -f "/tmp/docker-mailserver/opendkim/keys/$domainname/mail.private" ]; then
+-    echo "Creating DKIM private key /tmp/docker-mailserver/opendkim/keys/$domainname/mail.private"
+-    opendkim-genkey --bits=$keysize --subdomains --domain=$domainname --selector=mail -D /tmp/docker-mailserver/opendkim/keys/$domainname
++    opendkim-genkey --bits="${KEYSIZE}" --subdomains --DOMAIN="${DOMAINNAME}" --selector=mail -D "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}"
+   fi
+ 
+-  # Write to KeyTable if necessary
+-  keytableentry="mail._domainkey.$domainname $domainname:mail:/etc/opendkim/keys/$domainname/mail.private"
+-  if [ ! -f "/tmp/docker-mailserver/opendkim/KeyTable" ]; then
++  # write to KeyTable if necessary
++  KEYTABLEENTRY="mail._domainkey.${DOMAINNAME} ${DOMAINNAME}:mail:/etc/opendkim/keys/${DOMAINNAME}/mail.private"
++  if [[ ! -f "/tmp/docker-mailserver/opendkim/KeyTable" ]]
++  then
+     echo "Creating DKIM KeyTable"
+-    echo $keytableentry > /tmp/docker-mailserver/opendkim/KeyTable
++    echo "${KEYTABLEENTRY}" > /tmp/docker-mailserver/opendkim/KeyTable
+   else
+-    if ! grep -q "$keytableentry" "/tmp/docker-mailserver/opendkim/KeyTable" ; then
+-        echo $keytableentry >> /tmp/docker-mailserver/opendkim/KeyTable
++    if ! grep -q "${KEYTABLEENTRY}" "/tmp/docker-mailserver/opendkim/KeyTable"
++    then
++        echo "${KEYTABLEENTRY}" >>/tmp/docker-mailserver/opendkim/KeyTable
+     fi
+   fi
+ 
+-  # Write to SigningTable if necessary
+-  signingtableentry="*@$domainname mail._domainkey.$domainname"
+-  if [ ! -f "/tmp/docker-mailserver/opendkim/SigningTable" ]; then
++  # write to SigningTable if necessary
++  SIGNINGTABLEENTRY="*@${DOMAINNAME} mail._domainkey.${DOMAINNAME}"
++  if [[ ! -f /tmp/docker-mailserver/opendkim/SigningTable ]]
++  then
+     echo "Creating DKIM SigningTable"
+-    echo "*@$domainname mail._domainkey.$domainname" > /tmp/docker-mailserver/opendkim/SigningTable
++    echo "*@${DOMAINNAME} mail._domainkey.${DOMAINNAME}" >/tmp/docker-mailserver/opendkim/SigningTable
+   else
+-    if ! grep -q "$signingtableentry" "/tmp/docker-mailserver/opendkim/SigningTable" ; then
+-      echo $signingtableentry >> /tmp/docker-mailserver/opendkim/SigningTable
++    if ! grep -q "${SIGNINGTABLEENTRY}" /tmp/docker-mailserver/opendkim/SigningTable
++    then
++      echo "${SIGNINGTABLEENTRY}" >> /tmp/docker-mailserver/opendkim/SigningTable
+     fi
+   fi
+-done
++done < <(grep -vE '^(\s*$|#)' /tmp/vhost)
+ 
+-# Creates TrustedHosts if missing
+-if [ -d "/tmp/docker-mailserver/opendkim" ] && [ ! -f "/tmp/docker-mailserver/opendkim/TrustedHosts" ]; then
+-  echo "Creating DKIM TrustedHosts";
+-  echo "127.0.0.1" > /tmp/docker-mailserver/opendkim/TrustedHosts
+-  echo "localhost" >> /tmp/docker-mailserver/opendkim/TrustedHosts
++# creates TrustedHosts if missing
++if [[ -d /tmp/docker-mailserver/opendkim ]] && [[ ! -f /tmp/docker-mailserver/opendkim/TrustedHosts ]]
++then
++  echo "Creating DKIM TrustedHosts"
++  echo "127.0.0.1" >/tmp/docker-mailserver/opendkim/TrustedHosts
++  echo "localhost" >>/tmp/docker-mailserver/opendkim/TrustedHosts
+ fi
+diff --git a/target/bin/generate-dkim-domain b/target/bin/generate-dkim-domain
+old mode 100644
+new mode 100755
+index 587b0f94..4712892b
+--- a/target/bin/generate-dkim-domain
++++ b/target/bin/generate-dkim-domain
+@@ -1,39 +1,44 @@
+-#!/bin/sh
++#! /bin/bash
+ 
+ set -e
+ 
+-if [ $# -ne 1 ]; then
+-    echo $0: "usage: generate-dkim-domain domain"
+-    exit 1
++if [[ ${#} -ne 1 ]]
++then
++  echo "${0}: usage: generate-dkim-domain domain"
++  exit 1
+ fi
+ 
+-domainname=$1
++DOMAINNAME=${1}
++mkdir -p "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}"
+ 
+-mkdir -p /tmp/docker-mailserver/opendkim/keys/$domainname
+-
+-if [ ! -f "/tmp/docker-mailserver/opendkim/keys/$domainname/mail.private" ]; then
+-    echo "Creating DKIM private key /tmp/docker-mailserver/opendkim/keys/$domainname/mail.private"
+-    opendkim-genkey --subdomains --domain=$domainname --selector=mail -D /tmp/docker-mailserver/opendkim/keys/$domainname
++if [[ ! -f "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}/mail.private" ]]
++then
++  echo "Creating DKIM private key /tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}/mail.private"
++  opendkim-genkey --subdomains --domain="${DOMAINNAME}" --selector=mail -D "/tmp/docker-mailserver/opendkim/keys/${DOMAINNAME}"
+ fi
+ 
+ # Write to KeyTable if necessary
+-keytableentry="mail._domainkey.$domainname $domainname:mail:/etc/opendkim/keys/$domainname/mail.private"
+-if [ ! -f "/tmp/docker-mailserver/opendkim/KeyTable" ]; then
+-    echo "Creating DKIM KeyTable"
+-    echo $keytableentry > /tmp/docker-mailserver/opendkim/KeyTable
++KEYTABLEENTRY="mail._domainkey.${DOMAINNAME} ${DOMAINNAME}:mail:/etc/opendkim/keys/${DOMAINNAME}/mail.private"
++if [[ ! -f "/tmp/docker-mailserver/opendkim/KeyTable" ]]
++then
++  echo "Creating DKIM KeyTable"
++  echo "${KEYTABLEENTRY}" > /tmp/docker-mailserver/opendkim/KeyTable
+ else
+-    if ! grep -q "$keytableentry" "/tmp/docker-mailserver/opendkim/KeyTable" ; then
+-        echo $keytableentry >> /tmp/docker-mailserver/opendkim/KeyTable
+-    fi
++  if ! grep -q "${KEYTABLEENTRY}" "/tmp/docker-mailserver/opendkim/KeyTable"
++  then
++    echo "${KEYTABLEENTRY}" >> /tmp/docker-mailserver/opendkim/KeyTable
++  fi
+ fi
+ 
+ # Write to SigningTable if necessary
+-signingtableentry="*@$domainname mail._domainkey.$domainname"
+-if [ ! -f "/tmp/docker-mailserver/opendkim/SigningTable" ]; then
+-    echo "Creating DKIM SigningTable"
+-    echo "*@$domainname mail._domainkey.$domainname" > /tmp/docker-mailserver/opendkim/SigningTable
++SIGNINGTABLEENTRY="*@${DOMAINNAME} mail._domainkey.${DOMAINNAME}"
++if [[ ! -f /tmp/docker-mailserver/opendkim/SigningTable ]]
++then
++  echo "Creating DKIM SigningTable"
++  echo "*@${DOMAINNAME} mail._domainkey.${DOMAINNAME}" > /tmp/docker-mailserver/opendkim/SigningTable
+ else
+-    if ! grep -q "$signingtableentry" "/tmp/docker-mailserver/opendkim/SigningTable" ; then
+-        echo $signingtableentry >> /tmp/docker-mailserver/opendkim/SigningTable
+-    fi
++  if ! grep -q "${SIGNINGTABLEENTRY}" "/tmp/docker-mailserver/opendkim/SigningTable"
++  then
++    echo "${SIGNINGTABLEENTRY}" >>/tmp/docker-mailserver/opendkim/SigningTable
++  fi
+ fi
+diff --git a/target/bin/generate-ssl-certificate b/target/bin/generate-ssl-certificate
+index aaf00fcc..00de8b30 100755
+--- a/target/bin/generate-ssl-certificate
++++ b/target/bin/generate-ssl-certificate
+@@ -1,26 +1,32 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+ set -e
+ 
+ # check if FQDN was passed as arguement in setup.sh
+-if [ -z "$1" ]; then
+-	FQDN="$(hostname --fqdn)"
++if [[ -z ${1} ]]
++then
++  FQDN="$(hostname --fqdn)"
+ else
+-	FQDN="$1"
++  FQDN="${1}"
+ fi
+ 
+-ssl_cfg_path="/tmp/docker-mailserver/ssl"
++SSL_CFG_PATH="/tmp/docker-mailserver/ssl"
+ 
+-if [ ! -d "$ssl_cfg_path" ]; then
+-	mkdir "$ssl_cfg_path"
++if [[ ! -d ${SSL_CFG_PATH} ]]
++then
++  mkdir "${SSL_CFG_PATH}"
+ fi
+ 
+-cd "$ssl_cfg_path" || { echo "cd $ssl_cfg_path error"; exit; }
++cd "${SSL_CFG_PATH}" || { echo "cd ${SSL_CFG_PATH} error" ; exit ; }
++
+ # Create CA certificate
+ /usr/lib/ssl/misc/CA.pl -newca
++
+ # Create an unpassworded private key and create an unsigned public key certificate
+-openssl req -new -nodes -keyout "$ssl_cfg_path"/"$FQDN"-key.pem -out "$ssl_cfg_path"/"$FQDN"-req.pem -days 3652
++openssl req -new -nodes -keyout "${SSL_CFG_PATH}"/"${FQDN}"-key.pem -out "${SSL_CFG_PATH}"/"${FQDN}"-req.pem -days 3652
++
+ # Sign the public key certificate with CA certificate
+-openssl ca -out "$ssl_cfg_path"/"$FQDN"-cert.pem -infiles "$ssl_cfg_path"/"$FQDN"-req.pem
++openssl ca -out "${SSL_CFG_PATH}"/"${FQDN}"-cert.pem -infiles "${SSL_CFG_PATH}"/"${FQDN}"-req.pem
++
+ # Combine certificates for courier
+-cat "$ssl_cfg_path"/"$FQDN"-key.pem "$ssl_cfg_path"/"$FQDN"-cert.pem > "$ssl_cfg_path"/"$FQDN"-combined.pem
++cat "${SSL_CFG_PATH}"/"${FQDN}"-key.pem "${SSL_CFG_PATH}"/"${FQDN}"-cert.pem > "${SSL_CFG_PATH}"/"${FQDN}"-combined.pem
+diff --git a/target/bin/listalias b/target/bin/listalias
+index f6848ec5..d93d4380 100755
+--- a/target/bin/listalias
++++ b/target/bin/listalias
+@@ -1,13 +1,11 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+-[ -f $DATABASE ] || errex "Error: No postfix-virtual.cf file"
+-[ -s $DATABASE ] || errex "Error: Empty postfix-virtual.cf - no aliases have been added"
++[[ -f ${DATABASE} ]] || errex "Error: No postfix-virtual.cf file"
++[[ -s ${DATABASE} ]] || errex "Error: Empty postfix-virtual.cf - no aliases have been added"
+ 
+-(grep -v "^\s*$\|^\s*\#" $DATABASE || true)
++( grep -v "^\s*$\|^\s*\#" "${DATABASE}" || true )
+diff --git a/target/bin/listmailuser b/target/bin/listmailuser
+index be6a4935..c92aff83 100755
+--- a/target/bin/listmailuser
++++ b/target/bin/listmailuser
+@@ -1,18 +1,20 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
++# ? This is done to ignore the message "Make sure not to read and write
++# ? the same file in the same pipeline", which is a result of ${DATABASE}
++# ? being used below. (This disables the message file-wide.)
++# shellcheck disable=SC2094
++
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+-[ -f $DATABASE ] || errex "No postfix-accounts.cf file"
+-[ -s $DATABASE ] || errex "Empty postfix-accounts.cf - no users have been added"
++[[ -f ${DATABASE} ]] || errex "Error: No postfix-virtual.cf file"
++[[ -s ${DATABASE} ]] || errex "Error: Empty postfix-virtual.cf - no aliases have been added"
+ 
+ # Lock database even though we are only reading
+ (
+   flock -e 200
+-  (grep -v "^\s*$\|^\s*\#" "$DATABASE" || true) | awk -F '|' '{ print $1; }'
+-) 200<$DATABASE
+-
++  ( grep -v "^\s*$\|^\s*\#" "${DATABASE}" || true ) | awk -F '|' '{ print $1; }'
++) 200< "${DATABASE}"
+diff --git a/target/bin/postfix-summary b/target/bin/postfix-summary
+index db3138bf..cb94d492 100755
+--- a/target/bin/postfix-summary
++++ b/target/bin/postfix-summary
+@@ -1,17 +1,19 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+-HOSTNAME=$1
+-RECIPIENT=$2
+-SENDER=$3
+-errex() {
+-  echo -e "$@" 1>&2
+-  exit 1
+-}
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-test -x /usr/sbin/pflogsumm || errex "Critical: /usr/sbin/pflogsumm not found"
++HOSTNAME=${1}
++RECIPIENT=${2}
++SENDER=${3}
+ 
+-# The case that the mail.log.1 file isn't readable shouldn't actually be possible with logrotate not rotating empty files.. But you never know!
+-if [ -r "/var/log/mail/mail.log.1" ]; then
++[[ -x /usr/sbin/pflogsumm ]] || errex "Critical: /usr/sbin/pflogsumm not found"
++
++# The case that the mail.log.1 file isn't readable shouldn't
++# actually be possible with logrotate not rotating empty files..
++# But you never know!
++if [[ -r "/var/log/mail/mail.log.1" ]]
++then
+   BODY=$(/usr/sbin/pflogsumm /var/log/mail/mail.log.1 --problems-first)
+ else
+   BODY="Error: Mail log not readable or not found: /var/log/mail/mail.log.1
+@@ -19,15 +21,15 @@ else
+ In case of mail inactivity since the last report, this might be considered a nuisance warning.
+ 
+ Yours faithfully,
+-The $HOSTNAME Mailserver"
++The ${HOSTNAME} Mailserver"
+ fi
+ 
+ sendmail -t <<EOF
+-From: $SENDER
+-To: $RECIPIENT
+-Subject: Postfix Summary for $HOSTNAME
++From: ${SENDER}
++To: ${RECIPIENT}
++Subject: Postfix Summary for ${HOSTNAME}
+ Content-Transfer-Encoding: 8bit
+ Content-Type: text/plain; charset=UTF-8
+ 
+-$BODY
++${BODY}
+ EOF
+diff --git a/target/bin/report-pflogsumm-yesterday b/target/bin/report-pflogsumm-yesterday
+index 6af20d10..beed6458 100755
+--- a/target/bin/report-pflogsumm-yesterday
++++ b/target/bin/report-pflogsumm-yesterday
+@@ -1,27 +1,27 @@
+-#!/bin/bash
++#! /bin/bash
++
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
++
+ set -o errexit
+ set -o pipefail
+ set -o nounset
+ 
+-HOSTNAME=$1
+-RECIPIENT=$2
+-SENDER=$3
+-errex() {
+-  echo -e "$@" 1>&2
+-  exit 1
+-}
++HOSTNAME=${1}
++RECIPIENT=${2}
++SENDER=${3}
+ 
+-test -x /usr/sbin/pflogsumm || errex "Critical: /usr/sbin/pflogsumm not found"
++[[ -x /usr/sbin/pflogsumm ]] || errex "Critical: /usr/sbin/pflogsumm not found"
+ 
++# shellcheck disable=SC2046
+ BODY=$(gzip -cdfq $(ls -tr /var/log/mail/mail.log*) | /usr/sbin/pflogsumm --problems_first -d yesterday)
+ 
+ sendmail -t <<EOF
+-From: $SENDER
+-To: $RECIPIENT
+-Subject: Postfix summary for $HOSTNAME sent $(date '+%Y-%m-%d_%H%M%S')
++From: ${SENDER}
++To: ${RECIPIENT}
++Subject: Postfix summary for ${HOSTNAME} sent $(date '+%Y-%m-%d_%H%M%S')
+ Content-Transfer-Encoding: 8bit
+ Content-Type: text/plain; charset=UTF-8
+ 
+-$BODY
++${BODY}
+ EOF
+-
+diff --git a/target/bin/restrict-access b/target/bin/restrict-access
+index aaa46ddc..29d1275f 100755
+--- a/target/bin/restrict-access
++++ b/target/bin/restrict-access
+@@ -1,64 +1,62 @@
+ #! /bin/bash
+ 
+-MODE="$1"
+-USER="$3"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: $0 <add|del|list> <send|receive> [<email@domain.com>]"
+-}
++MODE="${1}"
++USER="${3}"
+ 
+-raise() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++function usage  {	echo "Usage: ${0} <add|del|list> <send|receive> [<email@domain.com>]" ; }
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
+-[ -z "$MODE" ] && raise "missing parameters: <add|del|list> <send|receive> [<email@domain.com>]"
++[[ -z ${MODE} ]] && errex "missing parameters: <add|del|list> <send|receive> [<email@domain.com>]"
+ 
+-case $2 in
+-	send)
+-		DATABASE="/tmp/docker-mailserver/postfix-send-access.cf"
+-		;;
+-	receive)
+-		DATABASE="/tmp/docker-mailserver/postfix-receive-access.cf"
+-		;;
+-	*)
+-		usage; raise "missing parameters. Specify \"send\" or \"receive\"";
+-		;;
++case ${2} in
++  send)
++    DATABASE="/tmp/docker-mailserver/postfix-send-access.cf"
++    ;;
++  receive)
++    DATABASE="/tmp/docker-mailserver/postfix-receive-access.cf"
++    ;;
++  *)
++    usage
++    errex "missing parameters. Specify \"send\" or \"receive\""
++    ;;
+ esac
+ 
+-if [ -z "$USER" ] && [ "$MODE" != list ]; then
+-	read -p "User(user@domain.com): " USER
+-	echo
+-	[ -z "$USER" ] && raise "User must not be empty"
++if [[ -z ${USER} ]] && [[ ${MODE} != list ]]
++then
++  read -r -p "User(user@domain.com): " USER
++  echo
++  [[ -z ${USER} ]] && errex "User must not be empty"
+ fi
+ 
++case ${MODE} in
++  add)
++    grep -qi "^$(escape "${USER}")" "${DATABASE}" 2>/dev/null && errex "User \"${USER}\" already denied to ${2} mails"
++
++    if [[ ! -f ${DATABASE} ]]
++    then
++      # shellcheck disable=SC2015
++      [[ ${DATABASE} = *"send"* ]] && \
++          sed -i 's|smtpd_sender_restrictions =|smtpd_sender_restrictions = check_sender_access texthash:/tmp/docker-mailserver/postfix-send-access.cf,|' /etc/postfix/main.cf \
++        || sed -i 's|smtpd_recipient_restrictions =|smtpd_recipient_restrictions = check_recipient_access texthash:/tmp/docker-mailserver/postfix-receive-access.cf,|' /etc/postfix/main.cf
+ 
++      service postfix reload >/dev/null
++    fi
+ 
+-case $MODE in
+-	add)
+-		grep -qi "^$(escape "$USER")" $DATABASE 2>/dev/null &&
+-			raise "User \"$USER\" already denied to $2 mails"
+-		if [ ! -f $DATABASE ]; then
+-			[[ $DATABASE = *"send"* ]] && \
+-					sed -i 's|smtpd_sender_restrictions =|smtpd_sender_restrictions = check_sender_access texthash:/tmp/docker-mailserver/postfix-send-access.cf,|' /etc/postfix/main.cf \
+-				|| sed -i 's|smtpd_recipient_restrictions =|smtpd_recipient_restrictions = check_recipient_access texthash:/tmp/docker-mailserver/postfix-receive-access.cf,|'  /etc/postfix/main.cf
+-			service postfix reload > /dev/null
+-		fi
+-		echo -e "$USER \t\t REJECT" >>$DATABASE
+-	;;
+-	del)
+-		sed -ie "/^$(escape "$USER")/d" $DATABASE 2>/dev/null ||
+-			raise "User \"$USER\" not found."
+-	;;
+-	list)
+-		grep "REJECT" $DATABASE 2>/dev/null ||
+-		    echo "Everyone is allowed to $2 mails."
++    echo -e "${USER} \t\t REJECT" >>"${DATABASE}"
++  ;;
++
++  del)
++    sed -ie "/^$(escape "${USER}")/d" "${DATABASE}" 2>/dev/null || errex "User \"${USER}\" not found."
++  ;;
++
++  list)
++    grep "REJECT" "${DATABASE}" 2>/dev/null || echo "Everyone is allowed to ${2} mails."
+     ;;
+-	*)
+-		usage; raise "missing mode. Specify \"add\", \"del\" or \"list\"";
+-	;;
+-esac
++  *)
++    usage
++    errex "missing mode. Specify \"add\", \"del\" or \"list\""
++  ;;
+ 
++esac
+diff --git a/target/bin/setquota b/target/bin/setquota
+index 48c6f18e..ed2cfad9 100755
+--- a/target/bin/setquota
++++ b/target/bin/setquota
+@@ -1,49 +1,56 @@
+ #! /bin/bash
+ 
++# ? This is done to ignore the message "Make sure not to read and write
++# ? the same file in the same pipeline", which is a result of ${DATABASE}
++# ? being used below. (This disables the message file-wide.)
++# shellcheck disable=SC2094
++
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
++
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/dovecot-quotas.cf}
+ USER_DATABASE=${USER_DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+-USER="$1"
++USER="${1}"
+ shift
+-QUOTA="$@"
++QUOTA="${*}"
+ 
+-usage() {
+-	echo "Usage: setquota <user@domain> [<quota>]"
+-}
++function usage  { echo "Usage: setquota <user@domain> [<quota>]" ; }
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
++[[ "${USER}" =~ .*\@.* ]] || { usage ; errex "username must include the domain" ; }
+ 
+-[ -z "$USER" ] && { usage; errex "no username specified"; }
+-expr index "$USER" "@" >/dev/null || { usage; errex "username must include the domain"; }
+-if ! grep -qE "^$USER\|" "$USER_DATABASE"; then
+-  usage; errex "user $USER does not exist"
++if ! grep -qE "^${USER}\|" "${USER_DATABASE}"
++then
++  usage; errex "user ${USER} does not exist"
+ fi
+ 
+ # check quota
+-if [ -n "$QUOTA" ] && ! echo "$QUOTA" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"; then
+-  usage; errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
++if [[ -n ${QUOTA} ]] && ! echo "${QUOTA}" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"
++then
++  usage
++  errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
+ fi
+ 
+ # Protect config file with lock to avoid race conditions
+-touch $DATABASE
++touch "${DATABASE}"
+ (
+   flock -e 200
+ 
+-  if [ -z "$QUOTA" ]; then
+-    read -s "Enter quota (e.g. 10M): " QUOTA
++  if [ -z "${QUOTA}" ]; then
++    read -r -s "Enter quota (e.g. 10M): " QUOTA
+     echo
+-    [ -z "$QUOTA" ] && errex "Quota must not be empty. Use 0 for unlimited quota"
++    [[ -z "${QUOTA}" ]] && errex "Quota must not be empty. Use 0 for unlimited quota"
+   fi
+ 
+   # check quota
+-  if [ -n "$QUOTA" ] && ! echo "$QUOTA" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"; then
+-    usage; errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
++  if [[ -n ${QUOTA} ]] && ! echo "${QUOTA}" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"
++  then
++    usage
++    errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
+   fi
+ 
+-  delquota "$USER"
+-  echo "$USER:$QUOTA" >> $DATABASE
+-) 200<$DATABASE
++  delquota "${USER}"
++  echo "${USER}:${QUOTA}" >>"${DATABASE}"
++) 200< "${DATABASE}"
+ 
+diff --git a/target/bin/setup-fetchmail b/target/bin/setup-fetchmail
+index 79e04a95..7f0897a1 100755
+--- a/target/bin/setup-fetchmail
++++ b/target/bin/setup-fetchmail
+@@ -1,13 +1,14 @@
+-#! /bin/sh
++#! /bin/bash
+ 
+ CONF=/tmp/docker-mailserver/fetchmail.cf
+ RC=/etc/fetchmailrc
+ 
+-if [ -f "$CONF" ]; then
+-	cat /etc/fetchmailrc_general $CONF > $RC
++if [[ -f ${CONF} ]]
++then
++  cat /etc/fetchmailrc_general "${CONF}" >"${RC}"
+ else
+-	cat /etc/fetchmailrc_general > $RC
++  cat /etc/fetchmailrc_general >"${RC}"
+ fi
+ 
+-chmod 700 $RC
+-chown fetchmail:root $RC
++chmod 700 "${RC}"
++chown fetchmail:root "${RC}"
+diff --git a/target/bin/updatemailuser b/target/bin/updatemailuser
+index cf9a4a8c..61ab0c34 100755
+--- a/target/bin/updatemailuser
++++ b/target/bin/updatemailuser
+@@ -1,39 +1,35 @@
+ #! /bin/bash
+ 
+-DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
++# ? This is done to ignore the message "Make sure not to read and write
++# ? the same file in the same pipeline", which is a result of ${DATABASE}
++# ? being used below. (This disables the message file-wide.)
++# shellcheck disable=SC2094
+ 
+-USER="$1"
+-shift
+-PASSWD="$@"
++# shellcheck source=../bin-helper.sh
++. /usr/local/bin/bin-helper.sh
+ 
+-usage() {
+-	echo "Usage: updatemailuser <user@domain.tld> [password]"
+-}
++DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+-errex() {
+-	echo "$@" 1>&2
+-	exit 1
+-}
++USER="${1}"
++shift
++PASSWD="${*}"
+ 
+-escape() {
+-	echo "${1//./\\.}"
+-}
++function usage  {	echo "Usage: updatemailuser <user@domain.tld> [password]" ; }
+ 
+-[ -z "$USER" ] && { usage; errex "no username specified"; }
++[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
+ 
+-if [ -z "$PASSWD" ]; then
+-	read -s -p "Enter Password: " PASSWD
+-	echo
+-	[ -z "$PASSWD" ] && errex "Password must not be empty"
++if [[ -z ${PASSWD} ]]
++then
++  read -r -s -p "Enter Password: " PASSWD
++  echo
++  [[ -z ${PASSWD} ]] && errex "Password must not be empty"
+ fi
+-HASH="$(doveadm pw -s SHA512-CRYPT -u "$USER" -p "$PASSWD")"
++
++HASH="$(doveadm pw -s SHA512-CRYPT -u "${USER}" -p "${PASSWD}")"
+ 
+ # Protect config file with lock to avoid race conditions
+ (
+   flock -e 200
+-
+-  grep -qi "^$(escape "$USER")|" $DATABASE 2>/dev/null ||
+-    errex "User \"$USER\" does not exist"
+-
+-  sed -i "s ^"$USER"|.* "$USER"|"$HASH" " $DATABASE
+-) 200<$DATABASE
++  grep -qi "^$(escape "${USER}")|" "${DATABASE}" 2>/dev/null || errex "User \"${USER}\" does not exist"
++  sed -i "s ^""${USER}""|.* ""${USER}""|""${HASH}"" " "${DATABASE}"
++) 200< "${DATABASE}"
+diff --git a/target/bin/virus-wiper b/target/bin/virus-wiper
+old mode 100644
+new mode 100755
+index 279085ba..2c6c9762
+--- a/target/bin/virus-wiper
++++ b/target/bin/virus-wiper
+@@ -1,3 +1,3 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+-find /var/lib/amavis/virusmails/ -type f -mtime +$VIRUSMAILS_DELETE_DELAY -delete
++find /var/lib/amavis/virusmails/ -type f -mtime +"${VIRUSMAILS_DELETE_DELAY}" -delete
+diff --git a/target/check-for-changes.sh b/target/check-for-changes.sh
+index d1808d54..c36c1693 100755
+--- a/target/check-for-changes.sh
++++ b/target/check-for-changes.sh
+@@ -1,11 +1,11 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+ # version  0.2.0
+ #
+ # <INSERT TASK HERE>
+ 
+-# shellcheck source=/dev/null
+-. /usr/local/bin/helper_functions.sh
++# shellcheck source=./helper-functions.sh
++. /usr/local/bin/helper-functions.sh
+ 
+ LOG_DATE=$(date +"%Y-%m-%d %H:%M:%S ")
+ echo "${LOG_DATE} Start check-for-changes script."
+diff --git a/target/fail2ban-wrapper.sh b/target/fail2ban-wrapper.sh
+old mode 100644
+new mode 100755
+index a786eb2c..45633477
+--- a/target/fail2ban-wrapper.sh
++++ b/target/fail2ban-wrapper.sh
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env bash
++#! /bin/bash
+ 
+ # version  0.1.0
+ #
+diff --git a/target/helper_functions.sh b/target/helper-functions.sh
+old mode 100644
+new mode 100755
+similarity index 99%
+rename from target/helper_functions.sh
+rename to target/helper-functions.sh
+index f2ac258f..b619b956
+--- a/target/helper_functions.sh
++++ b/target/helper-functions.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+ # version  0.1.1
+ #
+diff --git a/target/postfix-wrapper.sh b/target/postfix-wrapper.sh
+old mode 100644
+new mode 100755
+index 981d8f07..7c1bb3b8
+--- a/target/postfix-wrapper.sh
++++ b/target/postfix-wrapper.sh
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env bash
++#! /bin/bash
+ 
+ # version  0.1.0
+ #
+diff --git a/target/postsrsd-wrapper.sh b/target/postsrsd-wrapper.sh
+old mode 100644
+new mode 100755
+index cc33684a..61a23094
+--- a/target/postsrsd-wrapper.sh
++++ b/target/postsrsd-wrapper.sh
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env bash
++#! /bin/bash
+ 
+ # version  0.1.0
+ 
+diff --git a/target/start-mailserver.sh b/target/start-mailserver.sh
+old mode 100644
+new mode 100755
+index 8ec3fb92..16dd7d95
+--- a/target/start-mailserver.sh
++++ b/target/start-mailserver.sh
+@@ -1,6 +1,6 @@
+-#!/bin/bash
++#! /bin/bash
+ 
+-# version  0.2.0
++# version  0.2.1
+ #
+ # Starts the mailserver.
+ 
+@@ -49,7 +49,7 @@ DEFAULT_VARS["SPAMASSASSIN_SPAM_TO_INBOX"]="${SPAMASSASSIN_SPAM_TO_INBOX:=0}"
+ DEFAULT_VARS["MOVE_SPAM_TO_JUNK"]="${MOVE_SPAM_TO_JUNK:=1}"
+ DEFAULT_VARS["VIRUSMAILS_DELETE_DELAY"]="${VIRUSMAILS_DELETE_DELAY:=7}"
+ DEFAULT_VARS["NETWORK_INTERFACE"]="${NETWORK_INTERFACE:="eth0"}"
+-# DEFAULT_VARS["DMS_DEBUG"] defined in helper_functions.sh
++# DEFAULT_VARS["DMS_DEBUG"] defined in helper-functions.sh
+ 
+ ##########################################################################
+ # << DEFAULT VARS
+@@ -2088,8 +2088,8 @@ function _start_changedetector
+ # !  CARE --> DON'T CHANGE, unless you exactly know what you are doing
+ # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ 
+-# shellcheck source=/dev/null
+-. /usr/local/bin/helper_functions.sh
++# shellcheck source=./helper-functions.sh
++. /usr/local/bin/helper-functions.sh
+ 
+ if [[ ${DEFAULT_VARS["DMS_DEBUG"]} -eq 1 ]]
+ then
+diff --git a/test/helper_functions.bats b/test/helper_functions.bats
+index 49f1819f..4700908d 100644
+--- a/test/helper_functions.bats
++++ b/test/helper_functions.bats
+@@ -2,7 +2,7 @@ load 'test_helper/bats-support/load'
+ load 'test_helper/bats-assert/load'
+ 
+ # load the helper function into current context
+-. ./target/helper_functions.sh
++. ./target/helper-functions.sh
+ 
+ @test "check helper function: _sanitize_ipv4_to_subnet_cidr" {
+     output=$(_sanitize_ipv4_to_subnet_cidr 255.255.255.255/0)
+@@ -11,4 +11,4 @@ load 'test_helper/bats-assert/load'
+     assert_output "192.168.240.0/20"
+     output=$(_sanitize_ipv4_to_subnet_cidr 192.168.255.14/32)
+     assert_output "192.168.255.14/32"
+-}
+\ No newline at end of file
++}
+diff --git a/test/linting/lint.sh b/test/linting/lint.sh
+index 56f45e0e..b56a78e9 100755
+--- a/test/linting/lint.sh
++++ b/test/linting/lint.sh
+@@ -81,7 +81,8 @@ function __which { command -v "${@}" &>/dev/null ; }
+ 
+ function _eclint
+ {
+-  local LINT=(eclint -exclude "(.*\.git.*|.*\.md$|\.bats$)")
++  local SCRIPT='EDITORCONFIG LINTER'
++  local LINT=(eclint -exclude "(.*\.git.*|.*\.md$|\.bats$|\.cf$|\.conf$|\.init$)")
+ 
+   if ! __in_path "${LINT[0]}"
+   then
+@@ -93,7 +94,6 @@ function _eclint
+     'type: editorconfig' \
+     '(linter version:' "$(${LINT[0]} --version))"
+ 
+-  local SCRIPT='EDITORCONFIG LINTER'
+   if "${LINT[@]}"
+   then
+     __log_success 'no errors detected'
+@@ -105,6 +105,7 @@ function _eclint
+ 
+ function _hadolint
+ {
++  local SCRIPT='HADOLINT'
+   local LINT=(hadolint -c "${CDIR}/.hadolint.yaml")
+ 
+   if ! __in_path "${LINT[0]}"
+@@ -117,7 +118,6 @@ function _hadolint
+     'type: Dockerfile' \
+     '(linter version:' "$(${LINT[0]} --version | grep -E -o "v[0-9\.]*"))"
+ 
+-  local SCRIPT='HADOLINT'
+   if git ls-files --exclude='Dockerfile*' --ignored | \
+     xargs --max-lines=1 "${LINT[@]}"
+   then
+@@ -130,7 +130,9 @@ function _hadolint
+ 
+ function _shellcheck
+ {
+-  local LINT=(/usr/bin/shellcheck -S style -Cauto -o all -e SC2154 -W 50)
++  local SCRIPT='SHELLCHECK'
++  local ERR=0
++  local LINT=(/usr/bin/shellcheck -x -S style -Cauto -o all -e SC2154 -W 50)
+ 
+   if ! __in_path "${LINT[0]}"
+   then
+@@ -142,17 +144,44 @@ function _shellcheck
+     'type: shellcheck' '(linter version:' \
+     "$(${LINT[0]} --version | grep -m 2 -o "[0-9.]*"))"
+ 
+-  local FIND=(
+-    find . -iname "*.sh"
+-    -not -path "./test/*"
+-    -not -path "./target/docker-configomat/*"
+-    -exec "${LINT[@]}" {} \;)
+-
+-  local SCRIPT='SHELLCHECK'
+-  if "${FIND[@]}" | grep -q .
++  # an overengineered solution to allow shellcheck -x to
++  # properly follow `source=<SOURCE FILE>` when sourcing
++  # files with `. <FILE>` in shell scripts.
++  while read -r FILE
++  do
++    if ! (
++      cd "$(realpath "$(dirname "$(readlink -f "${FILE}")")")"
++      if ! "${LINT[@]}" "$(basename -- "${FILE}")"
++      then
++        return 1
++      fi
++    )
++    then
++      ERR=1
++    fi
++  done < <(find . -type f -iname "*.sh" \
++    -not -path "./test/bats/*" \
++    -not -path "./test/test_helper/*" \
++    -not -path "./target/docker-configomat/*")
++
++  # the same for executables in target/bin/
++  while read -r FILE
++  do
++    if ! (
++      cd "$(realpath "$(dirname "$(readlink -f "${FILE}")")")"
++      if ! "${LINT[@]}" "$(basename -- "${FILE}")"
++      then
++        return 1
++      fi
++    )
++    then
++      ERR=1
++    fi
++  done < <(find target/bin -executable -type f)
++
++  if [[ ERR -eq 1 ]]
+   then
+-    "${FIND[@]}"
+-    __log_abort
++    __log_abort 'errors encountered'
+     return 101
+   else
+     __log_success 'no errors detected'
+diff --git a/test/mail_fail2ban.bats b/test/mail_fail2ban.bats
+index 7b213c24..f00f1392 100644
+--- a/test/mail_fail2ban.bats
++++ b/test/mail_fail2ban.bats
+@@ -25,7 +25,7 @@ function setup_file() {
+         tail -f /var/log/faillog
+ 
+     wait_for_finished_setup_in_container mail_fail2ban
+-    
++
+ }
+ 
+ function teardown_file() {
+@@ -125,11 +125,11 @@ function teardown_file() {
+   run docker exec mail_fail2ban /bin/sh -c "fail2ban-client set dovecot banip 192.0.66.5"
+   sleep 10
+   run ./setup.sh -c mail_fail2ban debug fail2ban
+-  assert_output --regexp "^Banned in dovecot: 192.0.66.5 192.0.66.4.*"
++  assert_output -p "Banned in dovecot: 192.0.66.5" -p "Banned in dovecot: 192.0.66.4"
+   run ./setup.sh -c mail_fail2ban debug fail2ban unban 192.0.66.4
+   assert_output --partial "unbanned IP from dovecot: 192.0.66.4"
+   run ./setup.sh -c mail_fail2ban debug fail2ban
+-  assert_output --regexp "^Banned in dovecot: 192.0.66.5.*"
++  assert_output --partial "Banned in dovecot: 192.0.66.5"
+   run ./setup.sh -c mail_fail2ban debug fail2ban unban 192.0.66.5
+   run ./setup.sh -c mail_fail2ban debug fail2ban unban
+   assert_output --partial "You need to specify an IP address. Run"
+@@ -146,4 +146,4 @@ function teardown_file() {
+ 
+ @test "last" {
+   skip 'this test is only there to reliably mark the end for the teardown_file'
+-}
+\ No newline at end of file
++}

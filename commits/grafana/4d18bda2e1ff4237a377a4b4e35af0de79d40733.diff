@@ -1,0 +1,213 @@
+commit 4d18bda2e1ff4237a377a4b4e35af0de79d40733
+Author: Ivana Huckova <30407135+ivanahuckova@users.noreply.github.com>
+Date:   Fri May 22 15:16:01 2020 +0200
+
+    Prometheus: Fix recording rules expansion (#24977)
+    
+    * First pass solution
+    
+    * Refactor solution
+    
+    * Add test coverage, update tests
+    
+    * Fix behaviour for multiple labels, add test for this
+    
+    * Add recordin rules to devenv prometheus
+    
+    * Update devenv/prometheus2 instead of devenv/prometheus
+    
+    * Add newlines
+    
+    * Fix label matching if labels include comma, add test coverage
+    
+    * Refactor
+    
+    * Refactor, simplify
+
+diff --git a/devenv/docker/blocks/prometheus2/Dockerfile b/devenv/docker/blocks/prometheus2/Dockerfile
+index c9a2327bd4a..fe73ec26780 100644
+--- a/devenv/docker/blocks/prometheus2/Dockerfile
++++ b/devenv/docker/blocks/prometheus2/Dockerfile
+@@ -1,3 +1,4 @@
+ FROM prom/prometheus:v2.7.2
+ ADD prometheus.yml /etc/prometheus/
+-ADD alert.rules /etc/prometheus/
++ADD recording.yml /etc/prometheus/
++ADD alert.yml /etc/prometheus/
+diff --git a/devenv/docker/blocks/prometheus2/alert.rules b/devenv/docker/blocks/prometheus2/alert.rules
+deleted file mode 100644
+index 563d1e89994..00000000000
+--- a/devenv/docker/blocks/prometheus2/alert.rules
++++ /dev/null
+@@ -1,10 +0,0 @@
+-# Alert Rules
+-
+-ALERT AppCrash
+-  IF process_open_fds > 0
+-  FOR 15s
+-  LABELS { severity="critical" }
+-  ANNOTATIONS {
+-   summary = "Number of open fds > 0",
+-   description = "Just testing"
+-  }
+diff --git a/devenv/docker/blocks/prometheus2/alert.yml b/devenv/docker/blocks/prometheus2/alert.yml
+new file mode 100644
+index 00000000000..cd642c81f7f
+--- /dev/null
++++ b/devenv/docker/blocks/prometheus2/alert.yml
+@@ -0,0 +1,11 @@
++groups:
++  - name: ALERT
++    rules:
++    - alert: AppCrash
++      expr: process_open_fds > 0
++      for: 15s
++      labels:
++        severity: critical
++      annotations:
++        summary: Number of open fds > 0
++        description: Just testing
+diff --git a/devenv/docker/blocks/prometheus2/prometheus.yml b/devenv/docker/blocks/prometheus2/prometheus.yml
+index 1634972b2cb..494736ea0f7 100644
+--- a/devenv/docker/blocks/prometheus2/prometheus.yml
++++ b/devenv/docker/blocks/prometheus2/prometheus.yml
+@@ -5,17 +5,17 @@ global:
+   # scrape_timeout is set to the global default (10s).
+ 
+ # Load and evaluate rules in this file every 'evaluation_interval' seconds.
+-#rule_files:
+-# - "alert.rules"
+-# - "first.rules"
++rule_files:
++  - "alert.yml"
++  - "recording.yml"
+ # - "second.rules"
+ 
+-# alerting:
+-#   alertmanagers:
+-#   - scheme: http
+-#     static_configs:
+-#     - targets:
+-#       - "127.0.0.1:9093"
++alerting:
++  alertmanagers:
++  - scheme: http
++    static_configs:
++    - targets:
++      - "alertmanager:9093"
+ 
+ scrape_configs:
+   - job_name: 'prometheus'
+diff --git a/devenv/docker/blocks/prometheus2/recording.yml b/devenv/docker/blocks/prometheus2/recording.yml
+new file mode 100644
+index 00000000000..f45cdbeddf2
+--- /dev/null
++++ b/devenv/docker/blocks/prometheus2/recording.yml
+@@ -0,0 +1,16 @@
++groups:
++  - name: RECORDING_RULES
++    rules:
++      - record: instance_path:requests:rate5m
++        expr: rate(prometheus_http_requests_total{job="prometheus"}[5m])
++      - record: path:requests:rate5m
++        expr: sum without (instance)(instance_path:requests:rate5m{job="prometheus"})
++      - record: instance_path:reloads_failures:rate5m
++        expr: rate(prometheus_tsdb_reloads_failures_total{job="prometheus"}[5m])
++      - record: instance_path:reloads:rate5m
++        expr: rate(prometheus_tsdb_reloads_total{job="prometheus"}[5m])
++      - record: instance_path:request_failures_per_requests:ratio_rate5m
++        expr: |2
++            instance_path:reloads_failures:rate5m{job="prometheus"}
++          /
++            instance_path:reloads:rate5m{job="prometheus"}
+diff --git a/public/app/plugins/datasource/prometheus/language_utils.test.ts b/public/app/plugins/datasource/prometheus/language_utils.test.ts
+index 303dec7ef49..6cadc67c32b 100644
+--- a/public/app/plugins/datasource/prometheus/language_utils.test.ts
++++ b/public/app/plugins/datasource/prometheus/language_utils.test.ts
+@@ -117,4 +117,27 @@ describe('expandRecordingRules()', () => {
+     expect(expandRecordingRules('metric[]', { metric: 'foo' })).toBe('foo[]');
+     expect(expandRecordingRules('metric + foo', { metric: 'foo', foo: 'bar' })).toBe('foo + bar');
+   });
++
++  it('returns query with labels with expanded recording rules', () => {
++    expect(
++      expandRecordingRules('metricA{label1="value1"} / metricB{label2="value2"}', { metricA: 'fooA', metricB: 'fooB' })
++    ).toBe('fooA{label1="value1"} / fooB{label2="value2"}');
++    expect(
++      expandRecordingRules('metricA{label1="value1",label2="value,2"}', {
++        metricA: 'rate(fooA[])',
++      })
++    ).toBe('rate(fooA{label1="value1",label2="value,2"}[])');
++    expect(
++      expandRecordingRules('metricA{label1="value1"} / metricB{label2="value2"}', {
++        metricA: 'rate(fooA[])',
++        metricB: 'rate(fooB[])',
++      })
++    ).toBe('rate(fooA{label1="value1"}[])/ rate(fooB{label2="value2"}[])');
++    expect(
++      expandRecordingRules('metricA{label1="value1",label2="value2"} / metricB{label3="value3"}', {
++        metricA: 'rate(fooA[])',
++        metricB: 'rate(fooB[])',
++      })
++    ).toBe('rate(fooA{label1="value1",label2="value2"}[])/ rate(fooB{label3="value3"}[])');
++  });
+ });
+diff --git a/public/app/plugins/datasource/prometheus/language_utils.ts b/public/app/plugins/datasource/prometheus/language_utils.ts
+index 9d311db96ff..b8ccdebe4db 100644
+--- a/public/app/plugins/datasource/prometheus/language_utils.ts
++++ b/public/app/plugins/datasource/prometheus/language_utils.ts
+@@ -1,4 +1,5 @@
+ import { PromMetricsMetadata } from './types';
++import { addLabelToQuery } from './add_label_to_query';
+ 
+ export const RATE_RANGES = ['1m', '5m', '10m', '30m', '1h'];
+ 
+@@ -111,7 +112,47 @@ export function parseSelector(query: string, cursorOffset = 1): { labelKeys: any
+ export function expandRecordingRules(query: string, mapping: { [name: string]: string }): string {
+   const ruleNames = Object.keys(mapping);
+   const rulesRegex = new RegExp(`(\\s|^)(${ruleNames.join('|')})(\\s|$|\\(|\\[|\\{)`, 'ig');
+-  return query.replace(rulesRegex, (match, pre, name, post) => `${pre}${mapping[name]}${post}`);
++  const expandedQuery = query.replace(rulesRegex, (match, pre, name, post) => `${pre}${mapping[name]}${post}`);
++
++  // Split query into array, so if query uses operators, we can correctly add labels to each individual part.
++  const queryArray = expandedQuery.split(/(\+|\-|\*|\/|\%|\^)/);
++
++  // Regex that matches occurences of ){ or }{ or ]{ which is a sign of incorrecly added labels.
++  const invalidLabelsRegex = /(\)\{|\}\{|\]\{)/;
++  const correctlyExpandedQueryArray = queryArray.map(query => {
++    let expression = query;
++    if (expression.match(invalidLabelsRegex)) {
++      expression = addLabelsToExpression(expression, invalidLabelsRegex);
++    }
++    return expression;
++  });
++
++  return correctlyExpandedQueryArray.join('');
++}
++
++function addLabelsToExpression(expr: string, invalidLabelsRegexp: RegExp) {
++  // Split query into 2 parts - before the invalidLabelsRegex match and after.
++  const indexOfRegexMatch = expr.match(invalidLabelsRegexp).index;
++  const exprBeforeRegexMatch = expr.substr(0, indexOfRegexMatch + 1);
++  const exprAfterRegexMatch = expr.substr(indexOfRegexMatch + 1);
++
++  // Create arrayOfLabelObjects with label objects that have key, operator and value.
++  const arrayOfLabelObjects: Array<{ key: string; operator: string; value: string }> = [];
++  exprAfterRegexMatch.replace(labelRegexp, (label, key, operator, value) => {
++    arrayOfLabelObjects.push({ key, operator, value });
++    return '';
++  });
++
++  // Loop trough all of the label objects and add them to query.
++  // As a starting point we have valid query without the labels.
++  let result = exprBeforeRegexMatch;
++  arrayOfLabelObjects.filter(Boolean).forEach(obj => {
++    // Remove extra set of quotes from obj.value
++    const value = obj.value.substr(1, obj.value.length - 2);
++    result = addLabelToQuery(result, obj.key, value, obj.operator);
++  });
++
++  return result;
+ }
+ 
+ /**

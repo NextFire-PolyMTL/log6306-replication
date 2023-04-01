@@ -1,0 +1,556 @@
+commit 6310aaff5539a70cb9cb11d70655b1354ee1de16
+Author: Stephanie Closson <srclosson@gmail.com>
+Date:   Tue Mar 17 13:36:35 2020 -0600
+
+    Toolkit: docker image for plugin CI process (#22790)
+    
+    * Adding dockerfile for builds
+    
+    * Adding standardized bashrc
+    
+    * Updated dockerfile
+    
+    * removed bashrc. Not required
+    
+    * WIP: Updates to dockerfile for e2e and readme
+    
+    * Storybook: Add relative logo url (#22786)
+    
+    * DevEnv: update frontend dependencies - rollup (#22794)
+    
+    * DevEnv: updates rollup 1.6.0 -> 2.0.6 in grafana-data package
+    
+    * DevEnv: updates rollup 1.6.0 -> 2.0.6 in grafana-e2e package
+    
+    * DevEnv: updates rollup 1.6.0 -> 2.0.6 in grafana-runtime package
+    
+    * DevEnv: updates rollup 1.6.0 -> 2.0.6 in grafana-ui package
+    
+    * DevEnv: updates rollup-plugin-sourcemaps 0.4.2 -> 0.5.0 in grafana-data package
+    
+    * DevEnv: updates rollup-plugin-sourcemaps 0.4.2 -> 0.5.0 in grafana-e2e package
+    
+    * DevEnv: updates rollup-plugin-sourcemaps 0.4.2 -> 0.5.0 in grafana-runtime package
+    
+    * DevEnv: updates rollup-plugin-sourcemaps 0.4.2 -> 0.5.0 in grafana-ui package
+    
+    * DevEnv: updates rollup-plugin-terser 4.0.4 -> 5.3.0 in grafana-data package
+    
+    * DevEnv: updates rollup-plugin-terser 4.0.4 -> 5.3.0 in grafana-e2e package
+    
+    * DevEnv: updates rollup-plugin-terser 4.0.4 -> 5.3.0 in grafana-runtime package
+    
+    * DevEnv: updates rollup-plugin-terser 4.0.4 -> 5.3.0 in grafana-ui package
+    
+    * DevEnv: updates rollup-plugin-typescript2 0.19.3 -> 0.26.0 in grafana-data package
+    
+    * DevEnv: updates rollup-plugin-typescript2 0.19.3 -> 0.26.0 in grafana-e2e package
+    
+    * DevEnv: updates rollup-plugin-typescript2 0.19.3 -> 0.26.0 in grafana-runtime package
+    
+    * DevEnv: updates rollup-plugin-typescript2 0.19.3 -> 0.26.0 in grafana-ui package
+    
+    * DevEnv: updates @rollup/plugin-commonjs 9.2.1 -> 11.0.2 in grafana-data package
+    
+    * DevEnv: updates @rollup/plugin-commonjs 9.2.1 -> 11.0.2 in grafana-e2e package
+    
+    * DevEnv: updates @rollup/plugin-commonjs 9.2.1 -> 11.0.2 in grafana-runtime package
+    
+    * DevEnv: updates @rollup/plugin-commonjs 9.2.1 -> 11.0.2 in grafana-ui package
+    
+    * DevEnv: updates rollup config import in grafana-data package
+    
+    * DevEnv: updates rollup config import in grafana-e2e package
+    
+    * DevEnv: updates rollup config import in grafana-ui package
+    
+    * DevEnv: updates rollup config import in grafana-runtime package
+    
+    * DevEnv: updates @rollup/plugin-node-resolve 4.0.1 -> 7.1.1 in grafana-data package
+    
+    * DevEnv: updates @rollup/plugin-node-resolve 4.0.1 -> 7.1.1 in grafana-e2e package
+    
+    * DevEnv: updates @rollup/plugin-node-resolve 4.0.1 -> 7.1.1 in grafana-runtime package
+    
+    * DevEnv: updates @rollup/plugin-node-resolve 4.0.1 -> 7.1.1 in grafana-ui package
+    
+    * DevEnv: updates lockfile
+    
+    * DevEnv: updates rollup config plugin-node-resolve import in grafana-data package
+    
+    * DevEnv: updates rollup config plugin-node-resolve import in grafana-ui package
+    
+    * DevEnv: updates rollup config plugin-node-resolve import in grafana-e2e package
+    
+    * DevEnv: updates rollup config plugin-node-resolve import in grafana-runtime package
+    
+    * DevEnv: updates rollup-plugin-visualizer 0.9.2 -> 3.3.1 in grafana-data package
+    
+    * DevEnv: updates rollup-plugin-visualizer 0.9.2 -> 3.3.1 in grafana-e2e package
+    
+    * DevEnv: updates rollup-plugin-visualizer 0.9.2 -> 3.3.1 in grafana-runtime package
+    
+    * DevEnv: updates rollup-plugin-visualizer 0.9.2 -> 3.3.1 in grafana-ui package
+    
+    * Fronted: Fixed webpack chunk syntax error
+    
+    * Fix: fixes issue with headers property with different casing (#22778)
+    
+    Fixes #22756
+    
+    * Variables: migrates data source variable type to React/Redux (#22770)
+    
+    * Refactor: moves all the newVariables part to features/variables directory
+    
+    * Feature: adds datasource type
+    
+    * Tests: adds reducer tests
+    
+    * Tests: covers data source actions with tests
+    
+    * Chore: reduces strict null errors
+    
+    * AngularPanels: Fixed inner height calculation (#22796)
+    
+    * Chore: migrate admin/users from angular to react + redux (#22759)
+    
+    * Start adding admin users list page to redux/react.
+    
+    * removed unused code.
+    
+    * added pagination.
+    
+    * changed so we use the new form styles.
+    
+    * added tooltip.
+    
+    * using tagbadge for authlabels.
+    
+    * remove unused code.
+    
+    * removed old code.
+    
+    * Fixed the last feedback on PR.
+    
+    * DevEnv: update frontend dependencies - webpack (#22144)
+    
+    * DevEnv: updates webpack 4.29.6 -> 4.41.5
+    
+    * DevEnv: updates webpack-cli 3.2.3 -> 3.3.10
+    
+    * DevEnv: updates webpack-dev-server 3.2.1 -> 3.10.3
+    
+    * DevEnv: updates terser-webpack-plugin 1.2.3 -> 2.3.4
+    
+    * DevEnv: updates webpack-bundle-analyzer 3.3.2 -> 3.6.0
+    
+    * DevEnv updates webpack-merge 4.2.1 -> 4.2.2
+    
+    * DevEnv: updates clean-webpack-plugin 2.0.0 -> 3.0.0
+    
+    * DevEnv: updates file-loader 3.0.1 -> 5.0.2
+    
+    * DevEnv: updates css-loader 2.1.1 -> 3.4.2
+    
+    * DevEnv: updates sass-loader 7.1.0 -> 8.0.2
+    
+    * DevEnv: updates style-loader 0.23.1 -> 1.1.3
+    
+    * DevEnv: updates fork-ts-checker-webpack-plugin 1.0.0 -> 4.0.3
+    
+    * DevEnv: updates optimize-css-assets-webpack-plugin 5.0.1 -> 5.0.3
+    
+    * DevEnv: updates mini-css-extract-plugin 0.5.0 -> 0.9.0
+    
+    * DevEnv: updates @cypress/webpack-preprocessor 4.1.1 -> 4.1.3 in grafana-e2e package
+    
+    * DevEnv: updates @types/webpack 4.4.34 -> 4.41.7 in grafana-toolkit package
+    
+    * DevEnv: updates copy-webpack-plugin 5.0.3 -> 5.1.1 in grafana-toolkit package
+    
+    * DevEnv: updates terser-webpack-plugin 1.3.0 -> 2.3.4 in grafana-toolkit package
+    
+    * DevEnv: updates webpack 4.35.0 -> 4.41.5 in grafana-toolkit package
+    
+    * DevEnv: updates import of CleanWebpackPlugin to named import (#22800)
+    
+    * Build: Migrate PR pipeline (#22788)
+    
+    Implement new PR pipeline
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * DevEnv: update frontend dependencies - mixed 1/2 (#22147)
+    
+    * DevEnv: updates @emotion/core 10.0.10 -> 10.0.27
+    
+    * DevEnv: updates autoprefixer 9.5.0 -> 9.7.4
+    
+    * DevEnv: updates axios 0.19.0 -> 0.19.2
+    
+    * DevEnv: updates es6-promise 3.3.1 -> 4.2.8
+    
+    * DevEnv: updates glob 7.1.3 -> 7.1.6
+    
+    * DevEnv: updates husky 1.3.1 -> 4.2.1
+    
+    * DevEnv: updates lerna 3.15.0 -> 3.20.2
+    
+    * DevEnv: updates lint-staged 8.1.5 -> 10.0.7
+    
+    * DevEnv: updates module-alias 2.2.0 -> 2.2.2
+    
+    * DevEnv: updates monaco-editor 0.15.6 -> 0.19.3
+    
+    * DevEnv: updates postcss-browser-reporter 0.5.0 -> 0.6.0
+    
+    * DevEnv: updates rimraf 2.6.3 -> 3.0.1
+    
+    * Revert "DevEnv: updates monaco-editor 0.15.6 -> 0.19.3"
+    
+    * DevEnv: updates axios 0.19.0 -> 0.19.2 in grafana-toolkit package
+    
+    * DevEnv: updates lockfile
+    
+    * DevEnv: update frontend dependencies - mixed 2/2 (#22148)
+    
+    * DevEnv: updates sinon 1.17.6 -> 8.1.1
+    
+    * DevEnv: updates zone.js 0.7.8 -> 0.10.2
+    
+    * DevEnv: updates brace 0.10.0 -> 0.11.1
+    
+    * DevEnv: updates eventemitter3 2.0.3 -> 4.0.0
+    
+    * DevEnv: updates file-saver 1.3.8 -> 2.0.2
+    
+    * DevEnv: updates is-hotkey 0.1.4 -> 0.1.6
+    
+    * DevEnv: updates mousetrap 1.6.3 -> 1.6.5
+    
+    * DevEnv: updates prismjs 1.16.0 -> 1.19.0
+    
+    * DevEnv: updates search-query-parser 1.5.2 -> 1.5.4
+    
+    * DevEnv: updates tether 1.4.5 -> 1.4.7
+    
+    * DevEnv: updates xss 1.0.3 -> 1.0.6
+    
+    * Revert "DevEnv: updates zone.js 0.7.8 -> 0.10.2"
+    
+    * DevEnv: updates sinon 1.17.6 -> 8.1.1 in grafana-data package
+    
+    * DevEnv: updates @types/sinon 7.0.11 -> 7.5.2 in grafana-data package
+    
+    * DevEnv: updates eventemitter import
+    
+    * DevEnv: updates lockfile
+    
+    * Variables: migrates interval variable type to React/Redux  (#22797)
+    
+    * Feature: migrates interval variable type to React/Redux
+    
+    * Forms: Fix input suffix position (#22780)
+    
+    * Forms: Fix input suffix position
+    
+    * Update
+    
+    * FieldOverrides: Apply field overrides in PanelQueryRunner (#22439)
+    
+    * Apply field overrides in PanelChrome
+    
+    * Move applyFieldOverrides to panel query runner
+    
+    * Review updates
+    
+    * Make sure overrides are applied back on souce panel when exiting the new edit mode
+    
+    * TS ignores in est
+    
+    * Make field display work in viz repeater
+    
+    * Review updates
+    
+    * Review and test updates
+    
+    * Change the way overrides and trransformations are retrieved in PQR
+    
+    * Minor updates after review
+    
+    * Fix null checks
+    
+    * E2E: Add new run modes for e2e tests (#22795)
+    
+    * WIP: started e2e tests for bar gauge
+    
+    * Updated
+    
+    * Updated
+    
+    * Updated cypress from 3.7 -> 4.1
+    
+    * reverted cypress upgrade
+    
+    * Updated test
+    
+    * Update e2e docs
+    
+    * Updated docs
+    
+    * DevEnv: update frontend dependencies - npm, nodemon, typescript (#22145)
+    
+    * DevEnv: updates npm 6.13.4 -> 6.13.7
+    
+    * DevEnv: updates nodemon 1.18.10 -> 2.0.2
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5
+    
+    * DevEnv: removes npm from dev dependencies
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5 in grafana-data package
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5 in grafana-e2e package
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5 in grafana-toolkit package
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5 in grafana-ui package
+    
+    * DevEnv: updates typescript 3.7.2 -> 3.7.5 in grafana-runtime package
+    
+    * SaveDashboard: Updated modal design/layout a bit (#22810)
+    
+    * DevEnv: updates build-ci-deploy dockerfile and CI config to include yarn (#22809)
+    
+    * DevEnv: updates build-ci-deploy dockerfile
+    
+    * DevEnv: updates build-ci-deploy dockerfile version in circleci config
+    
+    * Plugins: Hide plugins page from viewers, and limit /api/plugins to only core plugins when called by viewer role  (#21901)
+    
+    * Hide plugins list from viewers
+    
+    * Made /api/plugins only return core plugins for users with viewer role
+    
+    Co-authored-by: Torkel Ödegaard <torkel@grafana.com>
+    
+    * Webpack: Add relative node_modules path (#22806)
+    
+    * DevEnv: updates lockfile to fix breaking builds on CI (#22811)
+    
+    * DevEnv: updates lockfile
+    
+    * DevEnv: updates lockfile
+    
+    * Added readme, and review feedback
+    
+    * Renamed README
+    
+    * fixed error in path for docs
+    
+    * Added updatedb
+    
+    * Set grafana checkout to latest stable
+    
+    * Variables: fixes so single value picker closes dropdown on select (#22823)
+    
+    * FieldOverrides: Remove console warn from processFieldConfigValue (#22824)
+    
+    * Grafana-UI: Add invalid state to Forms.Textarea (#22775)
+    
+    * Storybook: Bring back theme switch (#22826)
+    
+    * TestData: New dashboard that tests variables that update on time range change (#22829)
+    
+    * CircleCI: Download grabpl from GCS (#22828)
+    
+    * CircleCI: Download grabpl from GCS
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * CircleCI: Fix installation of grabpl
+    
+    Signed-off-by: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * Fix dashboard picker's props (#22815)
+    
+    * TablePanel: Enable new units picker (#22833)
+    
+    * CircleCI: Install build pipeline tool from GitHub repo (#22837)
+    
+    * Variables: fixes so order in list is preserved after save (#22805)
+    
+    * Storybook: Deploy on PR, master and release (#22827)
+    
+    * Update CircleCI deployment
+    
+    * Add GCP auth
+    
+    * Change master to latest dir
+    
+    * Variables: adds onTimeRangeUpdated to newVariables (#22821)
+    
+    * Feature: adds onTimeRangeUpdated to newVariables
+    
+    * Refactor: removes VariableWithRefresh and unused func
+    
+    * Refactor: adds console output when something throws as well
+    
+    * Storybook: add canary deploy from master (#22843)
+    
+    * Canary from master latest from release
+    
+    * Fix logo URL
+    
+    * Adding dockerfile for builds
+    
+    * Adding standardized bashrc
+    
+    * Updated dockerfile
+    
+    * removed bashrc. Not required
+    
+    * WIP: Updates to dockerfile for e2e and readme
+    
+    * Added readme, and review feedback
+    
+    * Renamed README
+    
+    * fixed error in path for docs
+    
+    * Added updatedb
+    
+    * Set grafana checkout to latest stable
+    
+    * Feedback from code review
+    
+    * Update packages/grafana-toolkit/docker/grafana-plugin-ci/README.md
+    
+    Co-Authored-By: Arve Knudsen <arve.knudsen@gmail.com>
+    
+    * recommended changes from code review
+    
+    Co-authored-by: Tobias Skarhed <1438972+tskarhed@users.noreply.github.com>
+    Co-authored-by: Lukas Siatka <lukasz.siatka@grafana.com>
+    Co-authored-by: Torkel Ödegaard <torkel@grafana.com>
+    Co-authored-by: Hugo Häggmark <hugo.haggmark@grafana.com>
+    Co-authored-by: Marcus Andersson <marcus.andersson@grafana.com>
+    Co-authored-by: Arve Knudsen <arve.knudsen@gmail.com>
+    Co-authored-by: Dominik Prokop <dominik.prokop@grafana.com>
+    Co-authored-by: Andrej Ocenas <mr.ocenas@gmail.com>
+    Co-authored-by: Alex Khomenko <Clarity-89@users.noreply.github.com>
+
+diff --git a/packages/grafana-toolkit/docker/grafana-plugin-ci/Dockerfile b/packages/grafana-toolkit/docker/grafana-plugin-ci/Dockerfile
+new file mode 100644
+index 00000000000..f2cdd43c7a9
+--- /dev/null
++++ b/packages/grafana-toolkit/docker/grafana-plugin-ci/Dockerfile
+@@ -0,0 +1,51 @@
++FROM circleci/node:12-browsers
++USER root 
++WORKDIR /tmp
++
++# Install Go
++ADD https://dl.google.com/go/go1.14.linux-amd64.tar.gz /tmp
++RUN echo 08df79b46b0adf498ea9f320a0f23d6ec59e9003660b4c9c1ce8e5e2c6f823ca go1.14.linux-amd64.tar.gz | sha256sum --check --status
++RUN tar -C /usr/local -xf go1.14.linux-amd64.tar.gz
++
++# Install golangci-lint
++ADD https://github.com/golangci/golangci-lint/releases/download/v1.23.7/golangci-lint-1.23.7-linux-amd64.tar.gz /tmp
++RUN echo 34df1794a2ea8e168b3c98eed3cc0f3e13ed4cba735e4e40ef141df5c41bc086 golangci-lint-1.23.7-linux-amd64.tar.gz | sha256sum --check --status
++RUN tar xf golangci-lint-1.23.7-linux-amd64.tar.gz
++RUN mv golangci-lint-1.23.7-linux-amd64/golangci-lint /usr/local/bin
++RUN ln -s /usr/local/go/bin/go /usr/local/bin/go
++RUN ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
++RUN chmod 755 /usr/local/bin/golangci-lint
++
++# Install dependencies
++RUN apt-get update -y && apt-get install -y adduser libfontconfig1 locate && /bin/rm -rf /var/lib/apt/lists/*
++
++# Install code climate
++ADD https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 /usr/local/bin/cc-test-reporter
++RUN echo 38f2442892027f61a07f52c845818750261b2ba58bffb043a582495339d37c05 /usr/local/bin/cc-test-reporter | sha256sum --check --status
++RUN chmod +x /usr/local/bin/cc-test-reporter
++
++# Download, but don't install previous grafana releases
++RUN mkdir -pv /usr/local/grafana/deb
++ADD https://dl.grafana.com/oss/release/grafana_6.6.2_amd64.deb /usr/local/grafana/deb
++ADD https://dl.grafana.com/oss/release/grafana_6.5.3_amd64.deb /usr/local/grafana/deb
++ADD https://dl.grafana.com/oss/release/grafana_6.4.5_amd64.deb /usr/local/grafana/deb
++ADD https://dl.grafana.com/oss/release/grafana_6.3.7_amd64.deb /usr/local/grafana/deb
++
++# Perform user specific initialization
++USER circleci
++RUN mkdir -pv ${HOME}/plugin ${HOME}/go/bin ${HOME}/bin ${HOME}/src ${HOME}/tmp
++
++# Install grafana release with yarn
++RUN git clone https://github.com/grafana/grafana.git ${HOME}/src/grafana
++WORKDIR /home/circleci/src/grafana
++RUN git checkout tags/v$(curl -s https://raw.githubusercontent.com/grafana/grafana/master/latest.json | jq -r '.stable')
++RUN yarn cache clean && yarn install --frozen-lockfile
++
++# Install Mage
++RUN git clone https://github.com/magefile/mage.git ${HOME}/src/mage 
++WORKDIR /home/circleci/src/mage
++RUN go run bootstrap.go
++
++ENV PATH /home/circleci/go/bin:/usr/local/go/bin:/home/circleci/.local/bin:/home/circleci/bin:${PATH}
++WORKDIR /home/circleci/plugin
++
+diff --git a/packages/grafana-toolkit/docker/grafana-plugin-ci/README.md b/packages/grafana-toolkit/docker/grafana-plugin-ci/README.md
+new file mode 100644
+index 00000000000..55b9f9f1aef
+--- /dev/null
++++ b/packages/grafana-toolkit/docker/grafana-plugin-ci/README.md
+@@ -0,0 +1,51 @@
++# Using this docker image
++
++Currently tagged and uploaded to dockerhub as srclosson/integrations-ci-build 
++
++Based off of `circleci/node:12-browsers` 
++
++## User
++The user will be `circleci`
++The home directory will be `/home/circleci`
++
++## Node
++- node 12 is installed
++- yarn is installed globally
++- npm is installed globally
++
++## Go
++- Go 1.14 is installed in `/usr/local/bin/go`
++- golangci-lint 1.23.7 is installed in `/usr/local/bin/golangci-lint`
++- mage is installed in `/home/circleci/go/bin/mage`
++
++All of the above directories are in the path, so there is no need to specify fully qualified paths.
++
++## Grafana source
++- Installed in `/home/circleci/src/grafana`
++- `yarn install` has been run
++
++## Integration/Release Testing
++There are 4 previous versions pre-downloaded to /usr/local/grafana. These versions are:
++1. 6.6.2
++2. 6.5.3
++3. 6.4.5
++4. 6.3.7
++
++To test, your CircleCI config will need a run section with something similar to the following
++```
++- run:
++        name: Setup Grafana (local install)
++        command: |
++          sudo dpkg -i /usr/local/grafana/deb/grafana_6.6.2_amd64.deb
++          sudo cp ci/grafana-test-env/custom.ini /usr/share/grafana/conf/custom.ini
++          sudo cp ci/grafana-test-env/custom.ini /etc/grafana/grafana.ini
++          sudo service grafana-server start
++          grafana-cli --version
++```
++
++
++# Building
++To build, cd to `<srcroot>/packages/grafana-toolkit/docker/grafana-plugin-ci`
++```
++docker build .
++```

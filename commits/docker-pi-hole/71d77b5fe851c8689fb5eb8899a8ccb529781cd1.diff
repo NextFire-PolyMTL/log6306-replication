@@ -1,0 +1,80 @@
+commit 71d77b5fe851c8689fb5eb8899a8ccb529781cd1 (from a9ecd4e7a20ccdd5b404aa70169f11b938f3e70d)
+Merge: a9ecd4e f94fb54
+Author: Adam Warner <me@adamwarner.co.uk>
+Date:   Tue Sep 20 09:16:07 2022 +0100
+
+    Merge pull request #1212 from pi-hole/refactor-some-more
+    
+    Change some variables so that they cannot be overridden by users
+
+diff --git a/src/Dockerfile b/src/Dockerfile
+index 932fee1..f3d4332 100644
+--- a/src/Dockerfile
++++ b/src/Dockerfile
+@@ -2,11 +2,7 @@ ARG PIHOLE_BASE
+ FROM "${PIHOLE_BASE:-ghcr.io/pi-hole/docker-pi-hole-base:bullseye-slim}"
+ 
+ ARG PIHOLE_DOCKER_TAG
+-ENV PIHOLE_DOCKER_TAG "${PIHOLE_DOCKER_TAG}"
+-
+-ENV S6_OVERLAY_VERSION v3.1.1.2
+-
+-ENV PIHOLE_INSTALL /etc/.pihole/automated\ install/basic-install.sh
++RUN echo "${PIHOLE_DOCKER_TAG}" > /pihole.docker.tag
+ 
+ ENTRYPOINT [ "/s6-init" ]
+ 
+@@ -33,7 +29,6 @@ ENV S6_KEEP_ENV 1
+ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS 2
+ ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME 0
+ 
+-
+ ENV FTLCONF_LOCAL_IPV4 0.0.0.0
+ ENV FTL_CMD no-daemon
+ ENV DNSMASQ_USER pihole
+diff --git a/src/s6/debian-root/usr/local/bin/_startup.sh b/src/s6/debian-root/usr/local/bin/_startup.sh
+index 2115461..a133b3c 100755
+--- a/src/s6/debian-root/usr/local/bin/_startup.sh
++++ b/src/s6/debian-root/usr/local/bin/_startup.sh
+@@ -9,7 +9,7 @@ fi
+ . /usr/local/bin/bash_functions.sh
+ 
+ # shellcheck source=/dev/null
+-SKIP_INSTALL=true . "${PIHOLE_INSTALL}"
++SKIP_INSTALL=true . /etc/.pihole/automated\ install/basic-install.sh
+ 
+ echo "  [i] Starting docker specific checks & setup for docker pihole/pihole"
+ 
+diff --git a/src/s6/debian-root/usr/local/bin/install.sh b/src/s6/debian-root/usr/local/bin/install.sh
+index f88a4ff..4407286 100644
+--- a/src/s6/debian-root/usr/local/bin/install.sh
++++ b/src/s6/debian-root/usr/local/bin/install.sh
+@@ -27,8 +27,9 @@ esac
+ }
+ 
+ 
++DOCKER_TAG=$(cat /pihole.docker.tag)
+ # Helps to have some additional tools in the dev image when debugging
+-if [[ "${PIHOLE_DOCKER_TAG}" = 'nightly' ||  "${PIHOLE_DOCKER_TAG}" = 'dev' ]]; then
++if [[ "${DOCKER_TAG}" = 'nightly' ||  "${DOCKER_TAG}" = 'dev' ]]; then
+   apt-get update
+   apt-get install --no-install-recommends -y nano less
+   rm -rf /var/lib/apt/lists/*
+@@ -36,6 +37,8 @@ fi
+ 
+ detect_arch
+ 
++S6_OVERLAY_VERSION=v3.1.1.2
++
+ curl -L -s "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" | tar Jxpf - -C /
+ curl -L -s "https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" | tar Jxpf - -C /
+ 
+@@ -66,7 +69,7 @@ export PIHOLE_SKIP_OS_CHECK=true
+ curl -sSL https://install.pi-hole.net | bash -sex -- --unattended
+ 
+ # At this stage, if we are building a :nightly tag, then switch the Pi-hole install to dev versions
+-if [[ "${PIHOLE_DOCKER_TAG}" = 'nightly'  ]]; then
++if [[ "${DOCKER_TAG}" = 'nightly'  ]]; then
+   yes | pihole checkout dev
+ fi
+ 

@@ -1,0 +1,1481 @@
+commit b61dfe1e241077dc981ee2c76e99adaa98d95dc7
+Author: Georg Lauterbach <44545919+georglauterbach@users.noreply.github.com>
+Date:   Mon Feb 21 11:56:57 2022 +0100
+
+    refactoring: split helper functions into smaller scripts (#2420)
+
+diff --git a/Dockerfile b/Dockerfile
+index 2dc73f5f..60a7acfc 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -279,6 +279,7 @@ COPY \
+   ./target/bin/* \
+   ./target/scripts/*.sh \
+   ./target/scripts/startup/*.sh \
++  ./target/scripts/wrapper/*.sh \
+   ./target/docker-configomat/configomat.sh \
+   /usr/local/bin/
+ 
+diff --git a/target/bin/acme_extract b/target/bin/acme_extract
+index 5b7afacf..e9e207df 100644
+--- a/target/bin/acme_extract
++++ b/target/bin/acme_extract
+@@ -34,6 +34,6 @@ def retrieve_data():
+                 return None
+ 
+ # No match == 'None', we convert to empty string for
+-# existing error handling by `helper-functions.sh`:
++# existing error handling:
+ result = retrieve_data() or ''
+ print(result)
+diff --git a/target/bin/addalias b/target/bin/addalias
+index dbfbe370..42cb5297 100755
+--- a/target/bin/addalias
++++ b/target/bin/addalias
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+@@ -36,14 +36,14 @@ function __usage
+ EMAIL="${1}"
+ RECIPIENT="${2}"
+ 
+-[[ -z ${EMAIL} ]] && { __usage ; errex 'No alias specified' ; }
+-[[ -z ${RECIPIENT} ]] && { __usage ; errex 'No recipient specified' ; }
++[[ -z ${EMAIL} ]] && { __usage ; _errex 'No alias specified' ; }
++[[ -z ${RECIPIENT} ]] && { __usage ; _errex 'No recipient specified' ; }
+ 
+ grep \
+-  -qi "^$(escape "${EMAIL}")[a-zA-Z@.\ ]*$(escape "${RECIPIENT}")" \
+-  "${DATABASE}" 2>/dev/null && errex "Alias \"${EMAIL} ${RECIPIENT}\" already exists"
++  -qi "^$(_escape "${EMAIL}")[a-zA-Z@.\ ]*$(_escape "${RECIPIENT}")" \
++  "${DATABASE}" 2>/dev/null && _errex "Alias \"${EMAIL} ${RECIPIENT}\" already exists"
+ 
+-if grep -qi "^$(escape "${EMAIL}")" "${DATABASE}" 2>/dev/null
++if grep -qi "^$(_escape "${EMAIL}")" "${DATABASE}" 2>/dev/null
+ then
+   sed -i "/${EMAIL}/s/$/,${RECIPIENT}/" "${DATABASE}"
+ else
+diff --git a/target/bin/addmailuser b/target/bin/addmailuser
+index 949cee6f..3ae82390 100755
+--- a/target/bin/addmailuser
++++ b/target/bin/addmailuser
+@@ -2,8 +2,8 @@
+ 
+ # shellcheck disable=SC2094
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+@@ -39,12 +39,12 @@ FULL_EMAIL="${1}"
+ shift
+ PASSWD="${*}"
+ 
+-[[ -z ${FULL_EMAIL} ]] && { __usage ; errex 'No username specified' ; }
+-[[ ${FULL_EMAIL} =~ .*\@.* ]] || { __usage ; errex 'Username must include the domain' ; }
++[[ -z ${FULL_EMAIL} ]] && { __usage ; _errex 'No username specified' ; }
++[[ ${FULL_EMAIL} =~ .*\@.* ]] || { __usage ; _errex 'Username must include the domain' ; }
+ 
+ touch "${DATABASE}"
+-create_lock # Protect config file with lock to avoid race conditions
+-if grep -qi "^$(escape "${FULL_EMAIL}")|" "${DATABASE}"
++_create_lock # Protect config file with lock to avoid race conditions
++if grep -qi "^$(_escape "${FULL_EMAIL}")|" "${DATABASE}"
+ then
+   echo "User '${FULL_EMAIL}' already exists."
+   exit 1
+@@ -54,7 +54,7 @@ if [[ -z ${PASSWD} ]]
+ then
+   read -r -s -p "Enter Password: " PASSWD
+   echo
+-  [[ -z ${PASSWD} ]] && errex "Password must not be empty"
++  [[ -z ${PASSWD} ]] && _errex "Password must not be empty"
+ fi
+ 
+ HASH="$(doveadm pw -s SHA512-CRYPT -u "${FULL_EMAIL}" -p "${PASSWD}")"
+diff --git a/target/bin/addrelayhost b/target/bin/addrelayhost
+index 99ad49f7..807e9a0e 100755
+--- a/target/bin/addrelayhost
++++ b/target/bin/addrelayhost
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
+ 
+@@ -32,8 +32,8 @@ DOMAIN="${1}"
+ HOST="${2}"
+ PORT="${3}"
+ 
+-[[ -z ${DOMAIN} ]] && { __usage ; errex 'No domain specified' ; }
+-[[ -z ${HOST} ]] && { __usage ; errex 'No relay host specified' ; }
++[[ -z ${DOMAIN} ]] && { __usage ; _errex 'No domain specified' ; }
++[[ -z ${HOST} ]] && { __usage ; _errex 'No relay host specified' ; }
+ [[ -z ${PORT} ]] && PORT=25
+ 
+ if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
+diff --git a/target/bin/addsaslpassword b/target/bin/addsaslpassword
+index a5cad0e4..d38f5aed 100755
+--- a/target/bin/addsaslpassword
++++ b/target/bin/addsaslpassword
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-sasl-password.cf}
+ 
+@@ -13,14 +13,14 @@ DOMAIN="${1}"
+ USER="${2}"
+ PASSWD="${3}"
+ 
+-[[ -z ${DOMAIN} ]] && { __usage ; errex 'No domain specified' ; }
+-[[ -z ${USER} ]] && { __usage ; errex 'No username specified' ; }
++[[ -z ${DOMAIN} ]] && { __usage ; _errex 'No domain specified' ; }
++[[ -z ${USER} ]] && { __usage ; _errex 'No username specified' ; }
+ 
+ if [[ -z ${PASSWD} ]]
+ then
+   read -r -s -p "Enter Password: " PASSWD
+   echo
+-  [[ -z ${PASSWD} ]] && errex 'Password must not be empty'
++  [[ -z ${PASSWD} ]] && _errex 'Password must not be empty'
+ fi
+ 
+ if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
+diff --git a/target/bin/delalias b/target/bin/delalias
+index 0ec57b73..3f276474 100755
+--- a/target/bin/delalias
++++ b/target/bin/delalias
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+@@ -12,8 +12,8 @@ function __usage { echo "Usage: delalias <alias@domain> <recipient@other>" ; }
+ 
+ [[ ${1:-} == 'help' ]] && { __usage ; exit 0 ; }
+ 
+-[[ -z ${EMAIL} ]] && { __usage ; errex "Error: No alias specified" ; }
+-[[ -z ${RECIPIENT} ]] && { __usage ; errex "Error: No recipient specified" ; }
++[[ -z ${EMAIL} ]] && { __usage ; _errex "Error: No alias specified" ; }
++[[ -z ${RECIPIENT} ]] && { __usage ; _errex "Error: No recipient specified" ; }
+ [[ -s ${DATABASE} ]] || exit 0
+ 
+ sed -i \
+diff --git a/target/bin/delmailuser b/target/bin/delmailuser
+index 2b98a2d4..9addd1e9 100755
+--- a/target/bin/delmailuser
++++ b/target/bin/delmailuser
+@@ -5,8 +5,8 @@
+ # ? the same file in the same pipeline", which is a result of ${DATABASE}
+ # ? being used below. (This disables the message file-wide.)
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ ALIAS_DATABASE="/tmp/docker-mailserver/postfix-virtual.cf"
+@@ -67,14 +67,14 @@ do
+ 
+     * )
+       __usage
+-      errex "The option ${OPT} is unknown."
++      _errex "The option ${OPT} is unknown."
+       ;;
+ 
+   esac
+ done
+ shift $((OPTIND-1))
+ 
+-[[ -z ${*} ]] && { __usage ; errex "No user specifed" ; }
++[[ -z ${*} ]] && { __usage ; _errex "No user specifed" ; }
+ [[ -s ${DATABASE} ]] || exit 0
+ 
+ if ! ${MAILDEL}
+@@ -86,7 +86,7 @@ then
+   fi
+ fi
+ 
+-create_lock # Protect config file with lock to avoid race conditions
++_create_lock # Protect config file with lock to avoid race conditions
+ 
+ for EMAIL in "${@}"
+ do
+@@ -97,7 +97,7 @@ do
+ 
+   # ${EMAIL} must not contain /s and other syntactic characters
+   UNESCAPED_EMAIL="${EMAIL}"
+-  EMAIL=$(escape "${EMAIL}")
++  EMAIL=$(_escape "${EMAIL}")
+ 
+   if [[ -f ${DATABASE} ]]
+   then
+@@ -155,6 +155,6 @@ use 'sudo docker exec mailserver rm -R /var/mail/${DOMAIN}/${USER}'"
+     ERROR=true
+   fi
+ 
+-  ${ERROR} && errex 'See the messages above.'
++  ${ERROR} && _errex 'See the messages above.'
+ done
+ exit 0
+diff --git a/target/bin/delquota b/target/bin/delquota
+index 913facf7..6cd38464 100755
+--- a/target/bin/delquota
++++ b/target/bin/delquota
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/dovecot-quotas.cf}
+ USER_DATABASE=${USER_DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+@@ -12,13 +12,13 @@ function __usage { echo "Usage: delquota <username@domain>" ; }
+ 
+ USER="${1}"
+ 
+-[[ -z ${USER} ]]  && { __usage ; errex "No username specified" ; }
+-[[ ${USER} =~ .*\@.* ]] || { __usage ; errex "Username must include the domain"; }
++[[ -z ${USER} ]]  && { __usage ; _errex "No username specified" ; }
++[[ ${USER} =~ .*\@.* ]] || { __usage ; _errex "Username must include the domain"; }
+ 
+ if ! grep -qE "^${USER}\|" "${USER_DATABASE}"
+ then
+   __usage
+-  errex "user ${USER} does not exist"
++  _errex "user ${USER} does not exist"
+ fi
+ 
+ [[ -s ${DATABASE} ]] || exit 0
+diff --git a/target/bin/excluderelaydomain b/target/bin/excluderelaydomain
+index d6f4b968..4d5a1305 100755
+--- a/target/bin/excluderelaydomain
++++ b/target/bin/excluderelaydomain
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-relaymap.cf}
+ 
+@@ -9,7 +9,7 @@ DOMAIN="${1}"
+ 
+ function usage { echo "Usage: excluderelayhost <domain>" ; }
+ 
+-[[ -z ${DOMAIN} ]] && { usage ; errex "no domain specified" ; }
++[[ -z ${DOMAIN} ]] && { usage ; _errex "no domain specified" ; }
+ 
+ if grep -qi "^@${DOMAIN}" "${DATABASE}" 2>/dev/null
+ then
+diff --git a/target/bin/fail2ban b/target/bin/fail2ban
+index 6c594f48..a89433f0 100755
+--- a/target/bin/fail2ban
++++ b/target/bin/fail2ban
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ if ! IPTABLES_OUTPUT=$(iptables -L -n 2>&1)
+ then
+@@ -75,7 +75,7 @@ else
+ 
+     *)
+       usage
+-      errex "unknown command: ${1}"
++      _errex "unknown command: ${1}"
+       ;;
+ 
+   esac
+diff --git a/target/bin/listalias b/target/bin/listalias
+index acc4cf45..ebaebc63 100755
+--- a/target/bin/listalias
++++ b/target/bin/listalias
+@@ -1,12 +1,12 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-virtual.cf}
+ 
+-[[ -f ${DATABASE} ]] || errex "Error: No postfix-virtual.cf file"
+-[[ -s ${DATABASE} ]] || errex "Error: Empty postfix-virtual.cf - no aliases have been added"
++[[ -f ${DATABASE} ]] || _errex "Error: No postfix-virtual.cf file"
++[[ -s ${DATABASE} ]] || _errex "Error: Empty postfix-virtual.cf - no aliases have been added"
+ 
+ grep -v "^\s*$\|^\s*\#" "${DATABASE}"
+ exit 0
+diff --git a/target/bin/listmailuser b/target/bin/listmailuser
+index 635cfdfe..ac2005c9 100755
+--- a/target/bin/listmailuser
++++ b/target/bin/listmailuser
+@@ -1,11 +1,11 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ # suppress error output, e.g. when listmailuser runs in a fresh container (DMS not running)
+ # shellcheck source=/dev/null
+-. /etc/dms-settings 2>/dev/null
++source /etc/dms-settings 2>/dev/null
+ 
+ function dovecot_quota_to_hr()
+ {
+@@ -23,8 +23,8 @@ function dovecot_quota_to_hr()
+ DATABASE="/tmp/docker-mailserver/postfix-accounts.cf"
+ ALIASES="/tmp/docker-mailserver/postfix-virtual.cf"
+ 
+-[[ -f ${DATABASE} ]] || errex "Error: No postfix-accounts.cf file"
+-[[ -s ${DATABASE} ]] || errex "Error: Empty postfix-accounts.cf - no accounts have been added"
++[[ -f ${DATABASE} ]] || _errex "Error: No postfix-accounts.cf file"
++[[ -s ${DATABASE} ]] || _errex "Error: Empty postfix-accounts.cf - no accounts have been added"
+ 
+ while read -r LINE
+ do
+diff --git a/target/bin/postfix-summary b/target/bin/postfix-summary
+index dd2eefee..015e2d1d 100755
+--- a/target/bin/postfix-summary
++++ b/target/bin/postfix-summary
+@@ -1,13 +1,13 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ HOSTNAME=${1}
+ RECIPIENT=${2}
+ SENDER=${3}
+ 
+-[[ -x /usr/sbin/pflogsumm ]] || errex "Critical: /usr/sbin/pflogsumm not found"
++[[ -x /usr/sbin/pflogsumm ]] || _errex "Critical: /usr/sbin/pflogsumm not found"
+ 
+ # The case that the mail.log.1 file isn't readable shouldn't
+ # actually be possible with logrotate not rotating empty files..
+diff --git a/target/bin/print-environment b/target/bin/print-environment
+index a24e35a2..389fe8b6 100644
+--- a/target/bin/print-environment
++++ b/target/bin/print-environment
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ _notify 'inf' 'Printing environment variables. Make sure no sensitive data is copied.'
+ cat /etc/dms-settings
+diff --git a/target/scripts/quota-warning.sh b/target/bin/quota-warning
+similarity index 100%
+rename from target/scripts/quota-warning.sh
+rename to target/bin/quota-warning
+diff --git a/target/bin/report-pflogsumm-yesterday b/target/bin/report-pflogsumm-yesterday
+index 1cddfbe7..31fcf7d8 100755
+--- a/target/bin/report-pflogsumm-yesterday
++++ b/target/bin/report-pflogsumm-yesterday
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ set -o errexit
+ set -o pipefail
+@@ -11,7 +11,7 @@ HOSTNAME=${1}
+ RECIPIENT=${2}
+ SENDER=${3}
+ 
+-[[ -x /usr/sbin/pflogsumm ]] || errex "Critical: /usr/sbin/pflogsumm not found"
++[[ -x /usr/sbin/pflogsumm ]] || _errex "Critical: /usr/sbin/pflogsumm not found"
+ 
+ # shellcheck disable=SC2046
+ BODY=$(gzip -cdfq $(ls -tr /var/log/mail/mail.log*) | /usr/sbin/pflogsumm --problems_first -d yesterday)
+diff --git a/target/bin/restrict-access b/target/bin/restrict-access
+index f18c27f3..65d30859 100755
+--- a/target/bin/restrict-access
++++ b/target/bin/restrict-access
+@@ -1,14 +1,14 @@
+ #! /bin/bash
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ MODE="${1}"
+ USER="${3}"
+ 
+ function usage  {	echo "Usage: ${0} <add|del|list> <send|receive> [<email@domain.com>]" ; }
+ 
+-[[ -z ${MODE} ]] && errex "missing parameters: <add|del|list> <send|receive> [<email@domain.com>]"
++[[ -z ${MODE} ]] && _errex "missing parameters: <add|del|list> <send|receive> [<email@domain.com>]"
+ 
+ case ${2} in
+   send)
+@@ -19,7 +19,7 @@ case ${2} in
+     ;;
+   *)
+     usage
+-    errex "missing parameters. Specify \"send\" or \"receive\""
++    _errex "missing parameters. Specify \"send\" or \"receive\""
+     ;;
+ esac
+ 
+@@ -27,12 +27,12 @@ if [[ -z ${USER} ]] && [[ ${MODE} != list ]]
+ then
+   read -r -p "User(user@domain.com): " USER
+   echo
+-  [[ -z ${USER} ]] && errex "User must not be empty"
++  [[ -z ${USER} ]] && _errex "User must not be empty"
+ fi
+ 
+ case ${MODE} in
+   add)
+-    grep -qi "^$(escape "${USER}")" "${DATABASE}" 2>/dev/null && errex "User \"${USER}\" already denied to ${2} mails"
++    grep -qi "^$(_escape "${USER}")" "${DATABASE}" 2>/dev/null && _errex "User \"${USER}\" already denied to ${2} mails"
+ 
+     if [[ ! -f ${DATABASE} ]]
+     then
+@@ -48,7 +48,7 @@ case ${MODE} in
+   ;;
+ 
+   del)
+-    sed -ie "/^$(escape "${USER}")/d" "${DATABASE}" 2>/dev/null || errex "User \"${USER}\" not found."
++    sed -ie "/^$(_escape "${USER}")/d" "${DATABASE}" 2>/dev/null || _errex "User \"${USER}\" not found."
+   ;;
+ 
+   list)
+@@ -56,7 +56,7 @@ case ${MODE} in
+     ;;
+   *)
+     usage
+-    errex "missing mode. Specify \"add\", \"del\" or \"list\""
++    _errex "missing mode. Specify \"add\", \"del\" or \"list\""
+   ;;
+ 
+ esac
+diff --git a/target/bin/setquota b/target/bin/setquota
+index 1b461da8..2e85dec2 100755
+--- a/target/bin/setquota
++++ b/target/bin/setquota
+@@ -5,8 +5,8 @@
+ # ? being used below. (This disables the message file-wide.)
+ # shellcheck disable=SC2094
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/dovecot-quotas.cf}
+ USER_DATABASE=${USER_DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+@@ -17,36 +17,36 @@ QUOTA="${*}"
+ 
+ function usage  { echo "Usage: setquota <user@domain> [<quota>]" ; }
+ 
+-[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
+-[[ ${USER} =~ .*\@.* ]] || { usage ; errex "username must include the domain" ; }
++[[ -z ${USER} ]] && { usage ; _errex "no username specified" ; }
++[[ ${USER} =~ .*\@.* ]] || { usage ; _errex "username must include the domain" ; }
+ 
+ if ! grep -qE "^${USER}\|" "${USER_DATABASE}"
+ then
+-  usage; errex "user ${USER} does not exist"
++  usage; _errex "user ${USER} does not exist"
+ fi
+ 
+ # check quota
+ if [[ -n ${QUOTA} ]] && ! echo "${QUOTA}" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"
+ then
+   usage
+-  errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
++  _errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
+ fi
+ 
+-create_lock # Protect config file with lock to avoid race conditions
++_create_lock # Protect config file with lock to avoid race conditions
+ 
+ touch "${DATABASE}"
+ if [[ -z ${QUOTA} ]]
+ then
+   read -r -s "Enter quota (e.g. 10M): " QUOTA
+   echo
+-  [[ -z "${QUOTA}" ]] && errex "Quota must not be empty. Use 0 for unlimited quota"
++  [[ -z "${QUOTA}" ]] && _errex "Quota must not be empty. Use 0 for unlimited quota"
+ fi
+ 
+ # check quota
+ if [[ -n ${QUOTA} ]] && ! echo "${QUOTA}" | grep -qE "^([0-9]+(B|k|M|G|T)|0)\$"
+ then
+   usage
+-  errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
++  _errex "invalid quota format. e.g. 302M (B (byte), k (kilobyte), M (megabyte), G (gigabyte) or T (terabyte))"
+ fi
+ 
+ delquota "${USER}"
+diff --git a/target/bin/updatemailuser b/target/bin/updatemailuser
+index b4d8a495..52c264b8 100755
+--- a/target/bin/updatemailuser
++++ b/target/bin/updatemailuser
+@@ -5,8 +5,8 @@
+ # ? being used below. (This disables the message file-wide.)
+ # shellcheck disable=SC2094
+ 
+-# shellcheck source=../scripts/helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../scripts/helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ DATABASE=${DATABASE:-/tmp/docker-mailserver/postfix-accounts.cf}
+ 
+@@ -16,18 +16,18 @@ PASSWD="${*}"
+ 
+ function usage  {	echo "Usage: updatemailuser <user@domain.tld> [password]" ; }
+ 
+-[[ -z ${USER} ]] && { usage ; errex "no username specified" ; }
++[[ -z ${USER} ]] && { usage ; _errex "no username specified" ; }
+ 
+ if [[ -z ${PASSWD} ]]
+ then
+   read -r -s -p "Enter Password: " PASSWD
+   echo
+-  [[ -z ${PASSWD} ]] && errex "Password must not be empty"
++  [[ -z ${PASSWD} ]] && _errex "Password must not be empty"
+ fi
+ 
+ HASH="$(doveadm pw -s SHA512-CRYPT -u "${USER}" -p "${PASSWD}")"
+ 
+ touch "${DATABASE}"
+-create_lock # Protect config file with lock to avoid race conditions
+-grep -qi "^$(escape "${USER}")|" "${DATABASE}" 2>/dev/null || errex "User \"${USER}\" does not exist"
++_create_lock # Protect config file with lock to avoid race conditions
++grep -qi "^$(_escape "${USER}")|" "${DATABASE}" 2>/dev/null || _errex "User \"${USER}\" does not exist"
+ sed -i "s ^""${USER}""|.* ""${USER}""|""${HASH}"" " "${DATABASE}"
+diff --git a/target/bin/virus-wiper b/target/bin/virus-wiper
+index 4790c668..94458a11 100755
+--- a/target/bin/virus-wiper
++++ b/target/bin/virus-wiper
+@@ -3,6 +3,6 @@
+ set -e
+ 
+ # shellcheck source=/dev/null
+-. /etc/dms-settings
++source /etc/dms-settings
+ 
+ find /var/lib/amavis/virusmails/ -type f -mtime +"${VIRUSMAILS_DELETE_DELAY}" -delete
+diff --git a/target/dovecot/90-quota.conf b/target/dovecot/90-quota.conf
+index b2753a97..f37f4f28 100644
+--- a/target/dovecot/90-quota.conf
++++ b/target/dovecot/90-quota.conf
+@@ -30,7 +30,7 @@ plugin {
+ }
+ 
+ service quota-warning {
+-    executable = script /usr/local/bin/quota-warning.sh
++    executable = script /usr/local/bin/quota-warning
+     unix_listener quota-warning {
+         user = dovecot
+         group = dovecot
+diff --git a/target/scripts/check-for-changes.sh b/target/scripts/check-for-changes.sh
+index b1ff9f6e..d66d32ba 100755
+--- a/target/scripts/check-for-changes.sh
++++ b/target/scripts/check-for-changes.sh
+@@ -1,9 +1,10 @@
+ #! /bin/bash
++
+ # TODO: Adapt for compatibility with LDAP
+ # Only the cert renewal change detection may be relevant for LDAP?
+ 
+-# shellcheck source=./helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=./helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ function _log_date
+ {
+@@ -60,7 +61,7 @@ do
+   if [[ ${?} -eq 1 ]]
+   then
+     _notify 'inf' "$(_log_date) Change detected"
+-    create_lock # Shared config safety lock
++    _create_lock # Shared config safety lock
+     CHANGED=$(grep -Fxvf "${CHKSUM_FILE}" "${CHKSUM_FILE}.new" | sed 's/^[^ ]\+  //')
+ 
+     # TODO Perform updates below conditionally too
+@@ -91,7 +92,7 @@ do
+       # This breaks early as we only need the first successful extraction.
+       # For more details see the `SSL_TYPE=letsencrypt` case handling in `setup-stack.sh`.
+       #
+-      # NOTE: HOSTNAME is set via `helper-functions.sh`, it is not the original system HOSTNAME ENV anymore.
++      # NOTE: HOSTNAME is set via `helpers/dns.sh`, it is not the original system HOSTNAME ENV anymore.
+       # TODO: SSL_DOMAIN is Traefik specific, it no longer seems relevant and should be considered for removal.
+       FQDN_LIST=("${SSL_DOMAIN}" "${HOSTNAME}" "${DOMAINNAME}")
+       for CERT_DOMAIN in "${FQDN_LIST[@]}"
+@@ -141,7 +142,7 @@ do
+     # prevent restart of dovecot when smtp_only=1
+     [[ ${SMTP_ONLY} -ne 1 ]] && supervisorctl restart dovecot
+ 
+-    remove_lock
++    _remove_lock
+     _notify 'inf' "$(_log_date) Completed handling of detected change"
+   fi
+ 
+diff --git a/target/scripts/helper-functions.sh b/target/scripts/helper-functions.sh
+deleted file mode 100755
+index e9b39152..00000000
+--- a/target/scripts/helper-functions.sh
++++ /dev/null
+@@ -1,266 +0,0 @@
+-#! /bin/bash
+-
+-# TODO this file may be split up in the future
+-#      into separate files under `target/scripts/helper/`
+-#      which is a more fitting place
+-
+-# These helpers are used by `setup-stack.sh` and `check-for-changes.sh`,
+-# not by anything within `helper-functions.sh` itself:
+-# shellcheck source=target/scripts/helpers/index.sh
+-. /usr/local/bin/helpers/index.sh
+-
+-DMS_DEBUG="${DMS_DEBUG:=0}"
+-SCRIPT_NAME="$(basename "$0")" # This becomes the sourcing script name (Example: check-for-changes.sh)
+-LOCK_ID="$(uuid)" # Used inside of lock files to identify them and prevent removal by other instances of docker-mailserver
+-
+-# file storing the checksums of the monitored files.
+-# shellcheck disable=SC2034
+-CHKSUM_FILE=/tmp/docker-mailserver-config-chksum
+-
+-# ? --------------------------------------------- BIN HELPER
+-
+-function errex
+-{
+-  echo -e "Error :: ${*}\nAborting." >&2
+-  exit 1
+-}
+-
+-# `dms_panic` methods are appropriate when the type of error is a not recoverable,
+-# or needs to be very clear to the user about misconfiguration.
+-#
+-# Method is called with args:
+-# PANIC_TYPE => (Internal value for matching). You should use the convenience methods below based on your panic type.
+-# PANIC_INFO => Provide your own message string to insert into the error message for that PANIC_TYPE.
+-# PANIC_SCOPE => Optionally provide a string for debugging to better identify/locate the source of the panic.
+-function dms_panic
+-{
+-  local PANIC_TYPE=${1}
+-  local PANIC_INFO=${2}
+-  local PANIC_SCOPE=${3} #optional
+-
+-  local SHUTDOWN_MESSAGE
+-
+-  case "${PANIC_TYPE:-}" in
+-    ( 'fail-init' ) # PANIC_INFO == <name of service or process that failed to start / initialize>
+-      SHUTDOWN_MESSAGE="Failed to start ${PANIC_INFO}!"
+-      ;;
+-
+-    ( 'no-env' ) # PANIC_INFO == <ENV VAR name>
+-      SHUTDOWN_MESSAGE="Environment Variable: ${PANIC_INFO} is not set!"
+-      ;;
+-
+-    ( 'no-file' ) # PANIC_INFO == <invalid filepath>
+-      SHUTDOWN_MESSAGE="File ${PANIC_INFO} does not exist!"
+-      ;;
+-
+-    ( 'misconfigured' ) # PANIC_INFO == <something possibly misconfigured, eg an ENV var>
+-      SHUTDOWN_MESSAGE="${PANIC_INFO} appears to be misconfigured, please verify."
+-      ;;
+-
+-    ( 'invalid-value' ) # PANIC_INFO == <an unsupported or invalid value, eg in a case match>
+-      SHUTDOWN_MESSAGE="Invalid value for ${PANIC_INFO}!"
+-      ;;
+-
+-    ( * ) # `dms_panic` was called directly without a valid PANIC_TYPE
+-      SHUTDOWN_MESSAGE='Something broke :('
+-      ;;
+-  esac
+-
+-  if [[ -n ${PANIC_SCOPE:-} ]]
+-  then
+-    _shutdown "${PANIC_SCOPE} | ${SHUTDOWN_MESSAGE}"
+-  else
+-    _shutdown "${SHUTDOWN_MESSAGE}"
+-  fi
+-}
+-
+-# Convenience wrappers based on type:
+-function dms_panic__fail_init { dms_panic 'fail-init' "${1}" "${2}"; }
+-function dms_panic__no_env { dms_panic 'no-env' "${1}" "${2}"; }
+-function dms_panic__no_file { dms_panic 'no-file' "${1}" "${2}"; }
+-function dms_panic__misconfigured { dms_panic 'misconfigured' "${1}" "${2}"; }
+-function dms_panic__invalid_value { dms_panic 'invalid-value' "${1}" "${2}"; }
+-
+-function escape
+-{
+-  echo "${1//./\\.}"
+-}
+-
+-function create_lock
+-{
+-  LOCK_FILE="/tmp/docker-mailserver/${SCRIPT_NAME}.lock"
+-  while [[ -e "${LOCK_FILE}" ]]
+-  do
+-    _notify 'warn' "Lock file ${LOCK_FILE} exists. Another ${SCRIPT_NAME} execution is happening. Trying again shortly..."
+-    # Handle stale lock files left behind on crashes
+-    # or premature/non-graceful exits of containers while they're making changes
+-    if [[ -n "$(find "${LOCK_FILE}" -mmin +1 2>/dev/null)" ]]
+-    then
+-      _notify 'warn' "Lock file older than 1 minute. Removing stale lock file."
+-      rm -f "${LOCK_FILE}"
+-      _notify 'inf' "Removed stale lock ${LOCK_FILE}."
+-    fi
+-    sleep 5
+-  done
+-  trap remove_lock EXIT
+-  echo "${LOCK_ID}" > "${LOCK_FILE}"
+-}
+-
+-function remove_lock
+-{
+-  LOCK_FILE="${LOCK_FILE:-"/tmp/docker-mailserver/${SCRIPT_NAME}.lock"}"
+-  [[ -z "${LOCK_ID}" ]] && errex "Cannot remove ${LOCK_FILE} as there is no LOCK_ID set"
+-  if [[ -e "${LOCK_FILE}" ]] && grep -q "${LOCK_ID}" "${LOCK_FILE}" # Ensure we don't delete a lock that's not ours
+-  then
+-    rm -f "${LOCK_FILE}"
+-    _notify 'inf' "Removed lock ${LOCK_FILE}."
+-  fi
+-}
+-
+-# ? --------------------------------------------- IP & CIDR
+-
+-function _mask_ip_digit
+-{
+-  if [[ ${1} -ge 8 ]]
+-  then
+-    MASK=255
+-  elif [[ ${1} -le 0 ]]
+-  then
+-    MASK=0
+-  else
+-    VALUES=(0 128 192 224 240 248 252 254 255)
+-    MASK=${VALUES[${1}]}
+-  fi
+-
+-  local DVAL=${2}
+-  ((DVAL&=MASK))
+-
+-  echo "${DVAL}"
+-}
+-
+-# Transforms a specific IP with CIDR suffix
+-# like 1.2.3.4/16 to subnet with cidr suffix
+-# like 1.2.0.0/16.
+-# Assumes correct IP and subnet are provided.
+-function _sanitize_ipv4_to_subnet_cidr
+-{
+-  local DIGIT_PREFIX_LENGTH="${1#*/}"
+-
+-  declare -a MASKED_DIGITS DIGITS
+-  IFS='.' ; read -r -a DIGITS < <(echo "${1%%/*}") ; unset IFS
+-
+-  for ((i = 0 ; i < 4 ; i++))
+-  do
+-    MASKED_DIGITS[i]=$(_mask_ip_digit "${DIGIT_PREFIX_LENGTH}" "${DIGITS[i]}")
+-    DIGIT_PREFIX_LENGTH=$((DIGIT_PREFIX_LENGTH - 8))
+-  done
+-
+-  echo "${MASKED_DIGITS[0]}.${MASKED_DIGITS[1]}.${MASKED_DIGITS[2]}.${MASKED_DIGITS[3]}/${1#*/}"
+-}
+-export -f _sanitize_ipv4_to_subnet_cidr
+-
+-# ? --------------------------------------------- Notifications
+-
+-function _notify
+-{
+-  { [[ -z ${1:-} ]] || [[ -z ${2:-} ]] ; } && return 0
+-
+-  local RESET LGREEN LYELLOW LRED RED LBLUE LGREY LMAGENTA
+-
+-  RESET='\e[0m' ; LGREEN='\e[92m' ; LYELLOW='\e[93m'
+-  LRED='\e[31m' ; RED='\e[91m' ; LBLUE='\e[34m'
+-  LGREY='\e[37m' ; LMAGENTA='\e[95m'
+-
+-  case "${1}" in
+-    'tasklog'  ) echo "-e${3:-}" "[ ${LGREEN}TASKLOG${RESET} ]  ${2}"  ;;
+-    'warn'     ) echo "-e${3:-}" "[ ${LYELLOW}WARNING${RESET} ]  ${2}" ;;
+-    'err'      ) echo "-e${3:-}" "[  ${LRED}ERROR${RESET}  ]  ${2}"    ;;
+-    'fatal'    ) echo "-e${3:-}" "[  ${RED}FATAL${RESET}  ]  ${2}"     ;;
+-    'inf'      ) [[ ${DMS_DEBUG} -eq 1 ]] && echo "-e${3:-}" "[[  ${LBLUE}INF${RESET}  ]]  ${2}" ;;
+-    'task'     ) [[ ${DMS_DEBUG} -eq 1 ]] && echo "-e${3:-}" "[[ ${LGREY}TASKS${RESET} ]]  ${2}" ;;
+-    *          ) echo "-e${3:-}" "[  ${LMAGENTA}UNKNOWN${RESET}  ]  ${2}" ;;
+-  esac
+-
+-  return 0
+-}
+-export -f _notify
+-
+-# ? --------------------------------------------- General
+-
+-# Outputs the DNS label count (delimited by `.`) for the given input string.
+-# Useful for determining an FQDN like `mail.example.com` (3), vs `example.com` (2).
+-function _get_label_count
+-{
+-  awk -F '.' '{ print NF }' <<< "${1}"
+-}
+-
+-# Sets HOSTNAME and DOMAINNAME globals used throughout the scripts,
+-# and any subprocesses called that intereact with it.
+-function _obtain_hostname_and_domainname
+-{
+-  # Normally this value would match the output of `hostname` which mirrors `/proc/sys/kernel/hostname`,
+-  # However for legacy reasons, the system ENV `HOSTNAME` was replaced here with `hostname -f` instead.
+-  #
+-  # TODO: Consider changing to `DMS_FQDN`; a more accurate name, and removing the `export`, assuming no
+-  # subprocess like postconf would be called that would need access to the same value via `$HOSTNAME` ENV.
+-  #
+-  # TODO: `OVERRIDE_HOSTNAME` was introduced for non-Docker runtimes that could not configure an explicit hostname.
+-  # k8s was the particular runtime in 2017. This does not update `/etc/hosts` or other locations, thus risking
+-  # inconsistency with expected behaviour. Investigate if it's safe to remove support. (--net=host also uses this as a workaround)
+-  export HOSTNAME="${OVERRIDE_HOSTNAME:-$(hostname -f)}"
+-
+-  # If the container is misconfigured.. `hostname -f` (which derives it's return value from `/etc/hosts` or DNS query),
+-  # will result in an error that returns an empty value. This warrants a panic.
+-  if [[ -z ${HOSTNAME} ]]
+-  then
+-    dms_panic__misconfigured 'obtain_hostname' '/etc/hosts'
+-  fi
+-
+-  # If the `HOSTNAME` is more than 2 labels long (eg: mail.example.com),
+-  # We take the FQDN from it, minus the 1st label (aka _short hostname_, `hostname -s`).
+-  #
+-  # TODO: For some reason we're explicitly separating out a domain name from our FQDN,
+-  # `hostname -d` was probably not the correct command for this intention either.
+-  # Needs further investigation for relevance, and if `/etc/hosts` is important for consumers
+-  # of this variable or if a more deterministic approach with `cut` should be relied on.
+-  if [[ $(_get_label_count "${HOSTNAME}") -gt 2 ]]
+-  then
+-    if [[ -n ${OVERRIDE_HOSTNAME} ]]
+-    then
+-      # Emulates the intended behaviour of `hostname -d`:
+-      # Assign the HOSTNAME value minus everything up to and including the first `.`
+-      DOMAINNAME=${HOSTNAME#*.}
+-    else
+-      # Operates on the FQDN returned from querying `/etc/hosts` or fallback DNS:
+-      #
+-      # Note if you want the actual NIS `domainname`, use the `domainname` command,
+-      # or `cat /proc/sys/kernel/domainname`.
+-      # Our usage of `domainname` is under consideration as legacy, and not advised
+-      # going forward. In future our docs should drop any mention of it.
+-
+-      #shellcheck disable=SC2034
+-      DOMAINNAME="$(hostname -d)"
+-    fi
+-  fi
+-
+-  # Otherwise we assign the same value (eg: example.com):
+-  # Not an else statement in the previous conditional in the event that `hostname -d` fails.
+-  DOMAINNAME="${DOMAINNAME:-${HOSTNAME}}"
+-}
+-
+-# Check if string input is an empty line, only whitespaces or `#` as the first non-whitespace character.
+-function _is_comment
+-{
+-  grep -q -E "^\s*$|^\s*#" <<< "${1}"
+-}
+-
+-# Call this method when you want to panic (emit a 'FATAL' log level error, and exit uncleanly).
+-# `dms_panic` methods should be preferred if your failure type is supported.
+-function _shutdown
+-{
+-  local FATAL_ERROR_MESSAGE=$1
+-
+-  _notify 'fatal' "${FATAL_ERROR_MESSAGE}"
+-  _notify 'err' "Shutting down.."
+-  kill 1
+-}
+diff --git a/target/scripts/helpers/dns.sh b/target/scripts/helpers/dns.sh
+new file mode 100755
+index 00000000..2237c601
+--- /dev/null
++++ b/target/scripts/helpers/dns.sh
+@@ -0,0 +1,62 @@
++#! /bin/bash
++
++# Outputs the DNS label count (delimited by `.`) for the given input string.
++# Useful for determining an FQDN like `mail.example.com` (3), vs `example.com` (2).
++function _get_label_count
++{
++  awk -F '.' '{ print NF }' <<< "${1}"
++}
++
++# Sets HOSTNAME and DOMAINNAME globals used throughout the scripts,
++# and any subprocesses called that intereact with it.
++function _obtain_hostname_and_domainname
++{
++  # Normally this value would match the output of `hostname` which mirrors `/proc/sys/kernel/hostname`,
++  # However for legacy reasons, the system ENV `HOSTNAME` was replaced here with `hostname -f` instead.
++  #
++  # TODO: Consider changing to `DMS_FQDN`; a more accurate name, and removing the `export`, assuming no
++  # subprocess like postconf would be called that would need access to the same value via `$HOSTNAME` ENV.
++  #
++  # TODO: `OVERRIDE_HOSTNAME` was introduced for non-Docker runtimes that could not configure an explicit hostname.
++  # k8s was the particular runtime in 2017. This does not update `/etc/hosts` or other locations, thus risking
++  # inconsistency with expected behaviour. Investigate if it's safe to remove support. (--net=host also uses this as a workaround)
++  export HOSTNAME="${OVERRIDE_HOSTNAME:-$(hostname -f)}"
++
++  # If the container is misconfigured.. `hostname -f` (which derives it's return value from `/etc/hosts` or DNS query),
++  # will result in an error that returns an empty value. This warrants a panic.
++  if [[ -z ${HOSTNAME} ]]
++  then
++    dms_panic__misconfigured 'obtain_hostname' '/etc/hosts'
++  fi
++
++  # If the `HOSTNAME` is more than 2 labels long (eg: mail.example.com),
++  # We take the FQDN from it, minus the 1st label (aka _short hostname_, `hostname -s`).
++  #
++  # TODO: For some reason we're explicitly separating out a domain name from our FQDN,
++  # `hostname -d` was probably not the correct command for this intention either.
++  # Needs further investigation for relevance, and if `/etc/hosts` is important for consumers
++  # of this variable or if a more deterministic approach with `cut` should be relied on.
++  if [[ $(_get_label_count "${HOSTNAME}") -gt 2 ]]
++  then
++    if [[ -n ${OVERRIDE_HOSTNAME} ]]
++    then
++      # Emulates the intended behaviour of `hostname -d`:
++      # Assign the HOSTNAME value minus everything up to and including the first `.`
++      DOMAINNAME=${HOSTNAME#*.}
++    else
++      # Operates on the FQDN returned from querying `/etc/hosts` or fallback DNS:
++      #
++      # Note if you want the actual NIS `domainname`, use the `domainname` command,
++      # or `cat /proc/sys/kernel/domainname`.
++      # Our usage of `domainname` is under consideration as legacy, and not advised
++      # going forward. In future our docs should drop any mention of it.
++
++      #shellcheck disable=SC2034
++      DOMAINNAME="$(hostname -d)"
++    fi
++  fi
++
++  # Otherwise we assign the same value (eg: example.com):
++  # Not an else statement in the previous conditional in the event that `hostname -d` fails.
++  DOMAINNAME="${DOMAINNAME:-${HOSTNAME}}"
++}
+diff --git a/target/scripts/helpers/error.sh b/target/scripts/helpers/error.sh
+new file mode 100755
+index 00000000..01a530a0
+--- /dev/null
++++ b/target/scripts/helpers/error.sh
+@@ -0,0 +1,74 @@
++#! /bin/bash
++
++function _errex
++{
++  echo -e "Error :: ${*}\nAborting." >&2
++  exit 1
++}
++
++# `dms_panic` methods are appropriate when the type of error is a not recoverable,
++# or needs to be very clear to the user about misconfiguration.
++#
++# Method is called with args:
++# PANIC_TYPE => (Internal value for matching). You should use the convenience methods below based on your panic type.
++# PANIC_INFO => Provide your own message string to insert into the error message for that PANIC_TYPE.
++# PANIC_SCOPE => Optionally provide a string for debugging to better identify/locate the source of the panic.
++function dms_panic
++{
++  local PANIC_TYPE=${1}
++  local PANIC_INFO=${2}
++  local PANIC_SCOPE=${3} #optional
++
++  local SHUTDOWN_MESSAGE
++
++  case "${PANIC_TYPE:-}" in
++    ( 'fail-init' ) # PANIC_INFO == <name of service or process that failed to start / initialize>
++      SHUTDOWN_MESSAGE="Failed to start ${PANIC_INFO}!"
++      ;;
++
++    ( 'no-env' ) # PANIC_INFO == <ENV VAR name>
++      SHUTDOWN_MESSAGE="Environment Variable: ${PANIC_INFO} is not set!"
++      ;;
++
++    ( 'no-file' ) # PANIC_INFO == <invalid filepath>
++      SHUTDOWN_MESSAGE="File ${PANIC_INFO} does not exist!"
++      ;;
++
++    ( 'misconfigured' ) # PANIC_INFO == <something possibly misconfigured, eg an ENV var>
++      SHUTDOWN_MESSAGE="${PANIC_INFO} appears to be misconfigured, please verify."
++      ;;
++
++    ( 'invalid-value' ) # PANIC_INFO == <an unsupported or invalid value, eg in a case match>
++      SHUTDOWN_MESSAGE="Invalid value for ${PANIC_INFO}!"
++      ;;
++
++    ( * ) # `dms_panic` was called directly without a valid PANIC_TYPE
++      SHUTDOWN_MESSAGE='Something broke :('
++      ;;
++  esac
++
++  if [[ -n ${PANIC_SCOPE:-} ]]
++  then
++    _shutdown "${PANIC_SCOPE} | ${SHUTDOWN_MESSAGE}"
++  else
++    _shutdown "${SHUTDOWN_MESSAGE}"
++  fi
++}
++
++# Convenience wrappers based on type:
++function dms_panic__fail_init { dms_panic 'fail-init' "${1}" "${2}"; }
++function dms_panic__no_env { dms_panic 'no-env' "${1}" "${2}"; }
++function dms_panic__no_file { dms_panic 'no-file' "${1}" "${2}"; }
++function dms_panic__misconfigured { dms_panic 'misconfigured' "${1}" "${2}"; }
++function dms_panic__invalid_value { dms_panic 'invalid-value' "${1}" "${2}"; }
++
++# Call this method when you want to panic (emit a 'FATAL' log level error, and exit uncleanly).
++# `dms_panic` methods should be preferred if your failure type is supported.
++function _shutdown
++{
++  local FATAL_ERROR_MESSAGE=$1
++
++  _notify 'fatal' "${FATAL_ERROR_MESSAGE}"
++  _notify 'err' "Shutting down.."
++  kill 1
++}
+diff --git a/target/scripts/helpers/index.sh b/target/scripts/helpers/index.sh
+index 2fc2c289..269995e2 100755
+--- a/target/scripts/helpers/index.sh
++++ b/target/scripts/helpers/index.sh
+@@ -1,16 +1,35 @@
+ #! /bin/bash
++
+ # shellcheck source-path=target/scripts/helpers
+ # This file serves as a single import for all helpers
+ 
++# Global checksum file mainly needed for the changedetector.
++# Used in the folling scripts:
++#
++# - ../check-for-changes.sh
++# - ../start-mailserver.sh
++# - ../startup/setup-stack.sh
++# - ../../../test/test_helper/common.bash
++#
++# shellcheck disable=SC2034
++CHKSUM_FILE=/tmp/docker-mailserver-config-chksum
++
+ function _import_scripts
+ {
+   local PATH_TO_SCRIPTS='/usr/local/bin/helpers'
+ 
+-  . "${PATH_TO_SCRIPTS}/postfix.sh"
+-  . "${PATH_TO_SCRIPTS}/accounts.sh"
+-  . "${PATH_TO_SCRIPTS}/aliases.sh"
+-  . "${PATH_TO_SCRIPTS}/relay.sh"
+-  . "${PATH_TO_SCRIPTS}/sasl.sh"
+-  . "${PATH_TO_SCRIPTS}/ssl.sh"
++  source "${PATH_TO_SCRIPTS}/accounts.sh"
++  source "${PATH_TO_SCRIPTS}/aliases.sh"
++  source "${PATH_TO_SCRIPTS}/dns.sh"
++  source "${PATH_TO_SCRIPTS}/error.sh"
++  source "${PATH_TO_SCRIPTS}/lock.sh"
++  source "${PATH_TO_SCRIPTS}/log.sh"
++  source "${PATH_TO_SCRIPTS}/network.sh"
++  source "${PATH_TO_SCRIPTS}/postfix.sh"
++  source "${PATH_TO_SCRIPTS}/relay.sh"
++  source "${PATH_TO_SCRIPTS}/sasl.sh"
++  source "${PATH_TO_SCRIPTS}/ssl.sh"
++  source "${PATH_TO_SCRIPTS}/utils.sh"
+ }
++
+ _import_scripts
+diff --git a/target/scripts/helpers/lock.sh b/target/scripts/helpers/lock.sh
+new file mode 100644
+index 00000000..1f45130d
+--- /dev/null
++++ b/target/scripts/helpers/lock.sh
+@@ -0,0 +1,39 @@
++#! /bin/bash
++
++# This becomes the sourcing script name
++# (example: check-for-changes.sh)
++SCRIPT_NAME="$(basename "$0")"
++# Used inside of lock files to identify them and
++# prevent removal by other instances of docker-mailserver
++LOCK_ID="$(uuid)"
++
++function _create_lock
++{
++  LOCK_FILE="/tmp/docker-mailserver/${SCRIPT_NAME}.lock"
++  while [[ -e "${LOCK_FILE}" ]]
++  do
++    _notify 'warn' "Lock file ${LOCK_FILE} exists. Another ${SCRIPT_NAME} execution is happening. Trying again shortly..."
++    # Handle stale lock files left behind on crashes
++    # or premature/non-graceful exits of containers while they're making changes
++    if [[ -n "$(find "${LOCK_FILE}" -mmin +1 2>/dev/null)" ]]
++    then
++      _notify 'warn' "Lock file older than 1 minute. Removing stale lock file."
++      rm -f "${LOCK_FILE}"
++      _notify 'inf' "Removed stale lock ${LOCK_FILE}."
++    fi
++    sleep 5
++  done
++  trap _remove_lock EXIT
++  echo "${LOCK_ID}" > "${LOCK_FILE}"
++}
++
++function _remove_lock
++{
++  LOCK_FILE="${LOCK_FILE:-"/tmp/docker-mailserver/${SCRIPT_NAME}.lock"}"
++  [[ -z "${LOCK_ID}" ]] && _errex "Cannot remove ${LOCK_FILE} as there is no LOCK_ID set"
++  if [[ -e "${LOCK_FILE}" ]] && grep -q "${LOCK_ID}" "${LOCK_FILE}" # Ensure we don't delete a lock that's not ours
++  then
++    rm -f "${LOCK_FILE}"
++    _notify 'inf' "Removed lock ${LOCK_FILE}."
++  fi
++}
+diff --git a/target/scripts/helpers/log.sh b/target/scripts/helpers/log.sh
+new file mode 100755
+index 00000000..d963c97d
+--- /dev/null
++++ b/target/scripts/helpers/log.sh
+@@ -0,0 +1,24 @@
++#! /bin/bash
++
++function _notify
++{
++  { [[ -z ${1:-} ]] || [[ -z ${2:-} ]] ; } && return 0
++
++  local RESET LGREEN LYELLOW LRED RED LBLUE LGREY LMAGENTA
++
++  RESET='\e[0m' ; LGREEN='\e[92m' ; LYELLOW='\e[93m'
++  LRED='\e[31m' ; RED='\e[91m' ; LBLUE='\e[34m'
++  LGREY='\e[37m' ; LMAGENTA='\e[95m'
++
++  case "${1}" in
++    'tasklog'  ) echo "-e${3:-}" "[ ${LGREEN}TASKLOG${RESET} ]  ${2}"  ;;
++    'warn'     ) echo "-e${3:-}" "[ ${LYELLOW}WARNING${RESET} ]  ${2}" ;;
++    'err'      ) echo "-e${3:-}" "[  ${LRED}ERROR${RESET}  ]  ${2}"    ;;
++    'fatal'    ) echo "-e${3:-}" "[  ${RED}FATAL${RESET}  ]  ${2}"     ;;
++    'inf'      ) [[ ${DMS_DEBUG} -eq 1 ]] && echo "-e${3:-}" "[[  ${LBLUE}INF${RESET}  ]]  ${2}" ;;
++    'task'     ) [[ ${DMS_DEBUG} -eq 1 ]] && echo "-e${3:-}" "[[ ${LGREY}TASKS${RESET} ]]  ${2}" ;;
++    *          ) echo "-e${3:-}" "[  ${LMAGENTA}UNKNOWN${RESET}  ]  ${2}" ;;
++  esac
++
++  return 0
++}
+diff --git a/target/scripts/helpers/network.sh b/target/scripts/helpers/network.sh
+new file mode 100755
+index 00000000..c0f7d0a8
+--- /dev/null
++++ b/target/scripts/helpers/network.sh
+@@ -0,0 +1,40 @@
++#! /bin/bash
++
++function _mask_ip_digit
++{
++  if [[ ${1} -ge 8 ]]
++  then
++    MASK=255
++  elif [[ ${1} -le 0 ]]
++  then
++    MASK=0
++  else
++    VALUES=(0 128 192 224 240 248 252 254 255)
++    MASK=${VALUES[${1}]}
++  fi
++
++  local DVAL=${2}
++  ((DVAL&=MASK))
++
++  echo "${DVAL}"
++}
++
++# Transforms a specific IP with CIDR suffix
++# like 1.2.3.4/16 to subnet with cidr suffix
++# like 1.2.0.0/16.
++# Assumes correct IP and subnet are provided.
++function _sanitize_ipv4_to_subnet_cidr
++{
++  local DIGIT_PREFIX_LENGTH="${1#*/}"
++
++  declare -a MASKED_DIGITS DIGITS
++  IFS='.' ; read -r -a DIGITS < <(echo "${1%%/*}") ; unset IFS
++
++  for ((i = 0 ; i < 4 ; i++))
++  do
++    MASKED_DIGITS[i]=$(_mask_ip_digit "${DIGIT_PREFIX_LENGTH}" "${DIGITS[i]}")
++    DIGIT_PREFIX_LENGTH=$((DIGIT_PREFIX_LENGTH - 8))
++  done
++
++  echo "${MASKED_DIGITS[0]}.${MASKED_DIGITS[1]}.${MASKED_DIGITS[2]}.${MASKED_DIGITS[3]}/${1#*/}"
++}
+diff --git a/target/scripts/helpers/relay.sh b/target/scripts/helpers/relay.sh
+index c4f3eb26..dd0fe210 100755
+--- a/target/scripts/helpers/relay.sh
++++ b/target/scripts/helpers/relay.sh
+@@ -94,9 +94,6 @@ function _relayhost_configure_postfix
+     "smtp_sender_dependent_authentication = yes"
+ }
+ 
+-# ? --------------------------------------------- Callers
+-
+-# setup-stack.sh:
+ function _setup_relayhost
+ {
+   _notify 'task' 'Setting up Postfix Relay Hosts'
+@@ -120,7 +117,6 @@ function _setup_relayhost
+   fi
+ }
+ 
+-# check-for-changes.sh:
+ function _rebuild_relayhost
+ {
+   if [[ -n ${RELAY_HOST} ]]
+diff --git a/target/scripts/helpers/sasl.sh b/target/scripts/helpers/sasl.sh
+index 956a139d..e5fb7a16 100755
+--- a/target/scripts/helpers/sasl.sh
++++ b/target/scripts/helpers/sasl.sh
+@@ -1,5 +1,4 @@
+ #! /bin/bash
+-# Support for SASL
+ 
+ function _sasl_passwd_create
+ {
+diff --git a/target/scripts/helpers/ssl.sh b/target/scripts/helpers/ssl.sh
+old mode 100644
+new mode 100755
+index c19b8227..dc401e22
+--- a/target/scripts/helpers/ssl.sh
++++ b/target/scripts/helpers/ssl.sh
+@@ -94,7 +94,7 @@ function _setup_ssl
+   # 2020 feature intended for Traefik v2 support only:
+   # https://github.com/docker-mailserver/docker-mailserver/pull/1553
+   # Extracts files `key.pem` and `fullchain.pem`.
+-  # `_extract_certs_from_acme` is located in `helper-functions.sh`
++  # `_extract_certs_from_acme` is located in `helpers/ssl.sh`
+   # NOTE: See the `SSL_TYPE=letsencrypt` case below for more details.
+   function _traefik_support
+   {
+@@ -180,7 +180,7 @@ function _setup_ssl
+       # SSL_DOMAIN will have any wildcard prefix stripped for the output FQDN folder it is stored in.
+       # TODO: A wildcard cert needs to be provisioned via Traefik to validate if acme.json contains any other value for `main` or `sans` beyond the wildcard.
+       #
+-      # NOTE: HOSTNAME is set via `helper-functions.sh`, it is not the original system HOSTNAME ENV anymore.
++      # NOTE: HOSTNAME is set via `helpers/dns.sh`, it is not the original system HOSTNAME ENV anymore.
+       # TODO: SSL_DOMAIN is Traefik specific, it no longer seems relevant and should be considered for removal.
+ 
+       _traefik_support
+@@ -407,7 +407,6 @@ function _setup_ssl
+ 
+   esac
+ }
+-export -f _setup_ssl
+ 
+ function _extract_certs_from_acme
+ {
+@@ -441,13 +440,11 @@ function _extract_certs_from_acme
+ 
+   _notify 'inf' "_extract_certs_from_acme | Certificate successfully extracted for '${CERT_DOMAIN}'"
+ }
+-export -f _extract_certs_from_acme
+ 
+ # Remove the `*.` prefix if it exists, else returns the input value
+ function _strip_wildcard_prefix {
+   [[ ${1} == "*."* ]] && echo "${1:2}" || echo "${1}"
+ }
+-export -f _strip_wildcard_prefix
+ 
+ # Compute checksums of monitored files,
+ # returned output on `stdout`: hash + filepath tuple on each line
+@@ -496,4 +493,3 @@ function _monitored_files_checksums
+ 
+   sha512sum -- "${CHANGED_FILES[@]}"
+ }
+-export -f _monitored_files_checksums
+diff --git a/target/scripts/helpers/utils.sh b/target/scripts/helpers/utils.sh
+new file mode 100755
+index 00000000..f7e51eb8
+--- /dev/null
++++ b/target/scripts/helpers/utils.sh
+@@ -0,0 +1,13 @@
++#! /bin/bash
++
++function _escape
++{
++  echo "${1//./\\.}"
++}
++
++# Check if string input is an empty line, only whitespaces
++# or `#` as the first non-whitespace character.
++function _is_comment
++{
++  grep -q -E "^\s*$|^\s*#" <<< "${1}"
++}
+diff --git a/target/scripts/start-mailserver.sh b/target/scripts/start-mailserver.sh
+index 08f90202..bc64d2e3 100755
+--- a/target/scripts/start-mailserver.sh
++++ b/target/scripts/start-mailserver.sh
+@@ -1,10 +1,10 @@
+ #! /bin/bash
+ 
+-# shellcheck source=./helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=./helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ unset FUNCS_SETUP FUNCS_FIX FUNCS_CHECK FUNCS_MISC
+-unset DAEMONS_START HOSTNAME DOMAINNAME CHKSUM_FILE
++unset DAEMONS_START HOSTNAME DOMAINNAME
+ 
+ #shellcheck disable=SC2034
+ declare -A VARS
+@@ -72,12 +72,8 @@ VARS[UPDATE_CHECK_INTERVAL]="${UPDATE_CHECK_INTERVAL:=1d}"
+ # shellcheck disable=SC2034
+ VARS[VIRUSMAILS_DELETE_DELAY]="${VIRUSMAILS_DELETE_DELAY:=7}"
+ 
+-export HOSTNAME DOMAINNAME CHKSUM_FILE
+-
+ _obtain_hostname_and_domainname
+ 
+-CHKSUM_FILE=/tmp/docker-mailserver-config-chksum
+-
+ # ------------------------------------------------------------
+ # ? << Setup of default and global values / variables
+ # --
+@@ -236,19 +232,19 @@ function _register_misc_function
+ # ------------------------------------------------------------
+ 
+ # shellcheck source=./startup/check-stack.sh
+-. /usr/local/bin/check-stack.sh
++source /usr/local/bin/check-stack.sh
+ 
+ # shellcheck source=./startup/setup-stack.sh
+-. /usr/local/bin/setup-stack.sh
++source /usr/local/bin/setup-stack.sh
+ 
+ # shellcheck source=./startup/fixes-stack.sh
+-. /usr/local/bin/fixes-stack.sh
++source /usr/local/bin/fixes-stack.sh
+ 
+ # shellcheck source=./startup/misc-stack.sh
+-. /usr/local/bin/misc-stack.sh
++source /usr/local/bin/misc-stack.sh
+ 
+ # shellcheck source=./startup/daemons-stack.sh
+-. /usr/local/bin/daemons-stack.sh
++source /usr/local/bin/daemons-stack.sh
+ 
+ # ------------------------------------------------------------
+ # ? << Sourcing all stacks
+diff --git a/target/scripts/startup/setup-stack.sh b/target/scripts/startup/setup-stack.sh
+index b7c54c55..b00db83f 100644
+--- a/target/scripts/startup/setup-stack.sh
++++ b/target/scripts/startup/setup-stack.sh
+@@ -947,7 +947,6 @@ function _setup_security_stack
+       cp /tmp/docker-mailserver/spamassassin-rules.cf /etc/spamassassin/
+     fi
+ 
+-
+     if [[ ${SPAMASSASSIN_SPAM_TO_INBOX} -eq 1 ]]
+     then
+       _notify 'inf' 'Configuring Spamassassin/Amavis to send SPAM to inbox'
+diff --git a/target/scripts/fail2ban-wrapper.sh b/target/scripts/wrapper/fail2ban-wrapper.sh
+similarity index 100%
+rename from target/scripts/fail2ban-wrapper.sh
+rename to target/scripts/wrapper/fail2ban-wrapper.sh
+diff --git a/target/scripts/postfix-wrapper.sh b/target/scripts/wrapper/postfix-wrapper.sh
+similarity index 100%
+rename from target/scripts/postfix-wrapper.sh
+rename to target/scripts/wrapper/postfix-wrapper.sh
+diff --git a/target/scripts/postsrsd-wrapper.sh b/target/scripts/wrapper/postsrsd-wrapper.sh
+similarity index 93%
+rename from target/scripts/postsrsd-wrapper.sh
+rename to target/scripts/wrapper/postsrsd-wrapper.sh
+index 1ad3db23..26279b39 100755
+--- a/target/scripts/postsrsd-wrapper.sh
++++ b/target/scripts/wrapper/postsrsd-wrapper.sh
+@@ -1,7 +1,7 @@
+ #! /bin/bash
+ 
+-# shellcheck source=./helper-functions.sh
+-. /usr/local/bin/helper-functions.sh
++# shellcheck source=../helpers/index.sh
++source /usr/local/bin/helpers/index.sh
+ 
+ function _generate_secret { ( umask 0077 ; dd if=/dev/urandom bs=24 count=1 2>/dev/null | base64 -w0 > "${1}" ; ) ; }
+ 
+diff --git a/test/helper-functions.bats b/test/helper-functions.bats
+index 67a1e4cd..bdecaf10 100644
+--- a/test/helper-functions.bats
++++ b/test/helper-functions.bats
+@@ -29,12 +29,12 @@ function teardown_file() {
+     skip 'this test must come first to reliably identify when to run setup_file'
+ }
+ 
+-@test "check helper-functions.sh: _sanitize_ipv4_to_subnet_cidr" {
+-    run docker exec mail_helper_functions bash -c ". /usr/local/bin/helper-functions.sh; _sanitize_ipv4_to_subnet_cidr 255.255.255.255/0"
++@test "check helper functions (network.sh): _sanitize_ipv4_to_subnet_cidr" {
++    run docker exec mail_helper_functions bash -c "source /usr/local/bin/helpers/index.sh; _sanitize_ipv4_to_subnet_cidr 255.255.255.255/0"
+     assert_output "0.0.0.0/0"
+-    run docker exec mail_helper_functions bash -c ". /usr/local/bin/helper-functions.sh; _sanitize_ipv4_to_subnet_cidr 192.168.255.14/20"
++    run docker exec mail_helper_functions bash -c "source /usr/local/bin/helpers/index.sh; _sanitize_ipv4_to_subnet_cidr 192.168.255.14/20"
+     assert_output "192.168.240.0/20"
+-    run docker exec mail_helper_functions bash -c ". /usr/local/bin/helper-functions.sh; _sanitize_ipv4_to_subnet_cidr 192.168.255.14/32"
++    run docker exec mail_helper_functions bash -c "source /usr/local/bin/helpers/index.sh; _sanitize_ipv4_to_subnet_cidr 192.168.255.14/32"
+     assert_output "192.168.255.14/32"
+ }
+ 
+diff --git a/test/test_helper/common.bash b/test/test_helper/common.bash
+index cafa158c..888554c5 100644
+--- a/test/test_helper/common.bash
++++ b/test/test_helper/common.bash
+@@ -196,7 +196,7 @@ function wait_for_changes_to_be_detected_in_container() {
+     local TIMEOUT=${TEST_TIMEOUT_IN_SECONDS}
+ 
+     # shellcheck disable=SC2016
+-    repeat_in_container_until_success_or_timeout "${TIMEOUT}" "${CONTAINER_NAME}" bash -c 'source /usr/local/bin/helper-functions.sh; cmp --silent -- <(_monitored_files_checksums) "${CHKSUM_FILE}" >/dev/null'
++    repeat_in_container_until_success_or_timeout "${TIMEOUT}" "${CONTAINER_NAME}" bash -c 'source /usr/local/bin/helpers/index.sh; cmp --silent -- <(_monitored_files_checksums) "${CHKSUM_FILE}" >/dev/null'
+ }
+ 
+ function wait_for_empty_mail_queue_in_container() {
