@@ -46,21 +46,56 @@
 
 ## Grafana
 
-| Commit  | False positive | Artefact | Refactoring Type | Technical Debt | Commentaires                         |
-| ------- | -------------- | -------- | ---------------- | -------------- | ------------------------------------ |
-| b4b3008 | x              |          |                  |                | Pull request                         |
-| 31b5db0 | x              |          |                  |                | Pull request                         |
-| 6310aaf | x              |          |                  |                | Definition du Dockerfile             |
-| 008bee8 | x              |          |                  |                | Pull request                         |
-| cf1ebd5 | x              |          |                  |                | Pull request                         |
-| 1864807 | x              |          |                  |                | Pull request                         |
-| 5332871 | x              |          |                  |                | Pull request                         |
-| 3418224 | x              |          |                  |                | Pull request                         |
-| 1716b70 | x              |          |                  |                | Pull request                         |
-| d28d495 | x              |          |                  |                | Pull request                         |
-| f580c91 | x              |          |                  |                | Definition du fichier docker-compose |
-| 845cebd | x              |          |                  |                | Mise a jour de documentation         |
-| 616db7f | x              |          |                  |                | Pull request                         |
+| Commit  | False positive | Artefact                   | Refactoring Type                         | Technical Debt             | Commentaires                                                                    |
+| ------- | -------------- | -------------------------- | ---------------------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| 0cc9cbc |                | docker-compose             | Reorder services                         | Understandability          | + ajout de `command:`                                                           |
+| 01f1c1b | ?              |                            |                                          |                            | l'impr qu'ils ont fait que bouger plein de trucs                                |
+| 4d18bda | x              |                            |                                          |                            | rajout d'un ADD (nouvelle fonc)                                                 |
+| 5d5de23 | x              |                            |                                          |                            | nouvelle fonctionnalité                                                         |
+| 5d72067 |                | Dockerfile, docker-compose | Update RUN instruction, Update image TAG | ?                          |                                                                                 |
+| 6a8643b |                | Dockerfile                 | Update base image tag                    | ?                          |                                                                                 |
+| 6be416d |                | docker-compose             | Rename service                           |                            |                                                                                 |
+| 6ff1144 |                | docker-compose             | ?                                        | Maintenability, Build time | Utilisation d'une image existante pour le même service, suppression d'un volume |
+| 7b68e6e |                | Dockerfile                 | ?                                        | Image size                 | Moins de COPY                                                                   |
+| 07d78da | x              |                            |                                          |                            | Nouvelle image droneci                                                          |
+| 9a61d43 | x              |                            |                                          |                            | Dockerfile initial                                                              |
+| 9af809f |                | docker-compose             | Rename service                           | Understandability          | + ajout `ports:`                                                                |
+| 9c086be |                | Dockerfile                 | Update base image tag                    | ?                          |                                                                                 |
+| 9f4d4a9 |                | Dockerfile                 | ?                                        | ?                          | update ENV                                                                      |
+| 25bcdbc | ?              | Dockerfile                 |                                          |                            | rajout d'un item à `apt install`                                                |
+| 31b5db0 |                | Docekrfile                 | ?                                        | ?                          | Remplacement de ENV PATH par des `ln -s` dans `/usr/bin/`                       |
+| 37bb5ef | ?              | Docekrfile                 |                                          |                            | rajout d'un item à `pip install`                                                |
+| 44cef75 |                | docker-compose             | ?                                        | ?                          | suppression networks + rajout volumes                                           |
+| 52fe6b0 | x              |                            |                                          |                            | nouvelle fonctionnalité                                                         |
+| 63e7330 |                | Dockerfile                 | Update base image tag                    | ?                          |                                                                                 |
+| 72d5215 | x              |                            |                                          |                            | doublon 63e7330                                                                 |
+| 87db2d1 |                | Dockerfile                 | ?                                        |                            | update ENV                                                                      |
+| 578a8e8 | x              |                            |                                          |                            |                                                                                 |
+| 615de9b |                | docker-compose             | Rename service                           | Understandability          |                                                                                 |
+| 627a32e |                | Dockerfile                 | Update base image tag                    | ?                          |                                                                                 |
+| 940f510 | x              |                            |                                          |                            |                                                                                 |
+| 5153d8e | x              |                            |                                          |                            | doublon 87db2d1                                                                 |
+| 5739ad3 |                | Dockerfile                 | Update base image tag                    | Maintenability             | FROM arg                                                                        |
+| 6310aaf | x              |                            |                                          |                            |                                                                                 |
+| 8379a53 |                | Dockerfile                 | Add ARG instruction                      | Maintenability             |                                                                                 |
+| 23738ad | x              |                            |                                          |                            |                                                                                 |
+| 56927e5 | ?              | Dockerfile                 |                                          |                            | rajout d'un COPY                                                                |
+| 79986e5 | x              |                            |                                          |                            | nouvelle fonc                                                                   |
+| 594051b | x              |                            |                                          |                            |                                                                                 |
+| a0e1a1a | x              |                            |                                          |                            | tests                                                                           |
+| a1b9236 |                | docker-compose             | ?                                        | ?                          | update ENV                                                                      |
+| abd5a74 | x              |                            |                                          |                            | doublon de 01f1c1b                                                              |
+| b4b3008 | x              |                            |                                          |                            | doublon                                                                         |
+| ba9d511 | x              |                            |                                          |                            | doublon                                                                         |
+| c19a47d | x              |                            |                                          |                            | doublon                                                                         |
+| c71904e | x              |                            |                                          |                            | doublon de 0cc9cbc                                                              |
+| cc427b1 |                | Dockerfile                 | Update base image tag                    | Maintenability             | mais aussi fixed -> latest                                                      |
+| d0f8d03 | x              |                            |                                          |                            | doublon                                                                         |
+| d28d495 | ?              | Dockerfile                 | ?                                        | ?                          | nouvelle dépendance                                                             |
+| d87bf30 |                | docker-compose             | Rename container                         | Maintenability             |                                                                                 |
+| e58f3a6 | x              |                            |                                          |                            | doublon 44cef75                                                                 |
+| f580c91 | x              |                            |                                          |                            | nouvelle fonc                                                                   |
+| f717082 |                | docker-compose             | ?                                        | ?                          | remplacement network par lien entre 2 containers (2018 hein)                    |
 
 ## prometheus
 
