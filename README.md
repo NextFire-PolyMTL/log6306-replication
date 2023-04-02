@@ -36,15 +36,11 @@
 
 ## traefik
 
-| Commit  | False positive | Artefact | Refactoring Type | Technical Debt | Commentaires                      |
-| ------- | -------------- | -------- | ---------------- | -------------- | --------------------------------- |
-| 4d485e1 | x              |          |                  |                | Refactore integration avec docker |
-| 2118f69 | x              |          |                  |                | Pull request                      |
-| d653a34 | x              |          |                  |                |                                   |
-| ae2ae85 | x              |          |                  |                | Refactore integration avec docker |
-| 6e5f765 | x              |          |                  |                | Refactor template                 |
-| 50757b5 | x              |          |                  |                | Refactor template                 |
-| a533566 | x              |          |                  |                | Refactore integration avec docker |
+| Commit  | False positive | Artefact   | Refactoring Type      | Technical Debt | Commentaires                      |
+| ------- | -------------- | ---------- | --------------------- | -------------- | --------------------------------- |
+| 1bccbf0 | ?              | Dockerfile | ?                     | ?              | maj flags d'une commande d'un RUN |
+| 257dbd1 | x              |            |                       |                |                                   |
+| f54fa10 |                | Dockerfile | Replace ADD with COPY | ?              | + remplacement CMD par ENTRYPOINT |
 
 ## Grafana
 
