@@ -5,8 +5,10 @@
 | Commit  | False positive | Artefact       | Refactoring Type | Technical Debt    | Commentaires                           |
 | ------- | -------------- | -------------- | ---------------- | ----------------- | -------------------------------------- |
 | 03a28c3 |                | docker-compose | ?                | Understandability | Séparation en plusieurs docker-compose |
+| 56bce67 | ?              | Dockerfile     | ?                | ?                 | maj de la commande de build            |
 | 95a51de | x              |                |                  |                   | Patch qui fait référence à un refactor |
 | 5508f2a |                | Dockerfile     | ?                | Understandability | Déplace dockerfile dans un dossier     |
+| 062734e |                | docker-compose | ?                | ?                 | maj de la command d'un service         |
 
 ## mail server
 
