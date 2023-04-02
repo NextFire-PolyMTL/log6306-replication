@@ -12,27 +12,22 @@
 
 ## mail server
 
-| Commit  | False positive | Artefact   | Refactoring Type        | Technical Debt    | Commentaires                            |
-| ------- | -------------- | ---------- | ----------------------- | ----------------- | --------------------------------------- |
-| 6faf5ce |                | Dockerfile | Inline RUN instruciton  | Image size        |                                         |
-| 2b4b829 | x              |            |                         |                   | Merge du commit precendant (6faf5ce)    |
-| 9e1c478 | x              |            |                         |                   | Mise a jour de la documenation          |
-| afe8cfb | x              |            |                         |                   | Merge du commit precendant (9e1c478)    |
-| afb8c05 |                | Dockerfile | Update Run insctruction | Understandability |                                         |
-| e4bab5b | x              |            |                         |                   | Ajout de foncitonnalité (ELK)           |
-| 021e942 | x              |            |                         |                   | Mise a jour de la documenation          |
-| 66bc157 | x              |            |                         |                   |                                         |
-| 08cd4d3 |                | Dockerfile | ?                       | Understandability | Ajout de commentaires                   |
-| c851f5b |                | Dockerfile | ?                       | Understandability | modification de commentaires            |
-| b1a74bd | x              |            |                         |                   |                                         |
-| 7ca0568 | x              |            |                         |                   | Mise a jour de script et de fichier.pem |
-| b9dbec3 | x              |            |                         |                   | Mise a jour de script                   |
-| 22f68af | x              |            |                         |                   | Merge d'une pull request                |
-| 0bbec09 | x              |            |                         |                   | Mise a jour de scrip                    |
-| 623d53b | x              |            |                         |                   | Merge d'une pull request                |
-| cb8e336 |                | Dockerfile | Inline RUN instruciton  | Image size        |                                         |
-| 05db27f | x              |            |                         |                   | Mise a jour de script                   |
-| 88767f7 | x              |            |                         |                   | Déplacement de fichier                  |
+| Commit  | False positive | Artefact   | Refactoring Type        | Technical Debt    | Commentaires                           |
+| ------- | -------------- | ---------- | ----------------------- | ----------------- | -------------------------------------- |
+| 2b4b829 | x              |            |                         |                   | Merge du commit precendant (6faf5ce)   |
+| 6faf5ce |                | Dockerfile | Inline RUN instruciton  | Image size        |                                        |
+| 08cd4d3 |                | Dockerfile | ?                       | Understandability | Ajout de commentaires                  |
+| 9e1c478 | x              |            |                         |                   | Mise a jour de la documenation         |
+| 5254f7c | ?              | Dockerfile | ?                       | ?                 | Ajout d'un COPY                        |
+| ae6f41e |                | Dockerfile | Update Run insctruction | Understandability |                                        |
+| afb8c05 |                | Dockerfile | Update Run insctruction | Understandability |                                        |
+| afe8cfb | x              |            |                         |                   | Merge du commit precendant (9e1c478)   |
+| b61dfe1 | ?              | Dockerfile | ?                       | ?                 | scripts supplémentaires dans COPY      |
+| c851f5b |                | Dockerfile | ?                       | Understandability | modification de commentaires           |
+| c881fac |                | Dockerfile | Update Run insctruction | Understandability |                                        |
+| cb8e336 |                | Dockerfile | Inline RUN instruciton  | Image size        |                                        |
+| da81713 |                | Dockerfile | ?                       | Understandability | Update ordre des fichiers dans un COPY |
+| e4bab5b | x              |            |                         |                   | Ajout de foncitonnalité (ELK)          |
 
 ## traefik
 
